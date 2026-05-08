@@ -42,6 +42,8 @@ Filter: TypeAlias = nnx.filterlib.Filter
 #   KAI0_DATA_ROOT     — base dir of deepdive_kai0/kai0 (holds data/ and local checkpoints/)
 #   PYTORCH_CKPT_BASE  — root for ADVANTAGE_TORCH PyTorch pretrained weights
 # gs:// paths are resolved via OPENPI_DATA_HOME by openpi.shared.download.
+_OPENPI_DATA_HOME = os.environ.get("OPENPI_DATA_HOME", os.path.expanduser("~/workspace/openpi_cache"))
+_KAI0_LOCAL_ROOT = os.environ.get("KAI0_LOCAL_ROOT", "/home/tim/data_local")
 _KAI0_DATA_ROOT = os.environ.get("KAI0_DATA_ROOT", "/data1/tim/workspace/deepdive_kai0/kai0")
 _PYTORCH_CKPT_BASE = os.environ.get("PYTORCH_CKPT_BASE", "/path/to/pytorch_ckpt_base")
 
@@ -2016,6 +2018,117 @@ _CONFIGS = [
         inline_eval_n_frames=200,
         inline_eval_every=2,
     ),
+    # Task_A A_new_pure_1200 — gf1 #25, mixed_1 init, only -new dirs
+    TrainConfig(
+        name="pi05_flatten_fold_a_new_pure_1200",
+        model=pi0_config.Pi0Config(pi05=True),
+        data=LerobotAgilexDataConfig(
+            repo_id=f"{_KAI0_DATA_ROOT}/data/Task_A/self_built/A_new_pure_1200/base",
+            default_prompt="Flatten and fold the cloth.",
+            use_delta_joint_actions=False,
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader(
+            f"{_KAI0_DATA_ROOT}/checkpoints/Task_A/mixed_1/params"
+        ),
+        lr_schedule=_optimizer.CosineDecaySchedule(
+            warmup_steps=1_000, peak_lr=1.5e-5, decay_steps=50_000, decay_lr=1.5e-6
+        ),
+        ema_decay=0.9999,
+        num_train_steps=50_000,
+        keep_period=2_000,
+        save_interval=2_000,
+        num_workers=8,
+        batch_size=128,
+        fsdp_devices=8,
+        inline_eval_val_root=f"{_KAI0_DATA_ROOT}/data/Task_A/self_built/A_new_pure_1200/val",
+        inline_eval_n_frames=200,
+        inline_eval_every=2,
+    ),
+    # Task_A mix_b6000_p1200 — 实验1: init from Task_A/mixed_1
+    # 14,985 train ep (5021 official + 8x 1258 self_built dup, ~1:2 batch ratio)
+    # val_official: 100 ep (held out from kai0_base+dagger)
+    # val_self_built: 30 ep (held out from -new + mirror, paired)
+    # 50k step, peak_lr=1.5e-5 cosine to 1.5e-6, warmup=1k, ema=0.9999.
+    # inline_eval_val_root: val_self_built (more sensitive to fine-tune).
+    TrainConfig(
+        name="pi05_flatten_fold_mix_b6000_p1200_init_mixed_1",
+        model=pi0_config.Pi0Config(pi05=True),
+        data=LerobotAgilexDataConfig(
+            repo_id=f"{_KAI0_LOCAL_ROOT}/Task_A/self_built/mix_b6000_p1200/base",
+            default_prompt="Flatten and fold the cloth.",
+            use_delta_joint_actions=False,
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader(
+            f"{_KAI0_DATA_ROOT}/checkpoints/Task_A/mixed_1/params"
+        ),
+        lr_schedule=_optimizer.CosineDecaySchedule(
+            warmup_steps=1_000, peak_lr=1.5e-5, decay_steps=50_000, decay_lr=1.5e-6
+        ),
+        ema_decay=0.9999,
+        num_train_steps=50_000,
+        keep_period=10_000,
+        save_interval=2_000,
+        num_workers=8,
+        batch_size=128,
+        fsdp_devices=8,
+        inline_eval_val_root=f"{_KAI0_LOCAL_ROOT}/Task_A/self_built/mix_b6000_p1200/val_self_built",
+        inline_eval_n_frames=200,
+        inline_eval_every=2,
+    ),
+    # Task_A mix_b6000_p1200 — 实验2: init from pi05_base (官方 openpi)
+    # 同 dataset / 同 hparams; 唯一区别是 init weights.
+    TrainConfig(
+        name="pi05_flatten_fold_mix_b6000_p1200_init_pi05_base",
+        model=pi0_config.Pi0Config(pi05=True),
+        data=LerobotAgilexDataConfig(
+            repo_id=f"{_KAI0_LOCAL_ROOT}/Task_A/self_built/mix_b6000_p1200/base",
+            default_prompt="Flatten and fold the cloth.",
+            use_delta_joint_actions=False,
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader(
+            f"{_OPENPI_DATA_HOME}/openpi-assets/checkpoints/pi05_base/params"
+        ),
+        lr_schedule=_optimizer.CosineDecaySchedule(
+            warmup_steps=1_000, peak_lr=1.5e-5, decay_steps=50_000, decay_lr=1.5e-6
+        ),
+        ema_decay=0.9999,
+        num_train_steps=50_000,
+        keep_period=10_000,
+        save_interval=2_000,
+        num_workers=8,
+        batch_size=128,
+        fsdp_devices=8,
+        inline_eval_val_root=f"{_KAI0_LOCAL_ROOT}/Task_A/self_built/mix_b6000_p1200/val_self_built",
+        inline_eval_n_frames=200,
+        inline_eval_every=2,
+    ),
+    # Task_A mix_b6000_p1200 — 实验3: init from pi05_base, 100k steps (gf0)
+    # Same dataset/hparams as 实验2, but num_train_steps=100_000.
+    TrainConfig(
+        name="pi05_flatten_fold_mix_b6000_p1200_init_pi05_base_100k",
+        model=pi0_config.Pi0Config(pi05=True),
+        data=LerobotAgilexDataConfig(
+            repo_id=f"{_KAI0_LOCAL_ROOT}/Task_A/self_built/mix_b6000_p1200/base",
+            default_prompt="Flatten and fold the cloth.",
+            use_delta_joint_actions=False,
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader(
+            f"{_OPENPI_DATA_HOME}/openpi-assets/checkpoints/pi05_base/params"
+        ),
+        lr_schedule=_optimizer.CosineDecaySchedule(
+            warmup_steps=1_000, peak_lr=1.5e-5, decay_steps=100_000, decay_lr=1.5e-6
+        ),
+        ema_decay=0.9999,
+        num_train_steps=100_000,
+        keep_period=10_000,
+        save_interval=2_000,
+        num_workers=8,
+        batch_size=128,
+        fsdp_devices=8,
+        inline_eval_val_root=f"{_KAI0_LOCAL_ROOT}/Task_A/self_built/mix_b6000_p1200/val_self_built",
+        inline_eval_n_frames=200,
+        inline_eval_every=2,
+    ),
     # Task P Stage 3: 20k steps long run, cosine decay full horizon, peak_lr 1.5e-5
     # between Stage 1 (1.25e-5) and Stage 2 (2.5e-5). Observe loss trajectory + overfit onset.
     # save_interval=2000 → 10 eval points; ETA ~22h.
@@ -2024,6 +2137,33 @@ _CONFIGS = [
         model=pi0_config.Pi0Config(pi05=True),
         data=LerobotAgilexDataConfig(
             repo_id=f"{_KAI0_DATA_ROOT}/data/Task_P/base",
+            default_prompt="pick and place in box",
+            use_delta_joint_actions=False,
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader(
+            f"{_KAI0_DATA_ROOT}/checkpoints/Task_A/mixed_1/params"
+        ),
+        lr_schedule=_optimizer.CosineDecaySchedule(
+            warmup_steps=500, peak_lr=1.5e-5, decay_steps=20_000, decay_lr=1.5e-6
+        ),
+        ema_decay=0.999,
+        num_train_steps=20_000,
+        keep_period=2_000,
+        save_interval=2_000,
+        num_workers=8,
+        batch_size=128,
+        fsdp_devices=8,
+        inline_eval_val_root=f"{_KAI0_DATA_ROOT}/data/Task_P/val",
+        inline_eval_n_frames=200,
+        inline_eval_every=1,
+    ),
+    # Task P unfreeze_20k v2: same hparams as unfreeze_20k, dataset = base_v2 (KAI0/Task_P/base/2026-04-21-v2,
+    # 100 ep / 30,175 frames). Control variable vs original = dataset version (v2 has 100 ep vs original 84 ep).
+    TrainConfig(
+        name="pi05_pick_place_box_kai0_unfreeze_20k_v2",
+        model=pi0_config.Pi0Config(pi05=True),
+        data=LerobotAgilexDataConfig(
+            repo_id=f"{_KAI0_DATA_ROOT}/data/Task_P/v2",
             default_prompt="pick and place in box",
             use_delta_joint_actions=False,
         ),
