@@ -158,12 +158,12 @@ advantage 数据包含的标注列：
 
 ---
 
-## 五、gf2 复现的定位
+## 五、uc01 复现的定位
 
-gf2 复现的两个训练（AWBC + Advantage Estimator）属于 **Stage Advantage 模块**：
+uc01 复现的两个训练（AWBC + Advantage Estimator）属于 **Stage Advantage 模块**：
 
 ```
-                    已开源 ✓           gf2 正在复现            未开源 ✗
+                    已开源 ✓           uc01 正在复现            未开源 ✗
                  ┌──────────┐     ┌──────────────────┐    ┌────────────┐
 π₀.₅ base ──→   │ mixed_1  │     │ Advantage Est.   │    │ χ₀ 全流程    │
   (openpi)       │ (MA 产物)│     │ AWBC model       │    │ MA+SA+TDA  │
@@ -173,5 +173,5 @@ gf2 复现的两个训练（AWBC + Advantage Estimator）属于 **Stage Advantag
 
 各阶段预期效果：
 - **gf0/gf1 阶段一**（normal + split + MA）：预期达到 mixed_1 水平 (~90%)
-- **gf2 阶段二**（AWBC）：SA 模块独立贡献 ~80%，叠加 MA 后预期 ~80-90%
+- **uc01 阶段二**（AWBC）：SA 模块独立贡献 ~80%，叠加 MA 后预期 ~80-90%
 - **全流程**：需要实体机器人的 TDA 模块才能达到 ~95%

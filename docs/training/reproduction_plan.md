@@ -2,7 +2,7 @@
 
 > 相关文档：
 > - [Task_A 开源情况梳理](kai0_task_a_opensource_analysis.md) — 开源模型/数据/代码、各方法成功率、未开源内容
-> - [gf2 Advantage + AWBC 方案](gf2_advantage_awbc_plan.md) — gf2 具体执行计划与验证步骤
+> - [uc01 Advantage + AWBC 方案](gf2_advantage_awbc_plan.md) — uc01 具体执行计划与验证步骤
 
 ## 当前数据集状态
 

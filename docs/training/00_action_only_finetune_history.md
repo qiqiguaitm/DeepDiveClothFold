@@ -2,7 +2,7 @@
 
 > **作用**：集成本机所有训练实验的历史记录与结果，**含每步 inline-eval MAE@{1,10,25,50} 完整曲线**。涵盖训练类型: action-only freeze、全参数解冻 (full-finetune)、LoRA (r=16/32)、AWBC、cold-start 混合数据训练 (mix_vis600 / pure_vis600 / mixed_visrobot01) 等。
 > **范围**：Task E（扶起倒箱）+ Task P（抓放盒子）+ Task A（FlattenFold） — 三个任务下的所有 train run, 每条 run 的 best step / best MAE / 数据规模 / freeze 策略 / LoRA r 都在此聚合; 详细超参 / 数据配方移到下方 "关联详细文档" 列表的对应专题文件。
-> **最近更新**：2026-05-07 12:30 CST (gf2 实验1 mix_b6000_p1200_init_mixed_1 完成: best MAE@1=0.0108 @ step 44k, plateau 自 44k 不再下降. 7200 ep 大数据反不如 1143 ep 高质量 -new 数据 (#25 best 0.0105). 详见 `task_a_mix_b6000_p1200_mixed_1_results.md`)
+> **最近更新**：2026-05-07 12:30 CST (uc01 实验1 mix_b6000_p1200_init_mixed_1 完成: best MAE@1=0.0108 @ step 44k, plateau 自 44k 不再下降. 7200 ep 大数据反不如 1143 ep 高质量 -new 数据 (#25 best 0.0105). 详见 `task_a_mix_b6000_p1200_mixed_1_results.md`)
 > **数据来源**：`logs/train_*.log` 中 `[inline-eval] step=N MAE@1=… @10=… @25=… @50=…` 行（9 val ep × 20 frames，~30s/eval），与 `logs/eval_history_v2/v2_step_*.json` 离线归档（9 val ep × 50 queries）。
 > **命名前缀 `00_` 用于按文件名排序时置顶。**
 >
@@ -12,7 +12,7 @@
 > - **`task_a_visrobot01_mixed_600.md`** — Task A 全参数微调系列 (mixed_gf0_173 / visrobot01_only / mix_vis600 / pure_vis600)
 > - **`norm_stats_ablation_apr28_450.md`** — norm_stats 消融实验 (new_norm vs inherit_norm, head-to-head 同 dataset 同 hparams)
 > - **`task_a_pure_1200_new_norm_results.md`** — pure_1200 系列两个实验 (-new 限定 vs 全日期, mixed_1 init + 50k)
-> - **`task_a_mix_b6000_p1200_mixed_1_results.md`** — gf2 实验1 大数据混合训练 (~7200 ep mix, mixed_1 init, 50k 步, best 0.0108)
+> - **`task_a_mix_b6000_p1200_mixed_1_results.md`** — uc01 实验1 大数据混合训练 (~7200 ep mix, mixed_1 init, 50k 步, best 0.0108)
 > - `kai0_mixed_1_results.md` — Task A 迁移 init 来源
 > - `training_plans.md` — kai0_mixed_1 / kai0_full 训练 recipe
 > - `project_complete_guide.md` — freeze_filter / inline eval 总览

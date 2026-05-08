@@ -1,7 +1,7 @@
 # Training CLI Notes
 
 Training-specific commands and environment notes extracted from the
-pre-merge training workspace (gf0/gf1/gf2 side). Deployment/inference
+pre-merge training workspace (gf0/gf1/uc01 side). Deployment/inference
 commands live in `docs/deployment/` or the repo-root `CLAUDE.md`.
 
 All commands below run from `kai0/` unless noted. Source `setup_env.sh`

@@ -1,8 +1,9 @@
-# 训练服务器知识库 (gf0 / ~~gf1~~ / gf2 / gf3)
+# 训练服务器知识库 (gf0 / ~~gf1~~ / uc01 / uc02 / uc03)
 
 > ⚠️ **2026-05-06 更新: gf1 已退役**
+> ⚠️ **2026-05-08 更新: gf2/3/4 → uc01/02/03 重命名; uc03 (原 gf4) 加入训练**
 >
-> **当前 active 服务器: gf0, gf2, gf3** (3 台)。gf1 跳板 `14.103.44.161:11111` SSH 不通, 服务器已下线。
+> **当前 active 服务器: gf0, uc01, uc02, uc03** (4 台)。gf1 跳板 `14.103.44.161:11111` SSH 不通, 服务器已下线。
 >
 > 历史影响:
 > - **gf1 #25** (`task_a_new_pure_1200_new_norm` 50k 训练) 在 step 40000 因 ENOSPC crash; best ckpt @ step 38000 (MAE@1=0.0104) 已通过 TOS 拉到 sim01 `/data1/DATA_IMP/checkpoints/task_a_new_pure_1200_new_norm_best_step38000/`
@@ -17,7 +18,7 @@
 > **作用**: 4 台 GPU 训练服务器的全方位参考 — 硬件、文件结构、环境、连接方式、训练命令、机器间差异、常见运维。
 > **更新日期**: 2026-05-02
 > **关联文档**:
-> - [`gf2_gf3_deployment.md`](./gf2_gf3_deployment.md) — gf2/gf3 详细部署记录
+> - [`gf2_gf3_deployment.md`](./gf2_gf3_deployment.md) — uc01/uc02 详细部署记录
 > - [`sim01_deployment.md`](./sim01_deployment.md) — sim01 推理机部署
 > - [`checkpoints_layout.md`](./checkpoints_layout.md) — ckpt 文件结构规范
 
@@ -25,20 +26,20 @@
 
 ## 1. 服务器全景
 
-| 维度 | gf0 | gf1 | gf2 | gf3 |
+| 维度 | gf0 | gf1 | uc01 | uc02 |
 |---|---|---|---|---|
 | **GPU** | 8× A100-SXM4 80GB | 8× A100-SXM4 80GB | 8× A800-SXM4 80GB | 8× A800-SXM4 80GB |
 | **GPU arch** | sm_80 | sm_80 | sm_80 (同 A100) | sm_80 |
 | **驱动 / CUDA driver** | 535.129.03 / 12.2 | 535.129.03 / 12.2 | 550.144.03 / 12.4 | 550.144.03 / 12.4 |
 | **CUDA toolkit** | 12.8 (用 `/usr/local/cuda-12.8`) | 12.8 | 12.4 | 12.4 |
-| **CPU** | Xeon 8336C @ 2.30GHz, 112 cores | 同 gf0 | (多核 NUMA) | 同 gf2 |
+| **CPU** | Xeon 8336C @ 2.30GHz, 112 cores | 同 gf0 | (多核 NUMA) | 同 uc01 |
 | **RAM** | 1.8 TiB | 1.8 TiB | ~700+ GiB | ~700+ GiB |
-| **OS** | Debian-velinux1u1 (5.4.250) | 同 gf0 | Ubuntu 22.04 | 同 gf2 |
+| **OS** | Debian-velinux1u1 (5.4.250) | 同 gf0 | Ubuntu 22.04 | 同 uc01 |
 | **Hostname** | `di-20260312174527-n5dw4` | `di-20260320201920-rzbrm` | `10-60-135-47` | `10-60-204-66` |
 | **IP / 入口** | 跳板 `14.103.44.161:55555` (反向隧道) | 跳板 `14.103.44.161:11111` | `117.50.196.104` (直连) | `106.75.68.254` (直连) |
-| **本地 SSH 别名** | `ssh -p 55555 tim@14.103.44.161` | `ssh -p 11111 tim@14.103.44.161` | `gf2` (alias in `~/.bashrc`) | `gf3` (alias in `~/.bashrc`) |
+| **本地 SSH 别名** | `ssh -p 55555 tim@14.103.44.161` | `ssh -p 11111 tim@14.103.44.161` | `uc01` (alias in `~/.bashrc`) | `uc02` (alias in `~/.bashrc`) |
 | **共享 FS** | /vePFS (gpfs, 跨 gf0/gf1) | 同 gf0 | **无** (每机独立 4TB) | **无** (每机独立 4TB) |
-| **私网互通** | 同 gf1 (走 vePFS) | 同 gf0 | 与 gf3 SSH 双向密钥 + 内网 hostname 直连 | 与 gf2 同 |
+| **私网互通** | 同 gf1 (走 vePFS) | 同 gf0 | 与 uc02 SSH 双向密钥 + 内网 hostname 直连 | 与 uc01 同 |
 
 ---
 
@@ -50,8 +51,8 @@
 |---|---|---|
 | gf0 | `/vePFS/tim/workspace/deepdive_kai0/` (= `/home/tim/workspace/deepdive_kai0` 软链) | gpfs 跨机共享 |
 | gf1 | 同 gf0 (共享) | 同 |
-| gf2 | `/home/tim/workspace/deepdive_kai0/` → `/data/shared/tim/workspace/deepdive_kai0/` | 本机 4TB ext4 |
-| gf3 | 同 gf2 (各自独立, 不共享) | 同 gf2 |
+| uc01 | `/home/tim/workspace/deepdive_kai0/` → `/data/shared/tim/workspace/deepdive_kai0/` | 本机 4TB ext4 |
+| uc02 | 同 uc01 (各自独立, 不共享) | 同 uc01 |
 
 ### 2.2 Checkpoint 本地存储规范 ⭐ (2026-05-04 重要更新)
 
@@ -63,8 +64,8 @@
 |---|---|---|---|---|
 | gf0 | symlink → `/vePFS/tim/gf0_local_ckpts/` | /vePFS (50T 共享 FS) | 看 /vePFS 余量 | ✓ 持久 |
 | ~~gf1~~ (已退役) | symlink → `/vePFS/tim/gf1_local_ckpts/` | /vePFS | 已下线 | — |
-| gf2 | 真实 dir | /dev/vda2 (492G ext4) | ~290G 可用 | ✓ 持久 |
-| gf3 | 真实 dir | /dev/vda2 (492G ext4) | ~410G 可用 | ✓ 持久 |
+| uc01 | 真实 dir | /dev/vda2 (492G ext4) | ~290G 可用 | ✓ 持久 |
+| uc02 | 真实 dir | /dev/vda2 (492G ext4) | ~410G 可用 | ✓ 持久 |
 
 **为何不放 `/dev/shm` (RAM)**:
 - 重启数据丢失, 训练 ckpt 不能容忍
@@ -100,8 +101,8 @@ ln -sfn "$LOCAL_DIR" "$WORKSPACE_DIR"
 
 `ln -sfn` (`-n` = no-deref existing symlink) 确保 idempotent, 重复 launcher 启动不出错。
 
-**lsyncd 兼容性 (gf2/gf3)**:
-- gf2/gf3 之间有 lsyncd 双向 mirror `/data/shared/` 目录
+**lsyncd 兼容性 (uc01/uc02)**:
+- uc01/uc02 之间有 lsyncd 双向 mirror `/data/shared/` 目录
 - `/home/tim/local_ckpts` 在 `/dev/vda2` 不在 lsyncd scope, 不会被同步 ✓
 - 而 `/home/tim/workspace` 是 symlink → `/data/shared/...` 在 lsyncd 范围, 千万 **不要直接写 ckpt 到** `<kai0>/checkpoints/<config>/<exp>` 真实目录 (旧 bug 多次因此损坏)
 
@@ -113,8 +114,8 @@ ln -sfn "$LOCAL_DIR" "$WORKSPACE_DIR"
 
 | 实验 | 当前 ckpt 真实路径 | 所有者 |
 |---|---|---|
-| gf2 实验1 | `/home/tim/local_ckpts/pi05_flatten_fold_mix_b6000_p1200_init_mixed_1/task_a_mix_base6000_pure1200_new_norm_base_mixed_1` | gf2 |
-| gf3 实验2 | `/home/tim/local_ckpts/pi05_flatten_fold_mix_b6000_p1200_init_pi05_base/task_a_mix_base6000_pure1200_new_norm_base_pi0.5` | gf3 |
+| uc01 实验1 | `/home/tim/local_ckpts/pi05_flatten_fold_mix_b6000_p1200_init_mixed_1/task_a_mix_base6000_pure1200_new_norm_base_mixed_1` | uc01 |
+| uc02 实验2 | `/home/tim/local_ckpts/pi05_flatten_fold_mix_b6000_p1200_init_pi05_base/task_a_mix_base6000_pure1200_new_norm_base_pi0.5` | uc02 |
 | gf0 实验3 | `/vePFS/tim/gf0_local_ckpts/pi05_flatten_fold_mix_b6000_p1200_init_pi05_base_100k/task_a_mix_base6000_pure1200_new_norm_base_pi0.5_100000` | gf0 |
 | gf1 #25 (历史) | `/vePFS/tim/workspace/deepdive_kai0/kai0/checkpoints/pi05_flatten_fold_a_new_pure_1200/task_a_new_pure_1200_new_norm` | gf1 (训练完成后可移到 local_ckpts) |
 
@@ -137,7 +138,7 @@ deepdive_kai0/
 │           ├── vis_base/              # → 真实/模拟采集数据集
 │           ├── kai0_base/             # → HF 官方 kai0 base
 │           ├── kai0_dagger/           # → HF 官方 kai0 dagger
-│           ├── kai0_advantage/        # → HF 官方 advantage (gf2/gf3 only)
+│           ├── kai0_advantage/        # → HF 官方 advantage (uc01/uc02 only)
 │           └── self_built/            # 用户构建的混合数据集
 │               ├── A_pure_1200/{base,val}/
 │               ├── A_new_pure_1200/{base,val}/
@@ -169,7 +170,7 @@ deepdive_kai0/
 /vePFS/visrobot01/KAI0/Task_A/base/<date>/  # 原始采集 (跨用户共享)
 ```
 
-#### gf2 / gf3 (独立 4TB ext4)
+#### uc01 / uc02 (独立 4TB ext4)
 ```
 /data/shared/dataset/KAI0/Task_<X>/base/         # 自建 (rsync from /vePFS)
 /data/shared/dataset/Kai0_official/Task_A/      # HF 官方 base/dagger/advantage
@@ -178,7 +179,7 @@ deepdive_kai0/
 
 ### 2.4 临时 / 加速存储 (按机器)
 
-| 路径 | gf0/gf1 | gf2/gf3 |
+| 路径 | gf0/gf1 | uc01/uc02 |
 |---|---|---|
 | `/dev/shm` (tmpfs RAM) | **1.3 TB** ⭐ 训练数据可加速 | 大 (具体大小待测) |
 | `/tmp` | overlay ~99GB | overlay ~99GB |
@@ -197,15 +198,15 @@ deepdive_kai0/
 |---|---|---|
 | gf0 | `/vePFS/tim/workspace/deepdive_kai0/kai0/.venv` → `/home/tim/.kai0_venv` (本地 symlink) | 3.11 |
 | gf1 | 同 (但本地 venv 物理独立) | 3.11 |
-| gf2 | `/home/tim/workspace/deepdive_kai0/kai0/.venv` (uv 管理) | 3.12 |
-| gf3 | 同 gf2 (本地独立) | 3.12 |
+| uc01 | `/home/tim/workspace/deepdive_kai0/kai0/.venv` (uv 管理) | 3.12 |
+| uc02 | 同 uc01 (本地独立) | 3.12 |
 
 > **注意**: 虽然 gf0/gf1 venv 路径相同 (因 vePFS 共享), 但实际是 `/vePFS/.../kai0/.venv` → `/home/tim/.kai0_venv` 软链, **两机各自指向各自的本地** `/home/tim/.kai0_venv`。所以两机 venv 物理独立, lib 版本可能微差。
 
 ### 3.2 关键依赖 (各机基本一致)
 
 - **JAX** 0.5.3 + cuda12 (含 GPU)
-- **PyTorch** 2.7.1+cu126 (gf2/gf3) / 与之兼容版本 (gf0/gf1)
+- **PyTorch** 2.7.1+cu126 (uc01/uc02) / 与之兼容版本 (gf0/gf1)
 - **Flax** 0.10.2 / orbax-checkpoint 0.11.13
 - **openpi** (editable, in `kai0/src/openpi/`)
 - **lerobot** (HF 库) / transformers / sentencepiece
@@ -213,7 +214,7 @@ deepdive_kai0/
 
 ### 3.3 环境变量 (`setup_env.sh` 自动设置)
 
-| 变量 | gf0/gf1 (`profile=gf`) | gf2/gf3 (`profile=default`) |
+| 变量 | gf0/gf1 (`profile=gf`) | uc01/uc02 (`profile=default`) |
 |---|---|---|
 | `KAI0_DATA_ROOT` | `/vePFS/tim/workspace/deepdive_kai0/kai0` | `$HOME/workspace/deepdive_kai0/kai0` |
 | `OPENPI_DATA_HOME` | `/vePFS/tim/workspace/openpi_cache` | `$HOME/workspace/openpi_cache` |
@@ -230,7 +231,7 @@ deepdive_kai0/
 | **gf1** inline-eval 报 `StreamBeginCaptureToGraph is not implemented for CUDA below version 12.3` | launcher 加 `export XLA_FLAGS="--xla_gpu_enable_command_buffer="` |
 | **gf1** vePFS 文件 I/O 比 gf0 慢 2× (page cache 不积极) | 训练前先 `cp -rL <data> /dev/shm/<data>`, config repo_id 指向 `/dev/shm/...` |
 | gf0/gf1 共享 vePFS, ckpt 同时写不同 exp_name 不冲突 | 用不同 exp_name 即可并发 |
-| gf2/gf3 HF 下载 429 限流 | 单机优先 + retry, 然后 rsync 到另一机 |
+| uc01/uc02 HF 下载 429 限流 | 单机优先 + retry, 然后 rsync 到另一机 |
 
 ---
 
@@ -243,23 +244,23 @@ deepdive_kai0/
 ssh -p 55555 tim@14.103.44.161   # gf0 (反向隧道经 14.103.44.161 跳板)
 ssh -p 11111 tim@14.103.44.161   # gf1
 
-# gf2 / gf3 (直连)
-sshpass -p tim ssh tim@117.50.196.104   # gf2
-sshpass -p tim ssh tim@106.75.68.254    # gf3
+# uc01 / uc02 (直连)
+sshpass -p tim ssh tim@117.50.196.104   # uc01
+sshpass -p tim ssh tim@106.75.68.254    # uc02
 
 # 也可在 ~/.bashrc 设别名:
-alias gf2='sshpass -p "tim" ssh -o StrictHostKeyChecking=no tim@117.50.196.104'
-alias gf3='sshpass -p "tim" ssh -o StrictHostKeyChecking=no tim@106.75.68.254'
+alias uc01='sshpass -p "tim" ssh -o StrictHostKeyChecking=no tim@117.50.196.104'
+alias uc02='sshpass -p "tim" ssh -o StrictHostKeyChecking=no tim@106.75.68.254'
 ```
 
 ### 4.2 用户
 
 - 用户名: `tim` (全部 4 台一致)
-- 密码: `tim` (gf2/gf3 sudo 也是 `tim`, no NOPASSWD)
+- 密码: `tim` (uc01/uc02 sudo 也是 `tim`, no NOPASSWD)
 - gf0/gf1: 通过反向隧道, 无需密码 (key-based)
-- gf2/gf3: 用 `sshpass -p tim` 或配置 SSH key
+- uc01/uc02: 用 `sshpass -p tim` 或配置 SSH key
 
-### 4.3 TOS 跨机传输 (gf 集群 ↔ sim01 ↔ gf2/gf3)
+### 4.3 TOS 跨机传输 (gf 集群 ↔ sim01 ↔ uc01/uc02)
 
 bucket: `transfer-shanghai` @ `tos-cn-shanghai.volces.com` (region `cn-shanghai`)
 
@@ -267,7 +268,7 @@ bucket: `transfer-shanghai` @ `tos-cn-shanghai.volces.com` (region `cn-shanghai`
 # 上传到 TOS (gf 任意机)
 .venv/bin/python train_scripts/data/to_tos_file.py <local_file>
 
-# 下载从 TOS (gf 任意机 / sim01 / gf2/gf3)
+# 下载从 TOS (gf 任意机 / sim01 / uc01/uc02)
 .venv/bin/python train_scripts/data/from_tos_file.py <bucket_path>
 ```
 
@@ -281,7 +282,7 @@ bucket: `transfer-shanghai` @ `tos-cn-shanghai.volces.com` (region `cn-shanghai`
 
 ```bash
 ssh tim@<host>
-cd ~/workspace/deepdive_kai0/kai0   # gf2/gf3
+cd ~/workspace/deepdive_kai0/kai0   # uc01/uc02
 # 或 /vePFS/tim/workspace/deepdive_kai0/kai0   # gf0/gf1
 
 # Step 1: 计算 norm_stats (新建 dataset 时必做)
@@ -358,12 +359,12 @@ disown $!
 
 直接读写 `/vePFS/...` 路径, 共享 GPFS。一边写另一边立即可见。
 
-### 6.2 gf 集群 ↔ gf2/gf3
+### 6.2 gf 集群 ↔ uc01/uc02
 
 | 方法 | 适用 | 命令 |
 |---|---|---|
 | **TOS** | 大文件 (ckpt tar, 大 dataset) | `to_tos_file.py` 上传 + `from_tos_file.py` 下载, 走公网, ~85 MB/s |
-| **rsync 直连** | 文档代码小文件 | gf2 ↔ gf3 内网直连 (gbps), gf0 → gf2 走公网 |
+| **rsync 直连** | 文档代码小文件 | uc01 ↔ uc02 内网直连 (gbps), gf0 → uc01 走公网 |
 | **GitHub** | 代码 (`.gitignore` 排除大文件) | `git push origin main` + `git pull` |
 
 ### 6.3 sim01 ↔ gf 集群
@@ -418,7 +419,7 @@ kill -SIGKILL <pid>
 nvidia-smi --query-gpu=memory.used --format=csv,noheader
 ```
 
-### 7.4 Locale warning (gf2/gf3)
+### 7.4 Locale warning (uc01/uc02)
 
 每次 SSH 都会 `setlocale: LC_ALL: cannot change locale (zh_CN.UTF-8)`. 无功能影响, 可加 `export LC_ALL=C.UTF-8` 到 `~/.bashrc`。
 
@@ -445,8 +446,8 @@ ckpt_path:        ${KAI0_DATA_ROOT}/checkpoints/<config>/<exp_name>/<step>/
 |---|---|---|
 | **gf0** | Task_A 全参 fine-tune (主战) | 50k step 长训, vePFS 数据 |
 | **gf1** | Task_A 全参 fine-tune (副战) | 同 gf0, 但需 /dev/shm 加速 |
-| **gf2** | (待用) Advantage Estimator / AWBC 训练 | 数据本地, 无 vePFS 拥挤问题 |
-| **gf3** | (待用) gf2 副本 / 并行实验 | 同 gf2 |
+| **uc01** | (待用) Advantage Estimator / AWBC 训练 | 数据本地, 无 vePFS 拥挤问题 |
+| **uc02** | (待用) uc01 副本 / 并行实验 | 同 uc01 |
 
 ---
 
@@ -477,7 +478,7 @@ serve_policy.py 启动推理服务
 | pi05 全参 fine-tune, batch=128, fsdp=8, vePFS data | gf0 | **2.0** | 基准, 数据热 cache |
 | 同上 | gf1 | 5.5 | vePFS 数据冷, dataloader bound |
 | 同上, data on /dev/shm | gf1 | **3.16** | 修复后, GPU 100% util |
-| 同上 | gf2/gf3 | (待测) | 期望 ~2-3 s/step |
+| 同上 | uc01/uc02 | (待测) | 期望 ~2-3 s/step |
 
 inline-eval 时间 (200 frames 采样):
 - 17 val ep: 660s
@@ -492,6 +493,6 @@ inline-eval 时间 (200 frames 采样):
 
 | 日期 | 内容 |
 |---|---|
-| 2026-05-02 | 初版: 整合 gf0/gf1/gf2/gf3, 含 v3 /dev/shm 加速实测 |
+| 2026-05-02 | 初版: 整合 gf0/gf1/uc01/uc02, 含 v3 /dev/shm 加速实测 |
 
-后续更新: 添加 gf2/gf3 实际训练性能基线 / sim01 ↔ gf 集群网络拓扑细节。
+后续更新: 添加 uc01/uc02 实际训练性能基线 / sim01 ↔ gf 集群网络拓扑细节。

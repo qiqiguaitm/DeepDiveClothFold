@@ -1,9 +1,9 @@
-# gf2 复现方案：Advantage Estimator + AWBC
+# uc01 复现方案：Advantage Estimator + AWBC
 
 ## 背景
 
 - gf0、gf1 正在进行阶段一（Normal fine-tune + Split 训练），尚未完成
-- gf2（本机，8× GPU）基于 **kai0 官方发布的模型和数据**，独立复现阶段二：AWBC 和 Advantage Estimator
+- uc01（本机，8× GPU）基于 **kai0 官方发布的模型和数据**，独立复现阶段二：AWBC 和 Advantage Estimator
 - Task_A 数据已完整（base 3,055 ep / advantage 3,055 ep / dagger 3,457 ep，视频全部可用）
 
 ## 现有资源

@@ -1,6 +1,6 @@
 # Task A mix_b6000_p1200 (mixed_1 init) 训练结果
 
-> **实验**: gf2 实验1 — `pi05_flatten_fold_mix_b6000_p1200_init_mixed_1`
+> **实验**: uc01 实验1 — `pi05_flatten_fold_mix_b6000_p1200_init_mixed_1`
 > **状态**: ✅ **完成** (50,000 步, ended 2026-05-07 12:24:37 CST, 训练时长 26h17m)
 > **目的**: 用 base6000 + pure1200 大规模混合数据集 + mixed_1 init, 评估 Task A 大数据下的微调上限
 > **对比实验**: 实验3 (gf0 同 dataset, init from pi05_base, 100k 步) — 控制变量为 init weights
@@ -25,7 +25,7 @@
 | Save | every 2,000 step, keep_period=10,000 |
 | inline_eval | every 2 saves (= 每 4k 步), 200 frames |
 | Seed | 42 |
-| Server | gf2 (A800-SXM4-80GB ×8, driver 550.144.03, CUDA 12.4) |
+| Server | uc01 (A800-SXM4-80GB ×8, driver 550.144.03, CUDA 12.4) |
 
 ---
 
@@ -104,7 +104,7 @@ step 49999: 0.0108 (0.0%)
 
 ## 5. 最佳 Checkpoint 信息
 
-- **路径** (gf2): `/home/tim/workspace/deepdive_kai0/kai0/checkpoints/pi05_flatten_fold_mix_b6000_p1200_init_mixed_1/task_a_mix_base6000_pure1200_new_norm_base_mixed_1/{20000,30000,40000,49999}/`
+- **路径** (uc01): `/home/tim/workspace/deepdive_kai0/kai0/checkpoints/pi05_flatten_fold_mix_b6000_p1200_init_mixed_1/task_a_mix_base6000_pure1200_new_norm_base_mixed_1/{20000,30000,40000,49999}/`
 - **保留 ckpts**: 20k, 30k, 40k, 49999 (keep_period=10000)
 - **推荐**: step 44k (首次 plateau) — 但仅 20k/30k/40k/49999 保留, 实际可用最佳 = step 40k 或 49999 (同等 MAE=0.0108-0.0109)
 - **norm_stats**: 与 ckpt 同目录 `norm_stats.json`
