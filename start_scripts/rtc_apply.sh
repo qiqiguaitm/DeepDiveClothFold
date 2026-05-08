@@ -14,6 +14,8 @@
 #   ./rtc_apply.sh on          # default: RTC + moderate smoothing
 #   ./rtc_apply.sh rtc_tight   # high replan + short guidance window
 #   ./rtc_apply.sh rtc_long    # RTC over full horizon (A/B control)
+#   ./rtc_apply.sh rtc_paper   # paper Table 4 conservative (exec_h=25, max_guid=0.5)
+#   ./rtc_apply.sh rtc_paper_strong  # paper Table 4 numeric (max_guid=5.0, ⚠ 10x warning)
 #   ./rtc_apply.sh rtc5        # legacy alias for on
 #   ./rtc_apply.sh rtc3        # legacy alias for rtc_tight
 #   ./rtc_apply.sh show        # same as no-arg
@@ -67,6 +69,21 @@ case "$mode" in
         # A/B control: guide over full action horizon (50 steps).
         # Maximum continuity, minimum responsiveness.
         apply true  50 0.5  3.0 8 8 0.25
+        ;;
+    rtc_paper)
+        # Paper Table 4 alignment (conservative weight). exec_h=25 between default
+        # (16) and rtc_long (50) — wider guidance window, slightly less responsive.
+        # max_guid stays at 0.5 (current code's "paper default" interpretation).
+        # See logs/rtc_config_compare_2026-04-29.md for the unit-mismatch discussion.
+        apply true  25 0.5  3.0 8 8 0.25
+        ;;
+    rtc_paper_strong)
+        # Paper Table 4 numeric (max_guid=5.0, 10x stronger than rtc_apply default).
+        # WARNING: rtc_apply comment says "paper default 0.5"; Table 4 says 5.0.
+        # Possible unit mismatch (unnormalized vs normalized weight). Verify on
+        # robot incrementally — start with rtc_paper, only step up here if guidance
+        # at 0.5 looks too weak (chunks visibly diverging at boundary).
+        apply true  25 5.0  3.0 8 8 0.25
         ;;
     show)
         for p in enable_rtc rtc_execute_horizon rtc_max_guidance_weight \

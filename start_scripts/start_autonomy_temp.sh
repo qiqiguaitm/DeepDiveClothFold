@@ -95,19 +95,71 @@
 #  checkpoint_dir:=/home/tim/workspace/deepdive_kai0/kai0/checkpoints/visrobot01_only_2k_step1999_gf0 \
 #  prompt:='"Flatten and fold the cloth"'
 
-# 选 I: Task_A FlattenFold mix_vis600 best step 38000 (gf0 训练 2026-04-25→26)
-# - 训练 dataset: kai0/data/Task_A/self_built/mix_vis600/base (310 vis_base + 145 kai0_base + 145 kai0_dagger,
-#   见该目录 README/manifest.json), val=mix_vis600/val. 40k cosine schedule, peak_lr=1.5e-5, ema=0.9999,
-#   init from Task_A/mixed_1/params. inline_eval best @ step 38000.
-# - tar 源: gf1:/vePFS/tim/workspace/deepdive_kai0_tmp/data/mix_vis600_best_step38000.tar (11.6 GB inference-ready).
-#   通路: gf1 sudo cp → /transfer-shanghai/KAI0 fuse (TOS) → sim01 from_tos_file.py (~2 min @ 95 MB/s).
-# - 用 NEW config pi05_flatten_fold_mix_vis600 (在 kai0/src/openpi/training/config.py 已注册).
-#   asset_id 默认回退 = repo_id (绝对路径) → openpi 直接从
-#   /home/tim/.../kai0/data/Task_A/self_built/mix_vis600/base/norm_stats.json 读 (本地已经放好,
-#   md5 38bff549..., 来自 gf 训练时落盘的同一份).
-# - ckpt 结构: params + assets/(空) + _CHECKPOINT_METADATA, 无 train_state/. 够推理不够续训.
-# - 路径用 run-style symlink: pi05_flatten_fold_mix_vis600/mix_vis600_v1/38000 → ckpt_downloads/...
-#./start_scripts/start_autonomy.sh --execute enable_rtc:=false config_name:=pi05_flatten_fold_mix_vis600 \
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Phase 0.A 真机对照: mix_vis600 step-vs-corner-grasp 曲线 (debug log 选项 I/O/P/Q)
+#   docs/deployment/task_a_real_robot_grasp_corner_debug_log.md §0.A
+#   依次跑 step 4000/10000/20000/38000, 各 10 次叠衣服, 记录 corner-grasp 成功率.
+#   所有 4 个 ckpt 都用同一个 config + 同一份 norm_stats, 只换 step 数字 — 单变量.
+# 共用前提:
+#   - config: pi05_flatten_fold_mix_vis600 (config.py:2571 已注册, sim01 端)
+#   - dataset 同一份: 310 vis + 145 kai0_base + 145 kai0_dagger = 600 ep
+#   - asset_id 默认 = repo_id 绝对路径 → norm_stats 读 kai0/data/.../mix_vis600/base/norm_stats.json
+#     (md5 38bff549..., 已落盘)
+#   - ckpt 结构: params + assets/(空) + _CHECKPOINT_METADATA, 无 train_state/ (只 inference 用)
+# RTC: 默认 enable_rtc:=true; 启动后第 2 终端 `./rtc_apply.sh on` 走默认 16/0.5,
+#   想切 paper Table 4 (exec_h=25) 用 `rtc_paper`. 建议每 step 都用 same RTC mode,
+#   保证变量唯一是 step.
+# 通路: gf 上 tar 跳过 train_state (12 GB / step) → sudo cp → /transfer-shanghai/KAI0 fuse
+#   → sim01 from_tos_file.py 并行下三个 step (~6 min @ 100 MB/s 总聚合).
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+# 选 O: mix_vis600 step 4000 (Phase 0.A 早期)
+#./start_scripts/start_autonomy.sh --execute enable_rtc:=true config_name:=pi05_flatten_fold_mix_vis600 \
+#  checkpoint_dir:=/home/tim/workspace/deepdive_kai0/kai0/checkpoints/pi05_flatten_fold_mix_vis600/mix_vis600_v1/4000 \
+#  prompt:='"Flatten and fold the cloth"'
+
+# 选 P: mix_vis600 step 10000 (Phase 0.A 中期)
+#./start_scripts/start_autonomy.sh --execute enable_rtc:=true config_name:=pi05_flatten_fold_mix_vis600 \
+#  checkpoint_dir:=/home/tim/workspace/deepdive_kai0/kai0/checkpoints/pi05_flatten_fold_mix_vis600/mix_vis600_v1/10000 \
+#  prompt:='"Flatten and fold the cloth"'
+
+# 选 Q: mix_vis600 step 20000 (Phase 0.A 中后期)
+#./start_scripts/start_autonomy.sh --execute enable_rtc:=true config_name:=pi05_flatten_fold_mix_vis600 \
+#  checkpoint_dir:=/home/tim/workspace/deepdive_kai0/kai0/checkpoints/pi05_flatten_fold_mix_vis600/mix_vis600_v1/20000 \
+#  prompt:='"Flatten and fold the cloth"'
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Task_A FlattenFold pure_1200 系列 (mixed_1 init + new_norm + 50k schedule)
+#   - 配方: cosine warmup=1k, peak_lr=1.5e-5, decay_lr=1.5e-6, ema=0.9999, batch=128
+#   - Init from Task_A/mixed_1/params (MA-merged baseline)
+#   - asset_id 默认 = repo_id 绝对 → 推理读 <repo_id>/norm_stats.json
+#   - ckpt 结构: 扁平 A 类 (params + assets/empty + _CHECKPOINT_METADATA, 12 GB, 无 train_state)
+#   - 通路: gf1 to_tos_file.py → TOS → sim01 from_tos_file.py (~2 min @ 91 MB/s)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+# 选 R: task_a_pure_1200_new_norm step 49999 (final, gf0 #24 训练完成 2026-05-02)
+# - 训练 dataset: kai0/data/Task_A/self_built/A_pure_1200/base
+#   1142 train + 58 val (620 visrobot01 originals + 580 hflip mirrors), ALL 8 dates 04-23..04-30
+# - inline_eval best @ step 48000=49999 tied: MAE@1=0.0145, @10=0.0255, @25=0.0384, @50=0.0539
+# - norm_stats md5: 35a68a83... (与 gf 训练源对齐, 已 scp)
+#./start_scripts/start_autonomy.sh --execute enable_rtc:=true config_name:=pi05_flatten_fold_a_pure_1200 \
+#  checkpoint_dir:=/home/tim/workspace/deepdive_kai0/kai0/checkpoints/task_a_pure_1200_new_norm_best_step49999 \
+#  prompt:='"Flatten and fold the cloth"'
+
+# 选 S: task_a_new_pure_1200_new_norm step 38000 (best valid, gf1 #25 训练 step 40000 ckpt save 时 ENOSPC crash)
+# ⭐ 当前推荐 (best MAE@1=0.0104, 优于所有 Task A 历史训练)
+# - 训练 dataset: kai0/data/Task_A/self_built/A_new_pure_1200/base
+#   1143 train + 57 val (613 originals + 530 mirrors), 仅 6 个 -new 日期 (04-23/24/25/28/29/30-new)
+# - inline_eval @ step 38000: MAE@1=0.0104, @10=0.0227, @25=0.0378, @50=0.0569
+#   (step 40000 inline-eval 实测 MAE@1=0.0103 但 ckpt 没保存全)
+# - 数据来源 -new 日期质量更高, 较 a_pure_1200 (8 日期) 同 step 低 ~32%
+# - norm_stats md5: 43e8a4ec... (与 gf 训练源对齐, 已 scp)
+./start_scripts/start_autonomy.sh --execute enable_rtc:=true config_name:=pi05_flatten_fold_a_new_pure_1200 \
+  checkpoint_dir:=/home/tim/workspace/deepdive_kai0/kai0/checkpoints/task_a_new_pure_1200_new_norm_step30000 \
+  prompt:='"Flatten and fold the cloth"'
+
+# 选 I: mix_vis600 step 38000 (Phase 0.A best MAE @ 0.0146, 当前部署版本)
+#./start_scripts/start_autonomy.sh --execute enable_rtc:=true config_name:=pi05_flatten_fold_mix_vis600 \
 #  checkpoint_dir:=/home/tim/workspace/deepdive_kai0/kai0/checkpoints/pi05_flatten_fold_mix_vis600/mix_vis600_v1/38000 \
 #  prompt:='"Flatten and fold the cloth"'
 
@@ -149,9 +201,9 @@
 #   kai0/data/Task_A/self_built/pure_vis600/base/norm_stats.json 直读 (md5 d8b80670..., 已 scp 落盘).
 # - ckpt 结构: params + assets/(空) + _CHECKPOINT_METADATA, 无 train_state/.
 # - A/B 用途: 与 mix_vis600 (选 I) 对比, 看 hflip 镜像增广 vs kai0 真数据混合 哪种更好.
-./start_scripts/start_autonomy.sh --execute enable_rtc:=false config_name:=pi05_flatten_fold_pure_vis600 \
-  checkpoint_dir:=/home/tim/workspace/deepdive_kai0/kai0/checkpoints/pi05_flatten_fold_pure_vis600/pure_vis600_v1/39999 \
-  prompt:='"Flatten and fold the cloth"'
+#./start_scripts/start_autonomy.sh --execute enable_rtc:=false config_name:=pi05_flatten_fold_pure_vis600 \
+#  checkpoint_dir:=/home/tim/workspace/deepdive_kai0/kai0/checkpoints/pi05_flatten_fold_pure_vis600/pure_vis600_v1/39999 \
+#  prompt:='"Flatten and fold the cloth"'
 
 # 选 M: Task_A FlattenFold "vis_base_40k" best step 36000 (gf 训练 2026-04-26→28 跑完)
 # - 训练 dataset: kai0/data/Task_A_visrobot01_only/base (310 vis_base 原始, 288 train+22 val,
@@ -165,6 +217,29 @@
 # - A/B 用途: 与 pure_vis600 (选 L) 对比, 看 hflip 镜像有没有帮助 (相同 base data, 唯一变量是 +mirrors).
 #./start_scripts/start_autonomy.sh --execute enable_rtc:=false config_name:=pi05_flatten_fold_vis_base_40k \
 #  checkpoint_dir:=/home/tim/workspace/deepdive_kai0/kai0/checkpoints/pi05_flatten_fold_vis_base_40k/vis_base_40k_v1/36000 \
+#  prompt:='"Flatten and fold the cloth"'
+
+# 选 N: Task_A FlattenFold "mix_apr28_450_inherit_norm" best step 28000 (gf 训练 2026-04-29→30)
+# - 训练 dataset: kai0/data/Task_A/self_built/mix_apr28_450_inherit/base
+#   data/videos symlink 自 mix_apr28_450/base (450 ep mix: 150 vis_2026-04-28 + 150 kai0_base + 150 kai0_dagger).
+#   30k cosine, peak_lr=1.5e-5, ema=0.9999. Init from Task_A/mixed_1/params.
+# - 与 mix_apr28_450 (NEW_NORM) 的对照: dataset 完全相同, 唯一差异 = norm_stats 来源.
+#     INHERIT_NORM (本): norm_stats.json 直接复用 Task_A/mixed_1 那份 (md5 b206072c…).
+#     NEW_NORM (对照):   norm_stats.json 从当前 405 train 重新算.
+#   Tests whether "用 init 模型的旧 stats" 比 "重新算" 表现差/好/无差.
+# - tar 源: gf:/vePFS/tim/workspace/deepdive_kai0_tmp/data/mix_apr28_450_inherit_norm_best.tar (11.6 GB).
+#   通路: gf sudo cp → /transfer-shanghai/KAI0 fuse (TOS) → sim01 from_tos_file.py (~2 min @ 95 MB/s).
+#   step 28000 通过比对 _CHECKPOINT_METADATA commit_timestamp 与 gf ckpt 目录推断得出.
+# - 用 NEW config pi05_flatten_fold_mix_apr28_450_inherit_norm (sim01 config.py 已 port).
+#   asset_id 默认 = repo_id (绝对路径) → openpi 从
+#   kai0/data/Task_A/self_built/mix_apr28_450_inherit/base/norm_stats.json 直读
+#   (md5 b206072c…, 与 mixed_1 那份完全相同, 已 rsync 落盘).
+# - ckpt 结构: params + assets/(空) + _CHECKPOINT_METADATA, 无 train_state/. 够推理不够续训.
+# - RTC: 启动后第 2 终端跑 `./start_scripts/rtc_apply.sh rtc_paper` 以对齐 Table 4
+#   (exec_h=25, max_guid=0.5; 见 logs/rtc_config_compare_2026-04-29.md). 若 0.5 偏弱
+#   再切 `rtc_paper_strong` (max_guid=5.0). enable_rtc 这里设 true 以启用 guidance.
+#./start_scripts/start_autonomy.sh --execute enable_rtc:=false config_name:=pi05_flatten_fold_mix_apr28_450_inherit_norm \
+#  checkpoint_dir:=/home/tim/workspace/deepdive_kai0/kai0/checkpoints/pi05_flatten_fold_mix_apr28_450_inherit_norm/mix_apr28_450_inherit_norm_v1/28000 \
 #  prompt:='"Flatten and fold the cloth"'
 
 # Task_E vision-unfreeze full-param @ step 1999 (gf1 bs=128, 2000 steps, 2026-04-22)

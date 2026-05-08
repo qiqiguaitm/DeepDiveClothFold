@@ -40,6 +40,22 @@ info() { echo -e "${CYAN}[INFO]${NC} $1"; }
 
 ACTION="${1:-start}"
 
+# ── Deployment mode marker (P1: replay function safety gate) ──
+# Replay can only run in 'autonomy' mode; teleop arms publishing to /master/joint_*
+# would conflict with replay's publish path. Marker lets backend pre-flight
+# reject replay attempts before any ros2 call.
+# IMPORTANT: only own/clear the marker when it currently says 'teleop' — never
+# stomp an 'autonomy' marker (autonomy may still be running concurrently and
+# replay would be wrongly rejected after this stop).
+KAI0_DEPLOYMENT_MARKER=/tmp/kai0_deployment_mode
+if [[ "$ACTION" == "start" || "$ACTION" == "restart" ]]; then
+    echo teleop > "$KAI0_DEPLOYMENT_MARKER"
+elif [[ "$ACTION" == "stop" ]]; then
+    if [[ -f "$KAI0_DEPLOYMENT_MARKER" && "$(cat "$KAI0_DEPLOYMENT_MARKER" 2>/dev/null)" == "teleop" ]]; then
+        rm -f "$KAI0_DEPLOYMENT_MARKER"
+    fi
+fi
+
 # ── Pre-flight: only on start/restart ──
 if [[ "$ACTION" == "start" || "$ACTION" == "restart" ]]; then
     echo "============================================================"
@@ -142,5 +158,18 @@ export SETUP_CAN=1
 # Data collection needs 30 fps to match training data (launch_3cam.py defaults
 # to 15 fps to ease USB bandwidth; override here for full-rate recording).
 export CAM_FPS=30
+# Recording convention: action = state (puppet/slave joint state) — matches
+# official KAI0 upstream so this run's data mixes cleanly with kai0_base /
+# kai0_dagger / advantage. Set KAI0_ACTION_EQ_STATE=0 to revert to legacy
+# bilateral capture (master command goes into action). Consumed by
+# web/data_manager/backend/app/ros_bridge.py::get_state_action.
+export KAI0_ACTION_EQ_STATE="${KAI0_ACTION_EQ_STATE:-1}"
+if [[ "${ACTION:-start}" == "start" || "${ACTION:-start}" == "restart" ]]; then
+    if [[ "$KAI0_ACTION_EQ_STATE" == "1" ]]; then
+        info "data convention: action == state (KAI0 official; master topic ignored for action field)"
+    else
+        info "data convention: action = master (legacy bilateral; falls back to state if master topic missing)"
+    fi
+fi
 
 exec bash "$RUN_SH" "$ACTION" "${@:2}"

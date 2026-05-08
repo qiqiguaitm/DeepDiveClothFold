@@ -310,6 +310,20 @@ class PolicyInferenceNode(Node):
         self.declare_parameter('enable_rerun', False)
         self.declare_parameter('calibration_config', '')
 
+        # ── Replay mode params (P1) ──
+        # 'inference' = call policy.infer() (default, existing path)
+        # 'replay'    = pop from preloaded parquet actions, no policy call
+        # 'idle'      = block, no publishing (transition / fail-safe)
+        self.declare_parameter('replay_mode', 'inference')
+        self.declare_parameter('replay_episode_path', '')
+        self.declare_parameter('replay_rate', 1.0)
+        self.declare_parameter('replay_loop', False)
+        # Auto-home: when current pose is > 5° off action[0], prepend a linear
+        # interpolation segment so arm slow-walks from current → action[0] before
+        # the recorded trajectory plays. Avoids requiring manual pre-alignment.
+        self.declare_parameter('replay_auto_home', True)
+        self.declare_parameter('replay_home_duration', 3.0)  # seconds, [1, 10]
+
         self.mode = self.get_parameter('mode').value
         self.prompt = self.get_parameter('prompt').value
         self.publish_rate = self.get_parameter('publish_rate').value
@@ -322,6 +336,20 @@ class PolicyInferenceNode(Node):
         self._rtc_execute_horizon = int(self.get_parameter('rtc_execute_horizon').value)
         self._rtc_max_guidance_weight = float(self.get_parameter('rtc_max_guidance_weight').value)
         self.gripper_offset = self.get_parameter('gripper_offset').value
+
+        # ── Replay state ──
+        self._replay_mode = str(self.get_parameter('replay_mode').value)
+        self._replay_rate = max(0.5, min(1.5, float(self.get_parameter('replay_rate').value)))
+        self._replay_loop = _to_bool(self.get_parameter('replay_loop').value)
+        self._replay_auto_home = _to_bool(self.get_parameter('replay_auto_home').value)
+        self._replay_home_duration = max(1.0, min(10.0, float(self.get_parameter('replay_home_duration').value)))
+        self._replay_lock = threading.Lock()
+        self._replay_actions = None    # np.ndarray[T, 14] when loaded, else None
+        self._replay_path = ''
+        self._replay_parquet_fps = float(self.publish_rate)  # measured from timestamps
+        self._replay_buffer_total = 0  # total frames in cur_chunk after fps-comp + home prepend
+        self._replay_aligned_threshold_rad = float(np.deg2rad(5.0))
+        self._replay_progress_last_ts = 0.0  # rate-limit /replay_progress publish
 
         self.get_logger().info(f'Mode: {self.mode}')
 
@@ -394,6 +422,9 @@ class PolicyInferenceNode(Node):
         from std_msgs.msg import Float32MultiArray
         self.pub_action_chunk = self.create_publisher(
             Float32MultiArray, '/policy/action_chunk', 5)
+        # Replay progress: [frame_idx, total_frames, done_flag]
+        self.pub_replay_progress = self.create_publisher(
+            Float32MultiArray, '/replay_progress', 5)
 
         # ── Rerun visualization (conditional) ──
         # Rerun set_time+log is non-atomic. All ROS2 callbacks/timers MUST share
@@ -490,9 +521,354 @@ class PolicyInferenceNode(Node):
                     self.gripper_offset = float(p.value)
                 elif p.name == 'prompt':
                     self.prompt = str(p.value)
+                elif p.name == 'replay_episode_path':
+                    new_path = str(p.value)
+                    if not new_path:
+                        with self._replay_lock:
+                            self._replay_actions = None
+                            self._replay_path = ''
+                        self.get_logger().info('[REPLAY] cleared episode path')
+                    else:
+                        ok, msg = self._load_replay_episode(new_path)
+                        if not ok:
+                            return SetParametersResult(successful=False, reason=msg)
+                elif p.name == 'replay_rate':
+                    rate = max(0.5, min(1.5, float(p.value)))
+                    self._replay_rate = rate
+                    self.get_logger().info(f'replay_rate → {rate}')
+                elif p.name == 'replay_loop':
+                    self._replay_loop = _to_bool(p.value)
+                    self.get_logger().info(f'replay_loop → {self._replay_loop}')
+                elif p.name == 'replay_auto_home':
+                    self._replay_auto_home = _to_bool(p.value)
+                    self.get_logger().info(f'replay_auto_home → {self._replay_auto_home}')
+                elif p.name == 'replay_home_duration':
+                    self._replay_home_duration = max(1.0, min(10.0, float(p.value)))
+                    self.get_logger().info(f'replay_home_duration → {self._replay_home_duration}s')
+                elif p.name == 'replay_mode':
+                    new_rm = str(p.value)
+                    if new_rm not in ('inference', 'replay', 'idle'):
+                        return SetParametersResult(
+                            successful=False,
+                            reason=f'invalid replay_mode {new_rm!r}, expect inference|replay|idle')
+                    if new_rm == 'replay':
+                        # ALWAYS re-enter (re-fill buffer + re-check pose) even if
+                        # mode was already 'replay'. Setting replay_mode=replay is
+                        # the user's "restart this episode" trigger; short-circuit
+                        # would leave a previous run's drained buffer in place →
+                        # next /policy/execute=true sees remaining=0 → instant done.
+                        ok, reason = self._enter_replay_mode()
+                        if not ok:
+                            return SetParametersResult(
+                                successful=False,
+                                reason=f'replay pre-flight failed: {reason}')
+                    elif new_rm != self._replay_mode and self._replay_mode == 'replay':
+                        # leaving replay (replay → inference|idle)
+                        self._exit_replay_mode()
+                    self._replay_mode = new_rm
+                    self.get_logger().info(f'replay_mode → {new_rm}')
             except Exception as e:
                 return SetParametersResult(successful=False, reason=f'{p.name}: {e}')
         return SetParametersResult(successful=True)
+
+    # ── Replay mode (P1) ────────────────────────────────────────────
+
+    def _load_replay_episode(self, parquet_path: str):
+        """Load `action` column from a LeRobot v2.1 episode parquet, plus the real
+        recording FPS inferred from timestamp deltas. Returns (ok: bool, msg: str).
+        Stores result in self._replay_actions and self._replay_parquet_fps."""
+        try:
+            import pyarrow.parquet as pq
+        except ImportError as e:
+            return False, f'pyarrow not installed: {e}'
+        if not os.path.isfile(parquet_path):
+            return False, f'parquet not found: {parquet_path}'
+        try:
+            tbl = pq.read_table(parquet_path, columns=['action', 'timestamp'])
+        except Exception as e:
+            return False, f'parquet read failed: {e}'
+        try:
+            actions_list = tbl.column('action').to_pylist()
+            actions = np.asarray(actions_list, dtype=np.float32)
+        except Exception as e:
+            return False, f'action column decode failed: {e}'
+        if actions.ndim != 2 or actions.shape[1] != 14:
+            return False, f'bad action shape {actions.shape}, expected [T, 14]'
+        # Compute real recording FPS from timestamps. meta.json's `fps` field is
+        # often inaccurate (writer-side declared, not measured), so we use the
+        # actual deltas. This matters: replay was naively assuming 30Hz but
+        # Task_P/.../episode_42 is actually 14Hz → naive replay played 2.14× speed.
+        try:
+            ts = np.asarray(tbl.column('timestamp').to_pylist(), dtype=np.float64)
+            if len(ts) >= 2:
+                duration_s = float(ts[-1] - ts[0])
+                parquet_fps = (len(ts) - 1) / duration_s if duration_s > 1e-6 else float(self.publish_rate)
+            else:
+                duration_s = 0.0
+                parquet_fps = float(self.publish_rate)
+        except Exception:
+            duration_s = actions.shape[0] / float(self.publish_rate)
+            parquet_fps = float(self.publish_rate)
+        with self._replay_lock:
+            self._replay_actions = actions
+            self._replay_path = parquet_path
+            self._replay_parquet_fps = parquet_fps
+        self.get_logger().info(
+            f'[REPLAY] loaded {parquet_path}: {actions.shape[0]} frames, '
+            f'duration={duration_s:.2f}s, parquet_fps={parquet_fps:.2f} Hz '
+            f'(publish_rate={self.publish_rate} Hz)')
+        return True, f'loaded {actions.shape[0]} frames @ {parquet_fps:.1f} Hz'
+
+    def _check_start_pose_aligned(self):
+        """Compare latest joint state to action[0] of currently loaded episode.
+        Returns (aligned: bool, max_diff_rad: float, per_joint_diff_rad: list[float]).
+        FAIL CLOSED on missing data (returns aligned=False)."""
+        with self._replay_lock:
+            if self._replay_actions is None:
+                return False, float('inf'), []
+            target = self._replay_actions[0].copy()
+        with self._sensor_lock:
+            jl = self._joint_left_deque[-1] if self._joint_left_deque else None
+            jr = self._joint_right_deque[-1] if self._joint_right_deque else None
+        if jl is None or jr is None:
+            return False, float('inf'), []
+        ql = np.asarray(jl.position[:7], dtype=np.float32)
+        qr = np.asarray(jr.position[:7], dtype=np.float32)
+        if len(ql) < 7 or len(qr) < 7:
+            return False, float('inf'), []
+        current = np.concatenate([ql, qr])
+        diff = np.abs(current - target)
+        max_diff = float(diff.max())
+        aligned = bool(max_diff <= self._replay_aligned_threshold_rad)
+        return aligned, max_diff, [float(x) for x in diff]
+
+    def _verify_no_publisher_conflict(self):
+        """Check no other node is publishing to /master/joint_left.
+        Returns (ok: bool, conflict_node_names: list[str]). FAIL CLOSED.
+
+        `ros2 topic info -v` output format (jazzy): no `Publishers:` / `Subscriptions:`
+        section headers — instead each endpoint is its own block with
+        `Endpoint type: PUBLISHER|SUBSCRIPTION`. Parse by splitting on blocks and
+        filtering by Endpoint type. Earlier impl used a 'Publishers:' header regex
+        that never matched, so ALL Node names (including subscribers) got flagged
+        as publishers — false positives blocked legitimate replays."""
+        try:
+            import subprocess
+            import re
+            out = subprocess.run(
+                ['ros2', 'topic', 'info', '/master/joint_left', '-v'],
+                capture_output=True, text=True, timeout=5)
+            if out.returncode != 0:
+                return False, [f'ros2 topic info rc={out.returncode}: {out.stderr.strip()[:200]}']
+            text = out.stdout
+            # Split into per-endpoint blocks. Each block starts with "Node name:".
+            blocks = re.split(r'\n(?=Node name:)', text)
+            publishers = []
+            for blk in blocks:
+                if 'Endpoint type: PUBLISHER' not in blk:
+                    continue
+                m = re.search(r'Node name:\s*(\S+)', blk)
+                if m:
+                    publishers.append(m.group(1))
+            my_name = self.get_name()
+            others = [p for p in publishers if p != my_name]
+            self.get_logger().info(
+                f'[REPLAY] /master/joint_left publishers found={publishers}, '
+                f'my_name={my_name!r}, conflicting={others}')
+            return len(others) == 0, others
+        except Exception as e:
+            return False, [f'check_failed: {e}']
+
+    def _verify_deployment_marker(self):
+        """Check /tmp/kai0_deployment_mode == 'autonomy'.
+        Returns (ok: bool, current_value_or_reason: str). FAIL CLOSED."""
+        marker = '/tmp/kai0_deployment_mode'
+        if not os.path.isfile(marker):
+            return False, f'{marker} missing — start_autonomy.sh not active?'
+        try:
+            with open(marker) as f:
+                val = f.read().strip()
+        except Exception as e:
+            return False, f'{marker} read failed: {e}'
+        if val != 'autonomy':
+            return False, f'{marker}={val!r}, replay requires autonomy'
+        return True, val
+
+    def _resample_actions(self, actions: np.ndarray, rate: float) -> np.ndarray:
+        """Linear-interp resample [T, 14] by `rate` (no clamp here; user-facing
+        replay_rate clamp happens at param boundary). rate < 1.0 → upsample
+        (more frames, slower playback); rate > 1.0 → downsample (faster)."""
+        rate = float(rate)
+        if abs(rate - 1.0) < 1e-3:
+            return actions
+        T = actions.shape[0]
+        new_T = max(1, int(round(T / rate)))
+        if new_T == T:
+            return actions
+        old_idx = np.linspace(0.0, T - 1.0, T)
+        new_idx = np.linspace(0.0, T - 1.0, new_T)
+        return np.array(
+            [np.interp(new_idx, old_idx, actions[:, d]) for d in range(actions.shape[1])],
+            dtype=np.float32).T
+
+    def _enter_replay_mode(self):
+        """Run all pre-flight gates, fill stream_buffer, ready for execution.
+        Caller must have already loaded _replay_actions via replay_episode_path param.
+        Returns (ok: bool, reason_if_fail: str)."""
+        with self._replay_lock:
+            if self._replay_actions is None:
+                return False, 'no episode loaded (set replay_episode_path first)'
+        # S1: deployment marker
+        ok, reason = self._verify_deployment_marker()
+        if not ok:
+            return False, f'deployment marker: {reason}'
+        # S2: publisher conflict
+        ok, others = self._verify_no_publisher_conflict()
+        if not ok:
+            return False, f'topic /master/joint_left has other publishers: {others}'
+        # S4 + fps compensation pipeline. Two segments need DIFFERENT resampling:
+        #   - Episode actions: recorded at parquet_fps (often != publish_rate); must
+        #     be upsampled to publish_rate so wall-clock duration matches recording.
+        #   - Auto-home interp: constructed at publish_rate spacing (we choose
+        #     home_n based on replay_home_duration*publish_rate); already correct,
+        #     no further resampling.
+        # Mistake to avoid: resampling the concatenated [home + episode] uniformly
+        # stretches the home segment too, breaking timing.
+        publish_rate = float(self.publish_rate)
+        parquet_fps = float(self._replay_parquet_fps)
+        episode_eff_rate = self._replay_rate * (parquet_fps / publish_rate)
+        if episode_eff_rate < 0.05 or episode_eff_rate > 3.0:
+            self.get_logger().warn(
+                f'[REPLAY] episode effective resample rate {episode_eff_rate:.3f} clamped — '
+                f'replay_rate={self._replay_rate}, parquet_fps={parquet_fps}, '
+                f'publish_rate={publish_rate}')
+            episode_eff_rate = max(0.05, min(3.0, episode_eff_rate))
+        if abs(episode_eff_rate - 1.0) > 1e-3:
+            episode_actions = self._resample_actions(self._replay_actions, episode_eff_rate)
+        else:
+            episode_actions = self._replay_actions
+
+        # S4: start pose alignment (with optional auto-home interpolation)
+        aligned, max_d, per_joint = self._check_start_pose_aligned()
+        home_n = 0
+        home_frames = None
+        if not aligned:
+            if not self._replay_auto_home:
+                deg_per = ', '.join(f'{np.rad2deg(x):.1f}' for x in per_joint)
+                return False, (f'start pose not aligned: max_Δ={np.rad2deg(max_d):.2f}°, '
+                               f'threshold=5°. per-joint(°)=[{deg_per}]')
+            # AUTO-HOME at publish_rate (no further resample): home_duration_s × publish_rate frames.
+            with self._sensor_lock:
+                jl = self._joint_left_deque[-1] if self._joint_left_deque else None
+                jr = self._joint_right_deque[-1] if self._joint_right_deque else None
+            if jl is None or jr is None:
+                return False, 'auto_home: missing joint_state for current pose'
+            ql = np.asarray(jl.position[:7], dtype=np.float32)
+            qr = np.asarray(jr.position[:7], dtype=np.float32)
+            if len(ql) < 7 or len(qr) < 7:
+                return False, 'auto_home: incomplete joint_state'
+            current = np.concatenate([ql, qr])
+            target = episode_actions[0]   # post-resample first frame == _replay_actions[0]
+            home_n = max(1, int(round(self._replay_home_duration * publish_rate)))
+            per_step_max = float(np.max(np.abs(target - current))) / home_n
+            if per_step_max > self._MAX_JOINT_JUMP_RAD:
+                return False, (f'auto_home: per-step Δ={np.rad2deg(per_step_max):.2f}° > '
+                               f'{np.rad2deg(self._MAX_JOINT_JUMP_RAD):.0f}° jump-protect '
+                               f'threshold. Increase replay_home_duration (currently '
+                               f'{self._replay_home_duration:.1f}s).')
+            alphas = np.linspace(1.0/home_n, 1.0, home_n, dtype=np.float32).reshape(-1, 1)
+            home_frames = ((1.0 - alphas) * current[None, :] +
+                           alphas * target[None, :]).astype(np.float32)
+            self.get_logger().info(
+                f'[REPLAY] auto-home: {home_n} interp frames '
+                f'({self._replay_home_duration:.1f}s @{publish_rate:.0f}Hz). '
+                f'initial max_Δ={np.rad2deg(max_d):.2f}°, '
+                f'per-step Δ={np.rad2deg(per_step_max):.3f}°')
+
+        # Concatenate (home is at publish_rate spacing already; episode just upsampled to it)
+        if home_frames is not None:
+            actions = np.vstack([home_frames, episode_actions]).astype(np.float32)
+        else:
+            actions = np.asarray(episode_actions, dtype=np.float32)
+
+        with self.stream_buffer.lock:
+            self.stream_buffer.cur_chunk = deque([a.copy() for a in actions], maxlen=None)
+            self.stream_buffer.k = 0
+            self.stream_buffer.last_action = None
+        with self._replay_lock:
+            self._replay_buffer_total = int(actions.shape[0])
+        episode_after = actions.shape[0] - home_n
+        wall_play_s = actions.shape[0] / publish_rate
+        self.get_logger().info(
+            f'[REPLAY] entered replay mode: buffer={actions.shape[0]} frames '
+            f'(home={home_n} + episode={episode_after}), '
+            f'replay_rate={self._replay_rate}, episode_resample={episode_eff_rate:.3f}, '
+            f'parquet_fps={parquet_fps:.2f}→publish_rate={publish_rate:.0f}, '
+            f'wall_clock_play={wall_play_s:.2f}s '
+            f'(home={home_n/publish_rate:.2f}s + episode={episode_after/publish_rate:.2f}s), '
+            f'loop={self._replay_loop}, '
+            f'start_align_max_Δ={np.rad2deg(max_d):.2f}°{" (aligned)" if home_n == 0 else " (auto-home)"}')
+        return True, ''
+
+    def _exit_replay_mode(self):
+        """Idempotent. Flush buffer + auto-disable execution (safety)."""
+        self.stream_buffer.flush(seed_action=self._last_published_action)
+        with self._exec_lock:
+            self._execution_enabled = False
+        self.get_logger().info('[REPLAY] exited replay mode (buffer flushed, execution OFF)')
+
+    def _tick_replay(self):
+        """Called per inference-loop iteration while replay_mode='replay'.
+        Tracks progress, publishes /replay_progress, handles end-of-episode."""
+        with self._replay_lock:
+            actions = self._replay_actions
+            total = self._replay_buffer_total  # post-resample + home, set by _enter_replay_mode
+        if actions is None or total <= 0:
+            return
+        with self.stream_buffer.lock:
+            remaining = len(self.stream_buffer.cur_chunk)
+        idx = max(0, total - remaining)
+        done = (remaining == 0)
+        # Rate-limit progress publish (~10 Hz)
+        from std_msgs.msg import Float32MultiArray
+        now = time.monotonic()
+        if now - self._replay_progress_last_ts >= 0.1 or done:
+            msg = Float32MultiArray()
+            msg.data = [float(idx), float(total), 1.0 if done else 0.0]
+            try:
+                self.pub_replay_progress.publish(msg)
+            except Exception as e:
+                self.get_logger().debug(f'replay_progress publish failed: {e}')
+            self._replay_progress_last_ts = now
+            # Per-second info log: includes execution_enabled to detect cases where
+            # the buffer is full but execute=false (so nothing actually publishes).
+            if not hasattr(self, '_replay_info_last_ts'):
+                self._replay_info_last_ts = 0.0
+            if now - self._replay_info_last_ts >= 1.0 or done:
+                with self._exec_lock:
+                    enabled = self._execution_enabled
+                self.get_logger().info(
+                    f'[REPLAY] frame {idx}/{total} ({100*idx/max(1,total):.1f}%) '
+                    f'remaining={remaining} execute={enabled}')
+                self._replay_info_last_ts = now
+        # End-of-episode handling
+        if done:
+            if self._replay_loop:
+                ok, reason = self._enter_replay_mode()
+                if not ok:
+                    self.get_logger().warn(f'[REPLAY] loop end: {reason}, stopping')
+                    with self._exec_lock:
+                        self._execution_enabled = False
+                    self._replay_mode = 'inference'  # auto-revert on loop fail
+            else:
+                self.get_logger().info('[REPLAY] episode finished, execution OFF, mode→inference')
+                with self._exec_lock:
+                    self._execution_enabled = False
+                # Auto-revert to inference mode at end-of-episode. Without this,
+                # the inference loop keeps spinning in _tick_replay re-publishing
+                # the same done=true /replay_progress msg forever, AND a follow-up
+                # `replay_mode=replay` set would short-circuit (kept here as defense).
+                self._replay_mode = 'inference'
 
     # ── Policy loading ──────────────────────────────────────────────
 
@@ -775,8 +1151,11 @@ class PolicyInferenceNode(Node):
         with self._exec_lock:
             was_enabled = self._execution_enabled
             if msg.data and not was_enabled:
-                # Flush BEFORE enabling to prevent publishing stale actions
-                self._flush_stale_buffer()
+                # Flush BEFORE enabling to prevent publishing stale actions.
+                # EXCEPT in replay mode: stream_buffer was just preloaded with the
+                # entire episode by _enter_replay_mode; flushing would discard it.
+                if self._replay_mode != 'replay':
+                    self._flush_stale_buffer()
             self._execution_enabled = msg.data
         mode_str = 'EXECUTE' if msg.data else 'OBSERVE'
         self.get_logger().info(f'[{mode_str}] 已切换到{"执行" if msg.data else "观测"}模式')
@@ -788,8 +1167,9 @@ class PolicyInferenceNode(Node):
         with self._exec_lock:
             enabled = not self._execution_enabled
             if enabled:
-                # Flush BEFORE enabling to prevent publishing stale actions
-                self._flush_stale_buffer()
+                # Flush BEFORE enabling — see _cb_execute for replay-mode skip rationale.
+                if self._replay_mode != 'replay':
+                    self._flush_stale_buffer()
             self._execution_enabled = enabled
         mode_str = 'EXECUTE' if enabled else 'OBSERVE'
         self.get_logger().info(f'[{mode_str}] 已切换到{"执行" if enabled else "观测"}模式')
@@ -1473,6 +1853,19 @@ class PolicyInferenceNode(Node):
         # Main loop
         while rclpy.ok():
             t_start = time.monotonic()
+            # Replay-mode short-circuit: stream_buffer was filled on mode-entry;
+            # publish_timer drains at 30 Hz. Here we only track progress + handle
+            # end-of-episode. Inference path is fully bypassed.
+            if self._replay_mode == 'replay':
+                try:
+                    self._tick_replay()
+                except Exception as e:
+                    self.get_logger().error(f'replay tick error: {e}')
+                time.sleep(0.1)  # 10 Hz progress check
+                continue
+            if self._replay_mode == 'idle':
+                time.sleep(0.1)
+                continue
             try:
                 obs = self._get_observation()
                 if obs is None:
@@ -1534,10 +1927,22 @@ class PolicyInferenceNode(Node):
                     with self._rtc_lock:
                         self._rtc_prev_chunk = np.asarray(actions, dtype=float).copy()
 
-                    self.stream_buffer.integrate_new_chunk(
-                        actions,
-                        max_k=self.latency_k,
-                        min_m=self.min_smooth_steps)
+                    # RACE GUARD: replay_mode may have flipped to 'replay' while
+                    # policy.infer() was running (~500ms). _enter_replay_mode just
+                    # filled cur_chunk with the entire episode (e.g. 681 frames);
+                    # if we now call integrate_new_chunk with this 50-step policy
+                    # chunk, StreamActionBuffer REPLACES cur_chunk entirely
+                    # (line 215), wiping the replay buffer. Skip integration when
+                    # mode has switched mid-flight; the policy chunk gets dropped.
+                    if self._replay_mode == 'replay':
+                        self.get_logger().info(
+                            '[REPLAY] discarding mid-flight policy chunk '
+                            '(replay_mode flipped to replay during inference)')
+                    else:
+                        self.stream_buffer.integrate_new_chunk(
+                            actions,
+                            max_k=self.latency_k,
+                            min_m=self.min_smooth_steps)
 
                     # Publish full chunk for rerun_viz to show predicted trajectory
                     try:
@@ -1696,8 +2101,17 @@ class PolicyInferenceNode(Node):
 
         left = act[:7].copy()
         right = act[7:14].copy()
-        left[6] = max(0.0, left[6] - self.gripper_offset)
-        right[6] = max(0.0, right[6] - self.gripper_offset)
+        # gripper_offset is an autonomy-only correction: policy outputs the value
+        # the model was *trained* to predict, but the hardware closes a few mm
+        # tighter than the trained target — subtract offset to compensate.
+        # Replay path's actions were *recorded* from raw master-arm joint state
+        # (no offset applied during teleop), so subtracting here would close the
+        # gripper an extra `gripper_offset` mm tighter than the original
+        # demonstration — destroys faithfulness, particularly bad for corner
+        # grasping tasks where mm-scale precision matters.
+        gripper_corr = 0.0 if self._replay_mode == 'replay' else self.gripper_offset
+        left[6] = max(0.0, left[6] - gripper_corr)
+        right[6] = max(0.0, right[6] - gripper_corr)
 
         now = self.get_clock().now().to_msg()
 

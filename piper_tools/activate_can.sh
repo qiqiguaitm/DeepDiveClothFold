@@ -7,7 +7,7 @@
 #
 # 映射由 calibrate_can_mapping.py 校准后自动更新。
 #
-# sim01 bus-info (2026-04-27 calibrate_can_mapping.py 校准):
+# sim01 bus-info (2026-05-08 calibrate_can_mapping.py 校准):
 #   3-2.2.2:1.0 → can_left_mas  (左 master (示教左臂))
 #   3-2.2.1:1.0 → can_left_slave  (左 slave (执行左臂))
 #   3-2.2.3:1.0 → can_right_mas  (右 master (示教右臂))

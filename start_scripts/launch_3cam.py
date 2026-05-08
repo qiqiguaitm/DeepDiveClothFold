@@ -9,8 +9,11 @@ Launch 3 RealSense cameras via ROS2 realsense2_camera nodes.
   (ENABLE_DEPTH_TOP_HEAD / _HAND_LEFT / _HAND_RIGHT). Wrist depth is
   currently OFF; flip the macro to bring it back.
 
-  Note: 15fps (not 30) 以缓解 3 相机共享 USB 3 hub 的带宽压力;
-  之前 30fps 观察到 hand_left 触发 "Incomplete video frame" 频繁丢帧, 实际只有 1-10Hz.
+  FPS: 默认 30 (与训练数据 30 Hz 对齐). 历史上 launch_3cam 默认 15 是为了
+  缓解 "3 相机 + 3 路 depth 同走 USB 3 hub" 的带宽压力 — 当时 30 fps 会触发
+  hand_left "Incomplete video frame" 退化到 1-10 Hz. 现在 D405 wrist depth
+  通过 camera_depth_flags 宏关掉, 实际只剩 1 路 depth (D435) + 3 路 color,
+  带宽约掉了一半, 30 fps 跑得动. 若仍丢帧, 用 CAM_FPS=15 ros2 launch ... 临时降回去.
 
 Usage:
   ros2 launch scripts/launch_3cam.py
@@ -22,7 +25,7 @@ from pathlib import Path
 from launch import LaunchDescription
 from launch_ros.actions import Node
 
-_DEFAULT_FPS = int(os.environ.get('CAM_FPS', '15'))
+_DEFAULT_FPS = int(os.environ.get('CAM_FPS', '30'))
 
 
 def _load_depth_enabled_map() -> dict:

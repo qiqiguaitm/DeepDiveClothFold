@@ -640,6 +640,10 @@ def write_pipers_yml(mapping, bus_infos):
     ]
 
     for role, desc in ROLES:
+        if role not in mapping:
+            lines.append(f"  # {role}: 未映射 (跳过)")
+            lines.append("")
+            continue
         iface = mapping[role]
         bus = bus_infos.get(iface, "")
         symbolic = SYMBOLIC_NAMES[role]
@@ -683,6 +687,8 @@ def write_activate_script(mapping, bus_infos):
     slave_entries = []
     master_entries = []
     for role, _ in ROLES:
+        if role not in mapping:
+            continue
         bus = bus_infos.get(mapping[role], "")
         symbolic = SYMBOLIC_NAMES[role]
         entry = f'    "{bus}:{symbolic}"'
@@ -692,21 +698,26 @@ def write_activate_script(mapping, bus_infos):
             master_entries.append(entry)
 
     # 替换 SLAVE_MAPPINGS 块
+    slave_body = ('\n' + '\n'.join(slave_entries) + '\n') if slave_entries else ''
     content = re.sub(
         r'SLAVE_MAPPINGS=\([^)]*\)',
-        'SLAVE_MAPPINGS=(\n' + '\n'.join(slave_entries) + '\n)',
+        f'SLAVE_MAPPINGS=({slave_body})',
         content,
     )
     # 替换 MASTER_MAPPINGS 块
+    master_body = ('\n' + '\n'.join(master_entries) + '\n') if master_entries else ''
     content = re.sub(
         r'MASTER_MAPPINGS=\([^)]*\)',
-        'MASTER_MAPPINGS=(\n' + '\n'.join(master_entries) + '\n)',
+        f'MASTER_MAPPINGS=({master_body})',
         content,
     )
 
     # 更新头部注释
     comment_lines = []
     for role, desc in ROLES:
+        if role not in mapping:
+            comment_lines.append(f"#   (未映射) → {SYMBOLIC_NAMES[role]}  ({desc})")
+            continue
         bus = bus_infos.get(mapping[role], "?")
         symbolic = SYMBOLIC_NAMES[role]
         comment_lines.append(f"#   {bus} → {symbolic}  ({desc})")
@@ -739,11 +750,17 @@ def write_activate_can_arms(mapping, bus_infos):
         "# sim01 bus-info 映射:",
     ]
     for role, desc in ROLES:
+        if role not in mapping:
+            lines.append(f"#   (未映射) → {SYMBOLIC_NAMES[role]} ({desc})")
+            continue
         bus = bus_infos.get(mapping[role], "?")
         lines.append(f"#   {bus} → {SYMBOLIC_NAMES[role]} ({desc})")
     lines.append("")
 
     for role, _ in ROLES:
+        if role not in mapping:
+            lines.append(f"# 跳过 {SYMBOLIC_NAMES[role]} (未映射)")
+            continue
         bus = bus_infos.get(mapping[role], "")
         symbolic = SYMBOLIC_NAMES[role]
         lines.append(f'bash ./can_activate.sh {symbolic:20s} {BITRATE} "{bus}"')
@@ -1027,6 +1044,50 @@ def main():
         else:
             mapping["right_master"] = masters[0]
         print()
+
+    # ══ 阶段 4: 手动兜底 (剩余角色 ↔ 剩余接口) ═══════════════════════════════
+    # 自动检测可能漏掉某些臂 (例如 slave 没上电导致阶段 1 全部归为 master,
+    # 阶段 3 又只识别了用户晃动过的那几个). 这里给一次手动绑定的机会.
+    unmapped_roles = [(r, d) for r, d in ROLES if r not in mapping]
+    used_ifaces = set(mapping.values())
+    leftover_ifaces = [i for i in iface_list if i not in used_ifaces]
+
+    if unmapped_roles and leftover_ifaces:
+        print("=" * 60)
+        print("  阶段 4: 手动兜底")
+        print("=" * 60)
+        print()
+        print(f"  未映射角色 ({len(unmapped_roles)}): "
+              + ", ".join(d for _, d in unmapped_roles))
+        print(f"  剩余接口   ({len(leftover_ifaces)}): "
+              + ", ".join(leftover_ifaces))
+        print()
+        print("  提示: 自动分类没认出 slave 通常是 slave 臂没上电、")
+        print("        或 master/slave 角色字节没写好。")
+        print("        如果你确定剩余接口对应哪个臂, 可以在这里手动指定;")
+        print("        否则按 Enter 跳过, 等修好硬件再重跑。")
+        print()
+
+        for role, desc in unmapped_roles:
+            if not leftover_ifaces:
+                break
+            print("-" * 60)
+            print(f"  【{desc}】")
+            print(f"  候选: {', '.join(leftover_ifaces)}")
+            choice = input(f"  请输入接口名 (Enter 跳过): ").strip()
+            if not choice:
+                print("  跳过。")
+                print()
+                continue
+            if choice not in leftover_ifaces:
+                print(f"  无效输入 '{choice}', 跳过。")
+                print()
+                continue
+            mapping[role] = choice
+            leftover_ifaces.remove(choice)
+            bus = all_interfaces.get(choice, "?")
+            print(f"  已绑定: 【{desc}】 → {choice} (bus: {bus})")
+            print()
 
     # 3. 显示结果
     print("=" * 60)

@@ -262,6 +262,13 @@ info "starting ros2 launch..."
 echo "  Ctrl+C to stop all nodes"
 echo ""
 
+# ── Deployment mode marker (P1: replay function safety gate) ──
+# Lets `replay_mode=replay` pass `_verify_deployment_marker()` check.
+# Marker stays after Ctrl+C (exec replaces shell, no trap fire); next run of
+# start_*.sh overwrites; data_collect stop explicitly removes. Stale marker
+# is fine because publisher_conflict_check (defense layer 2) catches it.
+echo autonomy > /tmp/kai0_deployment_mode
+
 exec ros2 launch piper autonomy_launch.py \
     mode:="$MODE" \
     enable_rerun:="$ENABLE_RERUN" \

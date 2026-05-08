@@ -77,7 +77,9 @@ class MultiCameraNode(Node):
         self.declare_parameter('cam_f_serial', '')
         self.declare_parameter('cam_l_serial', '')
         self.declare_parameter('cam_r_serial', '')
-        self.declare_parameter('fps', 15)
+        # 默认 30 与训练数据帧率一致; 历史 15 是 D405 depth 还在跑、USB 带宽紧时的妥协.
+        # D405 depth 通过 camera_depth_flags 宏关闭后, 30 fps 在共享 USB hub 上稳定.
+        self.declare_parameter('fps', 30)
         self.declare_parameter('width', 640)
         self.declare_parameter('height', 480)
 
