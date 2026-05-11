@@ -2,6 +2,7 @@
 
 > ⚠️ **2026-05-06 更新: gf1 已退役**
 > ⚠️ **2026-05-08 更新: gf2/3/4 → uc01/02/03 重命名; uc03 (原 gf4) 加入训练**
+> ⚠️ **2026-05-11 更新: 日期 leaf 命名统一为 `YYYY-MM-DD-v2` (见 §2.3 末)**
 >
 > **当前 active 服务器: gf0, uc01, uc02, uc03** (4 台)。gf1 跳板 `14.103.44.161:11111` SSH 不通, 服务器已下线。
 >
@@ -176,6 +177,14 @@ deepdive_kai0/
 /data/shared/dataset/Kai0_official/Task_A/      # HF 官方 base/dagger/advantage
 ~/workspace/deepdive_kai0/kai0/data/Task_<X>/   # symlinks 指向上述路径
 ```
+
+#### 日期 leaf 命名约定: `YYYY-MM-DD-v2` (2026-05-11 起)
+
+历史上 `base/` 下日期 leaf 直接是 `YYYY-MM-DD`. 4-23 ~ 4-30 的数据被处理后另存为 `YYYY-MM-DD-v2`. **2026-05-11 起统一**: 所有新采集直接写 `YYYY-MM-DD-v2`, 不再区分"原始"与"处理后".
+
+- **写入**: `web/data_manager/backend/app/layout.py:new_task_subset_root()` 给今日日期附加 `-v2`. 受影响调用方: `recorder.py::start_recording` (web UI 采集).
+- **读取**: `_DATE_RE = r"^\d{4}-\d{2}-\d{2}(?:-v\d+)?$"` 同时匹配两种, `path_to_compound()` 把 `-v2` 保留在 task_id 中 (e.g. `Task_A_2026-05-11-v2`).
+- **历史**: 2026-05-11 一次性把 5-06 ~ 5-09 (sim01 / TOS / uc01-uc03 共 4 端) 全部 `mv old → old-v2`. 期间 uc02/uc03 因 lsyncd `--update` 不删旧, 手动 rm 残留. Task_PP/5-09 当时仅 sim01 有, 下次 sync 直接以 -v2 上 TOS.
 
 ### 2.4 临时 / 加速存储 (按机器)
 

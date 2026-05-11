@@ -24,14 +24,20 @@ from pathlib import Path
 
 from .config import DATA_ROOT
 
-# "任意 task 名_YYYY-MM-DD" — 锚在末尾, 避免误吞 task 名里的 '_'
-_DATE_SUFFIX_RE = re.compile(r"^(.+)_(\d{4}-\d{2}-\d{2})$")
-_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+# Date string format on disk: YYYY-MM-DD optionally followed by "-v2".
+# Convention switched 2026-05-09: new captures write "<date>-v2" leaf dir
+# (matches the post-process / "finalized" tag that 4-23..4-30 already used).
+# Bare-date dirs from before the switch still resolve through compound_to_subset_root.
+NEW_DATE_SUFFIX = "-v2"
+
+# "任意 task 名_YYYY-MM-DD[-v2]" — 锚在末尾, 避免误吞 task 名里的 '_'
+_DATE_SUFFIX_RE = re.compile(r"^(.+)_(\d{4}-\d{2}-\d{2}(?:-v\d+)?)$")
+_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}(?:-v\d+)?$")
 
 
 def today_compound(task: str) -> str:
-    """`'Task_A'` → `'Task_A_2026-04-16'` (今日日期后缀)."""
-    return f"{task}_{datetime.date.today().strftime('%Y-%m-%d')}"
+    """`'Task_A'` → `'Task_A_2026-04-16-v2'` (today date + NEW_DATE_SUFFIX)."""
+    return f"{task}_{datetime.date.today().strftime('%Y-%m-%d')}{NEW_DATE_SUFFIX}"
 
 
 def split_compound(compound: str) -> tuple[str, str] | None:
@@ -78,8 +84,12 @@ def compound_to_subset_root(compound: str, subset: str) -> Path:
 
 
 def new_task_subset_root(task: str, subset: str) -> Path:
-    """写新 episode 用: 一律走 v2 `<DATA_ROOT>/<task>/<subset>/<today>`."""
-    return _v2_path(task, subset, datetime.date.today().strftime("%Y-%m-%d"))
+    """写新 episode 用: v2 disk layout + `-v2` date suffix
+    (`<DATA_ROOT>/<task>/<subset>/<today>-v2`). The suffix matches the
+    finalized-data convention applied to 4-23..4-30 historically and
+    retro-applied to 5-06..5-09 on 2026-05-11."""
+    return _v2_path(task, subset,
+                    datetime.date.today().strftime("%Y-%m-%d") + NEW_DATE_SUFFIX)
 
 
 def path_to_compound(p: Path) -> tuple[str, str] | None:
