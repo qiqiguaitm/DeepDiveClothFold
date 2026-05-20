@@ -29,7 +29,15 @@
   - [3.5 阶段 4 — 任务质量 (3-6 周)](#35-阶段-4--任务质量-3-6-周)
   - [3.6 阶段 5 — 推理极致 (可选)](#36-阶段-5--推理极致-可选)
 - [4. 真机测试方案](#4-真机测试方案)
-  - [4.1 测试 1: sim01 模型实际推理延迟](#41-测试-1-sim01-模型实际推理延迟)
+  - [4.1 测试 1: sim01 模型实际推理延迟 ✅](#41-测试-1-sim01-模型实际推理延迟--完成-2026-05-20)
+    - [4.1.1 测量方法](#411-测量方法)
+    - [4.1.2 实验配置](#412-实验配置)
+    - [4.1.3 原始数据样本](#413-原始数据样本-前-5-条)
+    - [4.1.4 实测分位数](#414-实测分位数)
+    - [4.1.5 分布直方图](#415-分布直方图-cleaned-n1299)
+    - [4.1.6 与 V1 路径对比](#416-与-v1-路径对比)
+    - [4.1.7 决策映射](#417-决策映射)
+    - [4.1.8 测量复跑](#418-测量复跑)
   - [4.2 测试 2: Piper 关节 t_motion 滞后](#42-测试-2-piper-关节-t_motion-滞后)
 - [5. Fallback 方案 (选项 Y)](#5-fallback-方案-选项-y)
 - [6. V1 Triton 推理优化实施日志 (2026-05-20)](#6-v1-triton-推理优化实施日志-2026-05-20)
@@ -603,11 +611,58 @@ PyTorch 训练侧 (`train_pytorch.py` + `models_pytorch/`) 已在维护, advanta
 
 ### 4.1 测试 1: sim01 模型实际推理延迟 ✅ 完成 (2026-05-20)
 
-**目的**: 区分"模型推理时间" vs "timer 节流时间", 确定推理优化上限。
+**目的**: 区分"模型推理时间" vs "timer 节流时间", 确定推理优化上限.
 
-#### 实测结果
+#### 4.1.1 测量方法
 
-利用 `policy_inference_node.py:2147` 内置 `infer XXXms` log + `start_scripts/diag/measure_jax_infer_latency.sh`, 分析 `~/.ros/log/python_659068_1779190543244.log` (May 19 19:36-19:43 真任务 autonomy session, 1305 raw samples / 1299 cleaned 排除 6 个 JIT cold start + > 500ms outlier):
+利用 `ros2_ws/src/piper/scripts/policy_inference_node.py:2085-2148` 已内置的 inference timer:
+
+```python
+t_start = time.monotonic()              # line 2085
+# ... obs 构造 + RTC 注入 + ...
+result = self.policy.infer(obs)         # line 2145, WebSocket 同步调用
+infer_ms = (time.monotonic() - t_start) * 1000   # line 2147
+self.get_logger().info(f'infer {infer_ms:.0f}ms | chunk={actions.shape} | ...')
+# line 2229: 每次推理都 log 一条
+```
+
+**测量范围 (client 视角)**: `t_start` 含 obs 构造 + WebSocket send → server side JAX `sample_actions` JIT 推理 → WebSocket recv → ROS 落 actions. 这是 **端到端 RTT** , **不是裸 GPU 推理时间**.
+
+**测量工具**: `start_scripts/diag/measure_jax_infer_latency.sh` (87 行) 自动从 `~/.ros/log/` 找最新含 `infer XXXms` 的 log, 提取数值, 算分位数 + 阈值决策.
+
+#### 4.1.2 实验配置
+
+| 项 | 值 |
+|---|---|
+| **Session log** | `~/.ros/log/python_659068_1779190543244.log` (468 KB) |
+| **日期** | 2026-05-19 19:36-19:43 (~7.9 min wall clock) |
+| **Config name** | `pi05_flatten_fold_a_new_pure_1200` |
+| **Checkpoint** | `/data1/DATA_IMP/checkpoints/task_a_pure200_base_pi05_step49999` |
+| **Asset id (norm_stats)** | `a_new_pure_200` |
+| **Mode** | RTC enabled (`Pi0Config → Pi0RTCConfig`, `pi05=True`) |
+| **Execution** | joint, depth_in=False, ee_pose_in=False, EXECUTE 真机 |
+| **Hardware** | RTX 5090 sm_120, sim01/ipc01 |
+| **Timer** | `inference_rate = 3.0 Hz` (周期 333 ms) |
+| **Chunk** | (50, 14) joint action, 14-DoF dual Piper |
+
+#### 4.1.3 原始数据样本 (前 5 条)
+
+```
+[1779190576.541] infer  209ms | chunk=(50, 14) | L[0]=[-0.07,+0.06,-0.52,...] R[0]=[+0.27,+0.30,-0.42,...]
+[1779190584.858] infer 8190ms | ...                    ← JIT cold-start outlier (excluded)
+[1779190585.135] infer  272ms | chunk=(50, 14) | ...
+[1779190585.399] infer  202ms | chunk=(50, 14) | ...
+[1779190585.715] infer  184ms | chunk=(50, 14) | ...
+```
+
+**清洗规则**: 跳过前 5 个 (JIT compile warmup) + 排除 > 500 ms (1 个 outlier @ 8190 ms 估计为 GC / cache cold).
+
+| | Raw | Cleaned |
+|---|---:|---:|
+| N samples | 1305 | **1299** |
+| Dropped | — | 6 (0.46%) |
+
+#### 4.1.4 实测分位数
 
 | 指标 | 值 (ms) |
 |---|---:|
@@ -618,24 +673,47 @@ PyTorch 训练侧 (`train_pytorch.py` + `models_pytorch/`) 已在维护, advanta
 | Min — Max | 174 — 276 |
 | P95 − P50 (jitter) | 25.0 |
 | P99 − P50 (tail) | 36.0 |
-| Session 推理率 | 2.93 Hz (`inference_rate=3.0` timer 设置, 实际打 timer 59% utilization) |
+| Session 推理率 | 2.93 Hz (timer 333ms 59% utilization) |
 
-> 测量范围: server 端 `t_start` (Policy.infer 入口) → action chunk 出口, 含 WebSocket 接收 + 偏置处理 + JAX `sample_actions` JIT + WebSocket 回包. 这是 client 看到的端到端 RTT, 不是裸 GPU 推理时间.
+#### 4.1.5 分布直方图 (cleaned, N=1299)
 
-#### 与 V1 路径对比
+```
+[  0, 180) ms |   22 (1.7%)
+[180, 190) ms |  380 (29.3%) ██████████████   ← P50 / mode
+[190, 200) ms |  356 (27.4%) █████████████
+[200, 210) ms |  232 (17.9%) ████████
+[210, 220) ms |  222 (17.1%) ████████
+[220, 230) ms |   68 (5.2%)  ██
+[230, 250) ms |   18 (1.4%)
+[250, 300) ms |    1 (0.1%)
+[300, 500) ms |    0 (0.0%)
+```
 
-| 指标 | JAX (sim01 实测) | V1 Triton (offline 5090 benchmark) | 提升 |
+**形态**: 单峰窄分布 (CV = Std/Mean = 6.6%), 主体集中 180-220 ms. **无长尾**, P99-P50 仅 36 ms — JAX/XLA 在 5090 上的步进时间非常稳定.
+
+#### 4.1.6 与 V1 路径对比
+
+| 指标 | JAX (sim01 实测, 端到端 RTT) | V1 Triton (offline 5090 benchmark, 裸推理) | 提升 |
 |---|---:|---:|---:|
-| P50 | 196 ms | 32 ms | **6.1×** |
+| P50 | **196 ms** | **32 ms** | **6.1×** |
 | P95 | 221 ms | ~33 ms | ~6.7× |
 | Jitter (P95-P50) | 25 ms | < 1 ms | -96% |
+| Std/Mean | 6.6% | < 0.5% | -92% |
 
-#### 后续决策 (依阈值表)
+> 注: V1 数据来自 §6 offline benchmark, 未含 WebSocket overhead. 真 V1 serve 部署后, RTT 将增 WebSocket + obs 构造开销 (~5-10 ms 量级, B1 profile 待量化). 但即便 +10 ms, V1 serve RTT 估 ~42 ms ≪ JAX 196 ms, 仍 4-5× 加速.
+
+#### 4.1.7 决策映射
 
 P50 = 196 ms → 落在 "100-200ms 标准 5090 baseline" 档:
-- **V1 路径价值确认**: 6.1× 加速空间, **§6 V1 Triton 已实施 + §7 Layer B 服务包装是正确方向**
-- **inference_rate 提升潜力**: 196ms ≪ 1/8 Hz = 125ms 周期, 仍紧; V1 32ms 后可拉到 20-30 Hz 安全
-- **抖动可接受**: P95-P50 = 25ms < 100ms 阈值, JAX 这边 AOT compile 必要性不高, 直接走 V1 即可
+
+| 决策项 | 结论 |
+|---|---|
+| **V1 路径价值** | ✅ **确认 6.1× 加速空间, §6 V1 Triton 实施 + §7 B4 serve 包装方向正确** |
+| **AOT compile 优先级** | ❌ 抖动 25ms ≪ 100ms 阈值, JAX 端无 AOT 需求 |
+| **inference_rate 提升潜力** | ⏳ JAX 196ms 占满 3Hz × 59%, 提至 5Hz 即超时. **V1 落地后 32ms 可拉 20-30 Hz** (C2 子任务) |
+| **#6 JAX 浅层优化 (阶段 1)** | △ 可顺手做 (AOT cache / bf16 局部), 估 1.5-2× → 100-130 ms, 但价值低于直接走 V1 |
+
+阈值表对照:
 
 | 指标 | 后续行动 |
 |---|---|
@@ -644,12 +722,17 @@ P50 = 196 ms → 落在 "100-200ms 标准 5090 baseline" 档:
 | P50 > 250ms | 可能有 cache miss / fp32 残留, V1 收益最大 |
 | P95-P50 > 100ms | 抖动严重, AOT compile 必做 (sim01 实测 25ms, 不需要) |
 
-#### 重新跑测量
+#### 4.1.8 测量复跑
 
 ```bash
-./start_scripts/diag/measure_jax_infer_latency.sh                 # 自动找最新 log
-./start_scripts/diag/measure_jax_infer_latency.sh <log_file>      # 指定 log
-SKIP_WARMUP=10 MAX_MS=300 ./start_scripts/diag/measure_jax_infer_latency.sh  # 调过滤
+# 自动找最新 log
+./start_scripts/diag/measure_jax_infer_latency.sh
+
+# 指定 log
+./start_scripts/diag/measure_jax_infer_latency.sh <log_file>
+
+# 调过滤
+SKIP_WARMUP=10 MAX_MS=300 ./start_scripts/diag/measure_jax_infer_latency.sh
 ```
 
 ### 4.2 测试 2: Piper 关节 t_motion 滞后
@@ -1096,3 +1179,4 @@ t10 motor 响应           → t_motion (~50-150ms 估, §4.2 测试)
 | **v0.12** | **2026-05-20** | **针对性整理**: §0/§3.1 总体阶段图按 v0.11 实施现状重写 (阶段 0 完成 / 阶段 3 推理 serve 已 ✅); §3.1.1 (原计划影响对比表) 删除, 改为"PI0Pytorch fix 备选路径清单"; §3.1.2 子任务清单状态更新 (V1 路径 4 项完成); §3.4 顶部加 v0.11 现状引导; §3.4.2 末尾自写 Triton 计划折叠 (8 步细节 → 3 行实施路径摘要); §3.6 Flash 降级理由瘦身 (用 32ms 而非 43.5ms 数据). TOC 补 §3.1.1/3.1.2. 总行数 950 → ~900 |
 | **v0.13** | **2026-05-20** | **新增 §7 Layer B 系统级优化 plan**: 单 5090 真机约束确认 (排除多 GPU 选项). 子项 B4 (V1 serve 包装, 主线) → B1 (全链路 11 段 latency profile) → B2 (preprocess GPU 化, 数据驱动). 1.5-2 周, 关键里程碑 B4 = 真机 V1 推理首跑通. Layer A (kernel fusion/wgmma) 暂缓 (推理 32ms 已远 < timer 周期, ROI 低). §7 修订历史 → §8. TOC 更新 |
 | **v0.14** | **2026-05-20** | **Q2 sim01 JAX 推理延迟实测完成 + B4 Phase 1 serve_policy_v1.py 落地**: §4.1 加 1299-sample 实测表 (P50=196 ms / P95=221 / P99=232 / Std=13.2 / jitter=25 ms), 落在 "100-200ms 标准 5090 baseline" 档, 确认 V1 路径 6.1× 加速空间. JAX 抖动 P95-P50=25ms 不需 AOT compile. 推理 196ms vs timer 333ms = 59% utilization, V1 落地后可拉 inference_rate 到 20-30 Hz. 新增 `kai0/scripts/serve_policy_v1.py` (B4 Phase 1, 343 行) + `start_scripts/diag/measure_jax_infer_latency.sh` (Q2 helper) |
+| **v0.15** | **2026-05-20** | **§4.1 扩为正式实验报告 (8 子节)**: 4.1.1 测量方法 (含 policy_inference_node.py:2085-2148 timer 源码片段); 4.1.2 实验配置 (config / ckpt / asset_id / 硬件 / timer 等 9 项 metadata); 4.1.3 原始 log 样本 (前 5 条 + JIT outlier 标注); 4.1.4 分位数表; 4.1.5 **ASCII 分布直方图 9 bucket** (180-220 ms 集中 91%, 单峰窄分布 CV=6.6%, 无长尾); 4.1.6 V1 对比加 jitter / Std/Mean 行 + WebSocket overhead 补偿估算; 4.1.7 决策映射 4 行结论 (V1 路径✅ / AOT❌ / inference_rate 提升潜力⏳ / #6 价值低); 4.1.8 复跑命令. TOC 加 4.1 子节链接 |
