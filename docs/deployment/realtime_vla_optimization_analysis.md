@@ -26,6 +26,7 @@
   - [3.2 阶段 1 — 短期热身 (1 周)](#32-阶段-1--短期热身-1-周)
   - [3.3 阶段 2 — 任务速度主线 (1-2 周)](#33-阶段-2--任务速度主线-1-2-周)
   - [3.4 阶段 3 — 选项 X 落地](#34-阶段-3--选项-x-落地)
+    - [3.4.5 TensorRT 路径回顾](#345-tensorrt-路径回顾-2026-05-20)
   - [3.5 阶段 4 — 任务质量 (3-6 周)](#35-阶段-4--任务质量-3-6-周)
   - [3.6 阶段 5 — 推理极致 (可选)](#36-阶段-5--推理极致-可选)
 - [4. 真机测试方案](#4-真机测试方案)
@@ -562,6 +563,78 @@ PyTorch 训练侧 (`train_pytorch.py` + `models_pytorch/`) 已在维护, advanta
 - **计划上 sim01 真机长期部署** → PyTorch (拿推理加速)
 
 训练 + 真机测试都走原生 framework, 不跨框架转换。
+
+#### 3.4.5 TensorRT 路径回顾 (2026-05-20)
+
+> **TL;DR**: TRT 路径尝试过, 全部阻塞失败, 转走 V1 Triton 路径成功 (P50=32 ms, §6). 本节沉淀 5 个阻塞点 + 重启条件, 防止重复趟坑.
+
+**Q**: 为什么 V1 Triton 而非 TensorRT?
+**A**: TRT 是 §2 排名 #2 (Y fallback), 价值 3-5×. 实际尝试时遇到 5 个阻塞 (3 个工具链 / 2 个技术), 全部解或绕开后**仍卡在 ONNX export pi05 flow loop**. 同期 V1 Triton 路径直接跑通且更快 (8.0×), 故停 TRT 转 V1.
+
+##### A. 已就绪资产 (留作未来重启用)
+
+| 项 | 状态 | 位置 / 备注 |
+|---|---|---|
+| `kai0/.venv_5090_trt` | ✅ 完整 | Python 3.10 + **PyTorch 2.7.1+cu128 (stable)** + **TensorRT 10.14.1** + tensorrt_bindings/libs |
+| `optimize/pi05_trt_pipeline.py` | ✅ 代码 367 行 | 5-stage 流水线: build → ONNX export → TRT engine → benchmark → numerical compare |
+| `optimize/trt_smoke_test.py` | ✅ 工具链验证 254 行 | TinyTransformer → TRT (确认 TRT export 路径对玩具模型可行) |
+| `optimize/TRT_30ms_PLAN.md` | 📄 详细 plan 376 行 | 3 个 sub-option A/B/C + ONNX 导出技术难点 |
+| `optimize/results/pi05_aoti.pt2` | 🗃 6.3 GB | AOTI 编译产物 (load fail, 留作 PyTorch stable 后重测) |
+
+##### B. 5 个阻塞点 (按尝试顺序)
+
+| # | 阻塞 | 已解 / 未解 |
+|:---:|---|---|
+| 1 | `kai0/.venv` PyTorch 2.7.1+cu126 **不支持 sm_120** (Blackwell 5090) | ✅ 装 `kai0/.venv_5090` (PyTorch 2.12 nightly + cu128) |
+| 2 | `torch_tensorrt` nightly 强制 CUDA 13 (我们 cu128 / 12.8) | ⚠ 绕开: 不用 torch_tensorrt, 直接走 ONNX → trtexec |
+| 3 | NVIDIA pypi `pypi.nvidia.com` 子目录 GET 持续 hang (网络层) | ✅ file-copy `tensorrt + tensorrt_bindings + tensorrt_libs` 从 phantom env |
+| 4 | phantom env 是 Python 3.10, `.venv_5090` 是 3.12 → C ext ABI 不通 | ✅ 新建 `kai0/.venv_5090_trt` (Python 3.10 + PyTorch 2.7 stable + cu128) |
+| 5 | **ONNX export pi05 flow loop 10 步 denoise** — 真正技术难点 | ❌ **未解** — `torch.export` 对 dynamic shape + control flow + flow matching loop 支持不完善; `onnxscript`/`ml_dtypes` 下游依赖也有 sm_120 兼容问题 |
+
+##### C. Backend H (AOTInductor) 同期阻塞
+
+|  | 状态 |
+|---|---|
+| compile | ✅ 7 分钟出 6.3 GB `optimize/results/pi05_aoti.pt2` (wrapper.so + 60 cubin) |
+| runtime load | ❌ `AOTIModelPackageLoader create_func_ API call failed` (C++ runtime line 123) |
+| 推测原因 | PyTorch 2.12 nightly 的 AOTI runtime 与 sm_120 cubin loading 不兼容 (nightly bug), 或 nvcc 12.4 编译的 wrapper.so 与 cu128 ABI 不匹配 |
+
+##### D. 最终决策依据 (来自 `optimize/results/FINAL_30ms_attempt_summary.md`)
+
+V1 §4.2.2 列的 **8/8 优化项全部已被 Inductor max-autotune 自动捕获** (Backend K 手动追加 QKV 融合验证 Δ=-0.1ms 噪声内):
+
+| V1 优化 | 我们栈 (E max-autotune) | 手动追加 (K) |
+|---|---|---|
+| RMSNorm 融合 | ✅ Inductor 自动 | — |
+| **QKV 投影融合** | ✅ **Inductor 自动 (horizontal_fuse pass)** | -0.1 ms (噪声) |
+| RoPE 融合 | ✅ Inductor 自动 | — |
+| 动作时间编码折叠 | ✅ Inductor 自动 | — |
+| GEMM 分块调优 | ✅ max-autotune sweep 21 配置 | — (F coord_descent 退化 6×) |
+| 门控线性层融合 | ✅ Inductor 自动 | — |
+| Split-k | ✅ max-autotune 覆盖 | — (V1 报告本身 <0.1ms) |
+| 标量操作融合 | ✅ Inductor epilogue_fusion 自动 | — |
+
+**结论**: PyTorch 内置工具链 5090 sm_120 bf16 极限 = **41.0 ms** (Backend E, §3.4.2 实测). 追加 V1 论文 §4.2.2 全部 fusion 不再有效 — Inductor 已自动. 触达 30ms 需要跳出 PyTorch 工具链.
+
+##### E. 未来重启 TRT 的 4 条路径
+
+| 选项 | 触发条件 | 工程量 | 风险 |
+|---|---|---|---|
+| **1** | 等 PyTorch 2.13 stable + torch-tensorrt 2.13 stable + cu128 (估 2026 Q2-Q3) | 重测既有 pipeline | 极低 |
+| 2 | 5090 跑 sm_90 PTX 模拟 (PyTorch 2.7 stable + cu126) | 1-2 天 (新 venv + ckpt 兼容验证) | 中 (损失 sm_120 新特性) |
+| 3 | 完整 ONNX 流水线 (Python 3.10 + PyTorch 2.7 + cu124 + 拆分 flow loop) | 3-5 天 | 高 (ONNX 导出 flow loop 是技术难点) |
+| **4** ✅ | **接受 V1 32ms 当前 best, TRT 留 fallback Y** | 0 (当前路径) | 0 |
+
+**当前选 4**. 重启选 1 需要等 PyTorch stable, 预计 2026 Q2-Q3.
+
+##### F. 相关链接
+
+- `optimize/results/FINAL_30ms_attempt_summary.md` — 完整 30ms 攻关时间线 + 全 8 backend 实测表
+- `optimize/TRT_30ms_PLAN.md` — TRT plan 原文 (3 个 sub-option A/B/C)
+- `optimize/results/phase1_F_G_J_findings.md` — F/G/J backend 失败分析
+- `optimize/pi05_trt_pipeline.py` — 完整 5-stage TRT 流水线代码
+- §3.4.2 实测踩坑 — 前置障碍解决记录 (sm_120 兼容 / dtype mismatch 等)
+- §6 V1 Triton 实施日志 — 取代 TRT 的最终路径
 
 ### 3.5 阶段 4 — 任务质量 (3-6 周)
 
@@ -1180,3 +1253,4 @@ t10 motor 响应           → t_motion (~50-150ms 估, §4.2 测试)
 | **v0.13** | **2026-05-20** | **新增 §7 Layer B 系统级优化 plan**: 单 5090 真机约束确认 (排除多 GPU 选项). 子项 B4 (V1 serve 包装, 主线) → B1 (全链路 11 段 latency profile) → B2 (preprocess GPU 化, 数据驱动). 1.5-2 周, 关键里程碑 B4 = 真机 V1 推理首跑通. Layer A (kernel fusion/wgmma) 暂缓 (推理 32ms 已远 < timer 周期, ROI 低). §7 修订历史 → §8. TOC 更新 |
 | **v0.14** | **2026-05-20** | **Q2 sim01 JAX 推理延迟实测完成 + B4 Phase 1 serve_policy_v1.py 落地**: §4.1 加 1299-sample 实测表 (P50=196 ms / P95=221 / P99=232 / Std=13.2 / jitter=25 ms), 落在 "100-200ms 标准 5090 baseline" 档, 确认 V1 路径 6.1× 加速空间. JAX 抖动 P95-P50=25ms 不需 AOT compile. 推理 196ms vs timer 333ms = 59% utilization, V1 落地后可拉 inference_rate 到 20-30 Hz. 新增 `kai0/scripts/serve_policy_v1.py` (B4 Phase 1, 343 行) + `start_scripts/diag/measure_jax_infer_latency.sh` (Q2 helper) |
 | **v0.15** | **2026-05-20** | **§4.1 扩为正式实验报告 (8 子节)**: 4.1.1 测量方法 (含 policy_inference_node.py:2085-2148 timer 源码片段); 4.1.2 实验配置 (config / ckpt / asset_id / 硬件 / timer 等 9 项 metadata); 4.1.3 原始 log 样本 (前 5 条 + JIT outlier 标注); 4.1.4 分位数表; 4.1.5 **ASCII 分布直方图 9 bucket** (180-220 ms 集中 91%, 单峰窄分布 CV=6.6%, 无长尾); 4.1.6 V1 对比加 jitter / Std/Mean 行 + WebSocket overhead 补偿估算; 4.1.7 决策映射 4 行结论 (V1 路径✅ / AOT❌ / inference_rate 提升潜力⏳ / #6 价值低); 4.1.8 复跑命令. TOC 加 4.1 子节链接 |
+| **v0.16** | **2026-05-20** | **新增 §3.4.5 TensorRT 路径回顾**: 沉淀 TRT 攻关失败记录, 防止重复趟坑. 6 子节 A-F: A 已就绪资产 (`.venv_5090_trt` Python 3.10 + PyTorch 2.7.1+cu128 + TRT 10.14, `pi05_trt_pipeline.py` 367 行 5-stage 流水线, AOTI 6.3GB 产物); B **5 个阻塞点** (sm_120 / torch_tensorrt CUDA 13 / pypi hang / Python ABI / **未解 ONNX flow loop**); C AOTInductor Backend H 同期阻塞 (compile OK 但 load fail); D V1 §4.2.2 **8/8 优化已被 Inductor 自动捕获** (PyTorch 工具链 41ms 极限); E **4 条重启路径** (选 1 等 PyTorch 2.13 stable; 选 4 当前接受 V1 32ms); F 相关链接 6 个文件. TOC 加 3.4.5 子节链接 |
