@@ -18,6 +18,9 @@ _host="$(hostname 2>/dev/null)"
 # Profile selection: hostname match first, then filesystem probe, then HOME fallback.
 if [[ "$_host" == gf* ]] || [[ -d /vePFS/tim/workspace ]]; then
     _profile=gf
+elif [[ -d /vePFS-North-E/vis_robot ]]; then
+    # 火山华北 H20 容器 (gf3 等), hostname 形如 di-YYYYMMDDHHMMSS-xxxxx
+    _profile=gf3
 elif [[ "$_host" == sim01 ]] || [[ -d /data1/tim/workspace ]]; then
     _profile=sim01
 else
@@ -29,6 +32,11 @@ case "$_profile" in
         : "${KAI0_DATA_ROOT:=/vePFS/tim/workspace/deepdive_kai0/kai0}"
         : "${OPENPI_DATA_HOME:=/vePFS/tim/workspace/openpi_cache}"
         : "${PYTORCH_CKPT_BASE:=/vePFS/tim/workspace/openpi_cache/modelscope_cache/lerobot}"
+        ;;
+    gf3)
+        : "${KAI0_DATA_ROOT:=/vePFS-North-E/vis_robot/workspace/deepdive_kai0/kai0}"
+        : "${OPENPI_DATA_HOME:=/vePFS-North-E/vis_robot/openpi_cache}"
+        : "${PYTORCH_CKPT_BASE:=/vePFS-North-E/vis_robot/openpi_cache/modelscope_cache/lerobot}"
         ;;
     sim01)
         : "${KAI0_DATA_ROOT:=/data1/tim/workspace/deepdive_kai0/kai0}"
