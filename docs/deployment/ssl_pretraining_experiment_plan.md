@@ -61,8 +61,19 @@
 | **A: Kai0 base** | 3055 | 3.36M | 1101 | `/data/shared/ubuntu/workspace/dataset/Kai0_official/Task_A/base/videos/` | 46G |
 | **A: Kai0 dagger** | 3457 | 2.42M | 699 | `/data/shared/ubuntu/workspace/dataset/Kai0_official/Task_A/dagger/videos/` | 39G |
 | **B: vis_v2_merged** | 895 | 1.06M | 1188 | `/data/shared/ubuntu/workspace/dataset/Task_A/vis_v2_merged/videos/` | 6.3G |
-| **XVLA-Soft-Fold** | 1729 | ~? | — | `/data/shared/ubuntu/workspace/deepdive_kai0/xvla/data/xvla_soft_fold/` (NFS) + `/vePFS/tim/xvla/data/xvla_soft_fold/` (gf0) | 444G |
+| **XVLA-Soft-Fold** | 1729 | ~? | — | 见 §3.1.x XVLA 多地副本表 | 444G |
 | **合计** | **9136 ep** | **~7M frames** | — | 3 views (top_head, hand_left, hand_right) per ep | **~535G** |
+
+#### 3.1.x XVLA-Soft-Fold 多地副本 (2026-05-21)
+
+| 服务器 | 路径 | 用途 | 状态 |
+|---|---|---|---|
+| **uc02 本地** | `/data/tim/datasets/xvla_soft_fold/` | 原始下载位置 | ✅ 完整 (1729 files, 444G) |
+| **uc01/02/03 NFS** | `/data/shared/ubuntu/workspace/deepdive_kai0/xvla/data/xvla_soft_fold/` | uc 集群训练用 (走 NFS 到 uc01 disk) | ✅ 完整 (1729 files, 444G) |
+| **gf0 vePFS-cnsh** | `/vePFS/tim/xvla/data/xvla_soft_fold/` | robot-task (cn-shanghai) volc job 共享 | 🔄 下载中 (gf0 ← hf-mirror, ~7h ETA) |
+| **gf3 vePFS-cnbj** | `/vePFS-North-E/vis_robot/workspace/deepdive_kai0/xvla/data/xvla_soft_fold/` | **Robot-North-H20** (cn-beijing) 集群 job 共享 ⭐ | 🔄 下载中 (gf3 ← hf-mirror, ~8h ETA) |
+
+> gf3 副本用于 **Phase 1 SSL pretrain on Robot-North-H20** — 集群 job 挂载 vePFS-cnbj 后 XVLA 自动可见。
 
 **视角统一命名** (LeRobot v2.1 convention, 也用于 SSL data loader):
 - `observation.images.top_head` — top 相机 (A 全是 D435, B 用 D435)
