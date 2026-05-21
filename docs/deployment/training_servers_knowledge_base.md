@@ -1,12 +1,13 @@
-# 训练服务器知识库 (gf0 / uc01 / uc02 / uc03)
+# 训练服务器知识库 (gf0 / gf3 / uc01 / uc02 / uc03)
 
 > ⚠️ **2026-05-08 更新: gf2/3/4 → uc01/02/03 重命名; uc03 (原 gf4) 加入训练**
 > ⚠️ **2026-05-11 更新: 日期 leaf 命名统一为 `YYYY-MM-DD-v2` (见 §2.3 末)**
 > 🔴 **2026-05-18 更新: uc01/02/03 因挖矿木马入侵全系统重装** (详见 `docs/security/2026-05-16_rvn_miner_incident.md`)。**uc 集群不再创建 `tim` 用户, 改用 `ubuntu` 用户作为开发账户**。SSH 用 `ssh ubuntu@<IP>` (本地 alias `uc01/02/03` 已改 User=ubuntu)。3 台间内网 SSH 互信已配 (见 §4.4)。**gf / sim 集群 仍用 tim 账户, 不受影响**。
 > 🗑️ **2026-05-18 更新: gf1 (2026-05-06 退役) 已从本文档彻底移除条目**。历史 ckpt @ /vePFS 仍可经 gf0 访问 (vePFS 仍是 gf0/gf1 共享盘)。具体 gf1 #25 best ckpt (MAE@1=0.0104 task_a_new_pure_1200_new_norm step 38000) 已通过 TOS 拉到 sim01 `/data1/DATA_IMP/checkpoints/task_a_new_pure_1200_new_norm_best_step38000/`。
 > 🗑️ **2026-05-20 更新: js01-04 服务器全部停用, 不再启用; 相关章节 / 条目从本文档移除**。
+> 🆕 **2026-05-20 更新: 新增 gf3 (火山华北 H20 单卡机器, `124.174.16.237:7888`)**。属于火山 ML Platform `Robot-North-H20` 队列 (`ml.hpcpni3ln.45xlarge` × 7, 共 56 H20 GPUs)。本机 gf3 是其中 1 节点 (单卡); 集群训练 (16/24/32 卡) 通过 volc 队列提交多节点 job (见 §5.6.b)。vePFS 是 `vepfs-cnbj875793a96d6b` (华北 region, 与 gf0 的华东 vePFS 隔离), 挂载到 `/vePFS-North-E/vis_robot/`。
 >
-> **当前 active 服务器: gf0, uc01, uc02, uc03** (4 台)。
+> **当前 active 服务器: gf0, gf3, uc01, uc02, uc03** (5 台)。
 
 
 
@@ -21,32 +22,33 @@
 
 ## 1. 服务器全景
 
-> **当前 active**: gf0 + uc01/02/03 = **4 台**。
-> 两大集群: **gf**(vePFS 共享) / **uc**(独立, lsyncd 部分镜像)。
+> **当前 active**: gf0 + gf3 + uc01/02/03 = **5 台**。
+> 三大集群: **gf 华东**(gf0, vePFS-cnsh) / **gf3 华北**(火山 ML 队列 `Robot-North-H20`, vePFS-cnbj) / **uc**(独立, lsyncd 部分镜像)。
 
-| 维度 | **gf0** | **uc01** | **uc02** | **uc03** |
-|---|---|---|---|---|
-| **状态** | active | active | active | active |
-| **GPU** | 8× A100-80GB | 8× A800-80GB | 8× A800-80GB | 8× A800-80GB |
-| **GPU arch** | sm_80 | sm_80 | sm_80 | sm_80 |
-| **驱动 / CUDA driver** | 535.129.03 / 12.2 | 550.144.03 / 12.4 | 550.144.03 / 12.4 | 550.144.03 / 12.4 |
-| **CUDA toolkit** | 12.8 | 12.4 | 12.4 | 12.4 |
-| **CPU** | Xeon 8336C, 112c | Xeon 8358P, 124c | 同 uc01 | 同 uc01 |
-| **RAM** | 1.8 TiB | ~1.7 TiB | ~1.7 TiB | ~1.7 TiB |
-| **/dev/shm** | 1.3 TB | (待测) | (待测) | (待测) |
-| **OS** | Debian-velinux1u1 | Ubuntu 22.04 | 同 uc01 | 同 uc01 |
-| **Hostname** | `di-20260312174527-n5dw4` | `10-60-135-47` | `10-60-204-66` | (uc03) |
-| **IP / 入口** | 跳板 `14.103.44.161:55555` (反向隧道) | `117.50.196.104` 直连 | `106.75.68.254` 直连 | `117.50.217.231` 直连 |
-| **本地 SSH 别名** | `ssh -p 55555 tim@14.103.44.161` | `uc01` (bashrc) | `uc02` (bashrc) | `uc03` (bashrc) |
-| **共享 FS** | /vePFS (gpfs, 50T, gf0 单机, 历史与 gf1 共享) | **无** (本机独立) | **无** | **无** |
-| **本机大盘** | (overlay 99G, 用 vePFS) | `/data/shared` 4TB ext4 | 同 uc01 | 同 uc01 + `/nix` 3.5T NVMe |
-| **InfiniBand** | (无) | 4× Mellanox CX-6 200 Gb/s RoCEv2 | 同 uc01 | 同 uc01 |
-| **多机训练** | 单机 | uc01+02+03 HSDP/FSDP (§13) | 同 | 同 |
-| **Python / venv** | 3.11 | 3.12 | 同 | 同 |
+| 维度 | **gf0** | **gf3** | **uc01** | **uc02** | **uc03** |
+|---|---|---|---|---|---|
+| **状态** | active | active | active | active | active |
+| **GPU** | 8× A100-80GB | 1× H20-SXM5-96GB | 8× A800-80GB | 8× A800-80GB | 8× A800-80GB |
+| **GPU arch** | sm_80 | sm_90 (Hopper) | sm_80 | sm_80 | sm_80 |
+| **驱动 / CUDA driver** | 535.129.03 / 12.2 | 535.161.08 / 12.4 | 550.144.03 / 12.4 | 550.144.03 / 12.4 | 550.144.03 / 12.4 |
+| **CUDA toolkit** | 12.8 | 12.8 | 12.4 | 12.4 | 12.4 |
+| **CPU** | Xeon 8336C, 112c | 180c | Xeon 8358P, 124c | 同 uc01 | 同 uc01 |
+| **RAM** | 1.8 TiB | 223 GB | ~1.7 TiB | ~1.7 TiB | ~1.7 TiB |
+| **/dev/shm** | 1.3 TB | 159 GB | (待测) | (待测) | (待测) |
+| **OS** | Debian-velinux1u1 | Ubuntu 22.04.5 (velinux1u2) | Ubuntu 22.04 | 同 uc01 | 同 uc01 |
+| **Hostname** | `di-20260312174527-n5dw4` | `di-20260520161021-qd9b4` | `10-60-135-47` | `10-60-204-66` | (uc03) |
+| **IP / 入口** | 跳板 `14.103.44.161:55555` (反向隧道) | `124.174.16.237:7888` 直连 root | `117.50.196.104` 直连 | `106.75.68.254` 直连 | `117.50.217.231` 直连 |
+| **本地 SSH 别名** | `ssh -p 55555 tim@14.103.44.161` | `ssh -p 7888 root@124.174.16.237` | `uc01` (bashrc) | `uc02` (bashrc) | `uc03` (bashrc) |
+| **共享 FS** | /vePFS (gpfs cnsh, 50T) | /vePFS-North-E (gpfs cnbj, 50T, **与同队列其它节点共享**) | **无** (本机独立) | **无** | **无** |
+| **本机大盘** | (overlay 99G, 用 vePFS) | NVMe 3.5T (`/dev/nvme0n1`) | `/data/shared` 4TB ext4 | 同 uc01 | 同 uc01 + `/nix` 3.5T NVMe |
+| **InfiniBand** | (无) | 200 Gb/s RDMA (节点间, 集群训练用) | 4× Mellanox CX-6 200 Gb/s RoCEv2 | 同 uc01 | 同 uc01 |
+| **多机训练** | 单机 | 单机 / volc 集群提交多节点 (16-56 卡, §5.6.b) | uc01+02+03 HSDP/FSDP (§13) | 同 | 同 |
+| **Python / venv** | 3.11 | 3.12 | 3.12 | 同 | 同 |
 
 > **快速归类规则**:
-> - **gf 集群** = vePFS 全共享 (代码+数据+ckpt 都共享, venv 各机独立)
-> - **uc 集群** = 完全独立 + 200 Gb/s RoCEv2 多机训练 (§13)
+> - **gf0 (华东)** = vePFS 共享, 长跑单机训练
+> - **gf3 (华北)** = 火山 ML 队列 `Robot-North-H20` 中的一个 H20 单卡机, 适合 dev + smoke test; 真正多卡集群训练通过 volc submit job 启 2-7 个 `ml.hpcpni3ln.45xlarge` 节点 (16-56 卡)
+> - **uc 集群** = 自有机房, 完全独立, 200 Gb/s RoCEv2, 3 机 HSDP/FSDP (§13)
 
 ---
 
@@ -56,7 +58,8 @@
 
 | 服务器 | 工作目录 | 实际存储 |
 |---|---|---|
-| gf0 | `/vePFS/tim/workspace/deepdive_kai0/` (= `/home/tim/workspace/deepdive_kai0` 软链) | gpfs 跨机共享 |
+| gf0 | `/vePFS/tim/workspace/deepdive_kai0/` (= `/home/tim/workspace/deepdive_kai0` 软链) | gpfs cnsh 跨机共享 |
+| gf3 | `/vePFS-North-E/vis_robot/workspace/deepdive_kai0/` | gpfs cnbj, 与同队列其它节点共享 |
 | uc01 | `/home/ubuntu/workspace/deepdive_kai0/` → `/data/shared/ubuntu/workspace/deepdive_kai0/` (2026-05-18 后) | 本机 4TB ext4 |
 | uc02 | 同 uc01 (各自独立, 不共享) | 同 uc01 |
 | uc03 | 同 uc01 (各自独立) | 同 uc01 + 本机 `/nix` 3.5T NVMe |
@@ -164,7 +167,7 @@ deepdive_kai0/
 
 ### 2.3 数据集源 (按机器)
 
-#### gf0 (共享 vePFS)
+#### gf0 (共享 vePFS 华东)
 ```
 /vePFS/tim/workspace/deepdive_kai0/kai0/data/Task_A/
   base/                # 自建 (来自 visrobot01)
@@ -175,6 +178,19 @@ deepdive_kai0/
 
 /vePFS/visrobot01/KAI0/Task_A/base/<date>/  # 原始采集 (跨用户共享)
 ```
+
+#### gf3 (共享 vePFS 华北)
+```
+/vePFS-North-E/vis_robot/dataset/KAI0/Task_<X>/                      # 数据集 (从 TOS 同步)
+/vePFS-North-E/vis_robot/base_init_ckpts/extracted/pi05_base/params/ # init weights (从 TOS pi05_base.tar 解压)
+/vePFS-North-E/vis_robot/checkpoints/<config>/<exp>/                 # 训练输出
+/vePFS-North-E/vis_robot/logs/                                       # 训练日志
+/vePFS-North-E/vis_robot/workspace/deepdive_kai0/                    # 代码 (从 gf0 scp tarball)
+/vePFS-North-E/vis_robot/workspace/.uv_python/                       # uv-managed Python (self-contained)
+/vePFS-North-E/vis_robot/venv/                                       # 原始 venv.tar / uvpython.tar 缓存
+```
+
+> **跨 region 同步**: gf3 (cn-beijing) 不能直连 gf0/uc01/sim01 (cn-shanghai), 一切通过 TOS `tos://transfer-shanghai/...` 中转 (跨 region 走 TOS 后端骨干)。pi05_base.tar (12.3G) + 数据子集 ~17G 总同步 ≈ 4-6 分钟。
 
 #### uc01 / uc02 / uc03 (独立 4TB ext4)
 ```
@@ -193,13 +209,13 @@ deepdive_kai0/
 
 ### 2.4 临时 / 加速存储 (按机器)
 
-| 路径 | gf0 | uc01/uc02/uc03 |
-|---|---|---|
-| `/dev/shm` (tmpfs RAM) | **1.3 TB** ⭐ 训练数据可加速 | 大 (具体大小待测) |
-| `/tmp` | overlay ~99GB | overlay ~99GB |
-| 本机 NVMe | (无独立) | uc03: `/nix` 3.5T NVMe |
-| 跨机共享 | `/vePFS` 50T gpfs | (无) |
-| `/transfer-shanghai` | TOS bucket FUSE 挂载 | 同 |
+| 路径 | gf0 | gf3 | uc01/uc02/uc03 |
+|---|---|---|---|
+| `/dev/shm` (tmpfs RAM) | **1.3 TB** ⭐ 训练数据可加速 | 159 GB | 大 (具体大小待测) |
+| `/tmp` | overlay ~99GB | overlay ~100GB | overlay ~99GB |
+| 本机 NVMe | (无独立) | **3.5 TB** (`/dev/nvme0n1`) | uc03: `/nix` 3.5T NVMe |
+| 跨机/跨节点共享 | `/vePFS` 50T gpfs cnsh | `/vePFS-North-E` 50T gpfs cnbj | (无) |
+| TOS (cn-shanghai) | tosutil/rclone (本地有 AK/SK) | tosutil (复用 cnsh AK/SK, 跨 region 走骨干) | tosutil/rclone |
 
 ---
 
@@ -210,11 +226,16 @@ deepdive_kai0/
 | 机器 | venv 路径 | Python |
 |---|---|---|
 | gf0 | `/vePFS/tim/workspace/deepdive_kai0/kai0/.venv` → `/home/tim/.kai0_venv` (本地 symlink) | 3.11 |
+| gf3 | `/vePFS-North-E/vis_robot/workspace/deepdive_kai0/kai0/.venv` (**self-contained on vePFS**, 跨节点共享) | 3.12.13 |
 | uc01 | `/home/tim/workspace/deepdive_kai0/kai0/.venv` (uv 管理, 真实 dir) | 3.12 |
 | uc02 | 同 uc01 (本地独立) | 3.12 |
 | uc03 | 同 uc01 (本地独立) | 3.12 |
 
-> **注意 (gf 集群)**: 虽然 vePFS 在 gf0 上可见 `/vePFS/.../kai0/.venv`, 但其实是 `→ /home/tim/.kai0_venv` 软链到本机, 不跨 vePFS 共享。
+> **注意 (gf0 / gf3 区别)**:
+> - **gf0**: vePFS 上的 `.venv` 是 symlink, 真实 venv 在本机 `/home/tim/.kai0_venv` (不跨机)
+> - **gf3**: `.venv` 完全 self-contained 在 vePFS 上 — `python` 二进制 + uv-managed Python tree 都在 `/vePFS-North-E/vis_robot/workspace/.uv_python/cpython-3.12.13-linux-x86_64-gnu/` 下, `pyvenv.cfg home =` 也指 vePFS 路径。这样 volc 集群任意新节点 mount vePFS-North-E 后 `source .venv/bin/activate` 即可直接用, **无需在每节点重装**。
+>
+> **gf3 venv 构建路径 (2026-05-20)**: 由于 GitHub HTTPS 在 cn-beijing 跨 region 极不稳 (lerobot git fetch 反复 TLS stream cancel), 直接在 gf3 跑 `uv sync` 失败。改为: ① uc01 上 `tar` 现成 `.venv` (8.2 GB) + uv-managed Python (104 MB) 上传到 TOS `from_uc01/gf3/`; ② gf3 拉取后解压 + sed 重写 hardcoded 路径 (`/data/shared/ubuntu/workspace/deepdive_kai0/kai0` → `/vePFS-North-E/vis_robot/workspace/deepdive_kai0/kai0`, `/home/ubuntu/.local/share/uv` → `/root/.local/share/uv`); ③ 后续再把 uv-managed Python 也搬到 vePFS, .venv 重 symlink. 一键脚本: `/root/gf3_install_venv.sh` (副本: `train_scripts/launch/gf3_install_venv.sh`)。**全过程 6 分半**。
 
 ### 3.2 关键依赖 (各机基本一致)
 
@@ -227,15 +248,17 @@ deepdive_kai0/
 
 ### 3.3 环境变量 (`setup_env.sh` 自动设置)
 
-| 变量 | gf0 (`profile=gf`) | uc01/02/03 (`profile=default`) |
-|---|---|---|
-| `KAI0_DATA_ROOT` | `/vePFS/tim/workspace/deepdive_kai0/kai0` | `$HOME/workspace/deepdive_kai0/kai0` |
-| `OPENPI_DATA_HOME` | `/vePFS/tim/workspace/openpi_cache` | `$HOME/.cache/openpi` |
-| `PYTORCH_CKPT_BASE` | `/vePFS/tim/workspace/openpi_cache/modelscope_cache/lerobot` | `$HOME/.cache/openpi/modelscope_cache/lerobot` |
-| `XLA_PYTHON_CLIENT_MEM_FRACTION` | 0.9 (set per-launcher) | 同 |
-| `WANDB_MODE` | `offline` (无外网) | `offline` |
-| `LD_LIBRARY_PATH` | 含 `/usr/local/cuda-12.8/...` + `/home/tim/.cuda_compat` | 含 `/usr/local/cuda-12.4/...` |
-| `TORCH_CUDA_ARCH_LIST` | (default) | `"8.0"` (设在 `~/.bashrc`) |
+| 变量 | gf0 (`profile=gf`) | gf3 (`profile=gf3`) | uc01/02/03 (`profile=default`) |
+|---|---|---|---|
+| `KAI0_DATA_ROOT` | `/vePFS/tim/workspace/deepdive_kai0/kai0` | `/vePFS-North-E/vis_robot/workspace/deepdive_kai0/kai0` | `$HOME/workspace/deepdive_kai0/kai0` |
+| `OPENPI_DATA_HOME` | `/vePFS/tim/workspace/openpi_cache` | `/vePFS-North-E/vis_robot/openpi_cache` | `$HOME/.cache/openpi` |
+| `PYTORCH_CKPT_BASE` | `/vePFS/tim/workspace/openpi_cache/modelscope_cache/lerobot` | `/vePFS-North-E/vis_robot/openpi_cache/modelscope_cache/lerobot` | `$HOME/.cache/openpi/modelscope_cache/lerobot` |
+| `XLA_PYTHON_CLIENT_MEM_FRACTION` | 0.9 (set per-launcher) | 0.85-0.9 (单卡 0.9, 集群 0.85 留 NCCL buffer) | 同 |
+| `WANDB_MODE` | `offline` (无外网) | `offline` | `offline` |
+| `LD_LIBRARY_PATH` | 含 `/usr/local/cuda-12.8/...` + `/home/tim/.cuda_compat` | 由 venv 内 `nvidia/*/lib` 提供 (launcher 自动 append) | 含 `/usr/local/cuda-12.4/...` |
+| `TORCH_CUDA_ARCH_LIST` | (default) | `"9.0"` (Hopper) | `"8.0"` (设在 `~/.bashrc`) |
+
+> **gf3 profile 识别**: `setup_env.sh` 通过 `[[ -d /vePFS-North-E/vis_robot ]]` 探测 (火山华北节点 hostname 形如 `di-YYYYMMDDHHMMSS-xxxxx`, 不固定, 用文件系统探测更稳)。
 
 ### 3.4 已知的机器特定 workaround
 
@@ -254,6 +277,9 @@ deepdive_kai0/
 # gf0 (从 sim01 / 任意公网机)
 ssh -p 55555 tim@14.103.44.161   # gf0 (反向隧道经 14.103.44.161 跳板)
 
+# gf3 (火山华北 H20 单卡机, root 直连)
+ssh -p 7888 root@124.174.16.237  # gf3, 密码 tim (建议改 key-based)
+
 # uc01 / uc02 / uc03 (2026-05-18 重装后, 直连, ubuntu 账户 key-based)
 ssh ubuntu@117.50.196.104   # uc01
 ssh ubuntu@106.75.68.254    # uc02
@@ -261,6 +287,7 @@ ssh ubuntu@117.50.217.231   # uc03
 # (旧: sshpass -p tim ssh tim@... — 已废弃, tim 用户在 uc 上不存在)
 
 # 也可在 ~/.bashrc 设别名:
+alias gf3='ssh -p 7888 root@124.174.16.237'
 alias uc01='ssh ubuntu@117.50.196.104'   # 2026-05-18 后, key-based, 无需密码
 alias uc02='ssh ubuntu@106.75.68.254'
 alias uc03='ssh ubuntu@117.50.217.231'
@@ -269,6 +296,7 @@ alias uc03='ssh ubuntu@117.50.217.231'
 ### 4.2 用户
 
 - **gf0/sim01**: 用户名 `tim`, 密码 `tim` (有密码 sudo)
+- **gf3** (火山华北 H20): 用户名 **`root`**, 密码 `tim`。`/root/code/{README*,demo_project}` 是火山初始 demo, 我们的项目在 `/vePFS-North-E/vis_robot/` 下
 - **uc01/02/03** (2026-05-18 重装后): 用户名 **`ubuntu`** (不再创建 tim), key-based 登录, 强密码已设
   - cloud-init pre-seed 了本地 dev pubkey + 团队 key (yihaochen / qiqiguaitm / tim@ipc01 等) 到 `/home/ubuntu/.ssh/authorized_keys`
   - 3 台 uc 间 ubuntu 用户 ed25519 互信已配 (详见 §4.4)
@@ -397,6 +425,169 @@ nohup bash /tmp/auto_pack_on_end.sh \
 disown $!
 ```
 
+### 5.6.gf3 gf3 单卡 smoke 启动 (2026-05-20)
+
+```bash
+ssh -p 7888 root@124.174.16.237
+bash /vePFS-North-E/vis_robot/workspace/deepdive_kai0/train_scripts/launch/run_gf3_smoke.sh
+# log: /vePFS-North-E/vis_robot/logs/gf3_smoke_*.log
+```
+
+`run_gf3_smoke.sh` 在 H20 单卡上跑 `pi05_flatten_fold_a_new_pure_1200` config (tracked variant), 用 `A_new_pure_200` 数据集 + `pi05_base` init, FSDP=1, batch=16, `inline_eval_every=1` (eval @ save_interval=2000)。验收:看到 `Step 0` 不报错 + `Step N` loss 下降即证明环境通; 第一次 `inline_eval` (~step 2000) 给出 val MAE 即完整通。
+
+### 5.6 Volc ML Platform 云训练提交 (2026-05-19 起)
+
+Volc 火山引擎 ML Platform 提供按量付费 H20/A100 节点（机房代号 `cn-shanghai` 与 `cn-beijing`）。任务通过 OpenAPI 提交，代码 + 数据走挂载的 vePFS。
+
+**前置：**
+- vePFS workspace 已有最新代码（`/vePFS/tim/workspace/deepdive_kai0/...`），volc 节点 boot 时挂载 `MountPath: /vePFS`
+- 凭证：`VOLC_AK` / `VOLC_SK` 写入 `~/.volc_creds`（mode 0600）+ `~/.bashrc` 加 source guard
+- SDK：`volcengine-python-sdk`（uv pip install），SDK 5.0.27 有 deserializer KeyError bug，必须 monkey-patch
+
+**YAML 模板**（`xvla/scripts/*.yaml`）：
+
+```yaml
+TaskName: "xvla-stage1-kai-warmup-16gpu"
+ImageUrl: "visincept-cn-shanghai.cr.volces.com/grasp/h2r:1.0"
+ResourceQueueName: "robot-task"          # → q-20251204185107-fvnpx (A100 80G)
+Framework: "PyTorch"
+TaskRoleSpecs:
+  - RoleName: "worker"
+    RoleReplicas: 2                       # 节点数 (16 GPU = 2×8)
+    Flavor: "ml.hpcpni2.28xlarge"        # A100×8 + RDMA
+ActiveDeadlineSeconds: 172800             # 48h hard timeout
+Storages:
+  - Type: "Vepfs"
+    VepfsId: "vepfs-cnsh075262e1f815"
+    MountPath: "/vePFS"
+CacheType: "Cloudfs"
+Envs:
+  - {Name: HF_HUB_OFFLINE, Value: "1"}
+  - {Name: NCCL_DEBUG, Value: "WARN"}
+  - {Name: XLA_PYTHON_CLIENT_MEM_FRACTION, Value: "0.85"}
+  - {Name: JAX_ENABLE_EMPTY_ARRAYS, Value: "true"}
+Entrypoint: |
+  exec >> /vePFS/.../logs/$(date -u +%Y%m%d_%H%M%S)_node${MLP_ROLE_INDEX:-0}.log 2>&1
+  if ! ldconfig -p | grep -q libavutil; then apt-get install -y -qq ffmpeg; fi
+  cd /vePFS/tim/workspace/deepdive_kai0/kai0
+  source .venv/bin/activate
+  export JAX_COORDINATOR_ADDRESS="${MLP_WORKER_0_HOST}:15830"
+  export JAX_NUM_PROCESSES="${MLP_WORKER_NUM:-2}"
+  export JAX_PROCESS_INDEX="${MLP_ROLE_INDEX:-0}"
+  exec python -u scripts/train.py <config_name> --exp-name <exp_name> --no-wandb-enabled --overwrite
+```
+
+**提交 (绕开 SDK 反序列化 bug)：**
+
+```python
+import os, json, yaml
+import volcenginesdkcore
+from volcenginesdkmlplatform20240701.api.ml_platform20240701_api import MLPLATFORM20240701Api
+import volcenginesdkcore.interceptor.interceptors.deserialized_response_interceptor as drm
+
+# Monkey-patch broken deserializer (SDK 5.0.27 KeyError: '.models')
+def safe_intercept(self, ctx):
+    if ctx.request.preload_content:
+        try: ctx.response.result = json.loads(ctx.response.http_response.data)
+        except: ctx.response.result = {}
+    return ctx
+drm.DeserializedResponseInterceptor.intercept = safe_intercept
+
+cfg = volcenginesdkcore.Configuration()
+cfg.ak, cfg.sk = os.environ['VOLC_AK'], os.environ['VOLC_SK']
+cfg.region, cfg.client_side_validation = 'cn-shanghai', False
+volcenginesdkcore.Configuration.set_default(cfg)
+api = MLPLATFORM20240701Api(volcenginesdkcore.ApiClient(cfg))
+
+# Parse YAML and submit
+y = yaml.safe_load(open('xvla/scripts/stage1_kai_warmup_16gpu.yaml').read())
+QID = {'robot-task': 'q-20251204185107-fvnpx', 'Robot-East-H20': 'q-20260516104437-2ml4v'}
+body = {
+    'Name': y['TaskName'],
+    'ResourceConfig': {
+        'ResourceQueueId': QID[y['ResourceQueueName']],
+        'MaxRuntimeSeconds': int(y.get('ActiveDeadlineSeconds', 86400)),
+        'Roles': [{'Name': r['RoleName'], 'Replicas': int(r['RoleReplicas']),
+                   'Resource': {'InstanceTypeId': r['Flavor'], 'ZoneId': 'cn-shanghai-a'}}
+                  for r in y['TaskRoleSpecs']],
+    },
+    'RuntimeConfig': {
+        'Framework': y.get('Framework', 'Custom'),
+        'Image': {'Url': y['ImageUrl'], 'Type': 'Prebuild'},
+        'Command': y['Entrypoint'],
+        'Envs': [{'Name': e['Name'], 'Value': str(e['Value']),
+                  'IsPrivate': bool(e.get('IsPrivate', False))} for e in y.get('Envs', [])],
+    },
+    'StorageConfig': {
+        'Storages': [{'Type': s['Type'], 'MountPath': s['MountPath'],
+                      'Config': {'Vepfs': {'Id': s['VepfsId'], 'SubPath': s.get('SubPath', '')}}}
+                     for s in y['Storages']],
+        **({'CacheType': y['CacheType']} if y.get('CacheType') else {}),
+    },
+}
+r = api.create_job(body)
+print('task_id:', r['Result']['Id'])  # e.g. t-20260520225742-jv6jk
+```
+
+**Stop / Get：**
+
+```python
+api.stop_job({'Id': 't-20260520225742-jv6jk'})
+r = api.get_job({'Id': 't-20260520225742-jv6jk'})
+print(r['Result'].get('State'))    # Running / Success / Failed / Stopped
+```
+
+**封装好的 helper** (用 submit_yaml.py CLI 形式, 处理 dry-run + 错误): `train_scripts/volc/submit_yaml.py`。
+
+**Queue ID 速查:**
+
+| Region | Queue Name | Queue ID | 配置 |
+|---|---|---|---|
+| cn-shanghai | robot-task | `q-20251204185107-fvnpx` | A100-80G × 28 |
+| cn-shanghai | robot-task-4090 | `q-20260115184225-24r6l` | RTX 4090 |
+| cn-shanghai | Robot-East-H20 | `q-20260516104437-2ml4v` | H20 (cn-shanghai-e zone) |
+| cn-shanghai | Robot-GPU开发机队列 | `q-20251205141747-xlxlh` | 开发机 |
+| cn-shanghai | multimodal-task | `q-20251215144954-nzlv4` | 多模态 A100 |
+| **cn-beijing** | **Robot-North-H20** | **`q-20260516104642-khch9`** | **H20-SXM5-96G × 56 = 7 × `ml.hpcpni3ln.45xlarge` (cn-beijing-e zone)** |
+
+> **submit_yaml.py 已自动识别 region**: queue name 决定 region/zone (查 `RESOURCE_QUEUES` 字典)。`Robot-North-H20` → `cn-beijing` + `cn-beijing-e`。
+
+### 5.6.b 16-卡 (Robot-North-H20) 集群训练提交 (2026-05-20 起)
+
+模板: `train_scripts/volc/gf3_cluster_smoke_16gpu.yaml` (2 节点 × 8 H20 = 16 GPU, FSDP=16)。
+
+```yaml
+ImageUrl:        "visincept-cn-beijing.cr.volces.com/grasp/h2r:1.0"   # cn-beijing CR (与 cn-shanghai CR 是不同 region)
+ResourceQueueName: "Robot-North-H20"                                   # auto: cn-beijing / cn-beijing-e
+TaskRoleSpecs:
+  - RoleName: "worker"
+    RoleReplicas: 2
+    Flavor: "ml.hpcpni3ln.45xlarge"                                    # 8× H20-SXM5-96GB, RDMA
+Storages:
+  - Type: "Vepfs"
+    VepfsId: "vepfs-cnbj875793a96d6b"                                  # 华北 vePFS, 与 gf3 共享
+    MountPath: "/vePFS-North-E"
+```
+
+提交:
+```bash
+source ~/.volc_creds
+python train_scripts/volc/submit_yaml.py train_scripts/volc/gf3_cluster_smoke_16gpu.yaml
+# 或 dry-run:
+python train_scripts/volc/submit_yaml.py train_scripts/volc/gf3_cluster_smoke_16gpu.yaml --dry-run
+```
+
+**vePFS 与 .venv self-containment (关键)**: gf3 上的 `.venv` 是经 sed 重写并把 uv-managed Python 一并搬到 vePFS 的版本 (见 §3.1 注解), volc 集群任一新节点 mount `vepfs-cnbj875793a96d6b` 后 `source .venv/bin/activate` 直接可用, **无需在每节点重装**。
+
+**JAX 多机协调**: entrypoint 用 volc 提供的 `MLP_WORKER_0_HOST` / `MLP_WORKER_NUM` / `MLP_ROLE_INDEX` 设 `JAX_COORDINATOR_ADDRESS=$MLP_WORKER_0_HOST:15830` (port 15830, **不要用 `MLP_WORKER_0_PORT=2222` — 那是 SSH 端口冲突**)。
+
+**注意事项 (同 5.6 通用):**
+
+- ckpt 写入 `/vePFS-North-E/<...>/checkpoints/<config>/<exp_name>/<step>/`, vePFS 本地立即可见
+- multi-host orbax 保存可能 race, 用 `--overwrite` 或 node-0 预清理
+- 日志走 vePFS 共享, `logs/cluster_smoke_*_node${MLP_ROLE_INDEX}.log`, gf3 上 tail 即可
+- 任务列表 / GUI: `https://console.volcengine.com/ml-platform/region:ml-platform+cn-beijing/task`
+
 ---
 
 ## 6. 机器间数据同步
@@ -489,8 +680,9 @@ ckpt_path:        ${KAI0_DATA_ROOT}/checkpoints/<config>/<exp_name>/<step>/
 
 | 机器 | 主用途 | 典型负载 |
 |---|---|---|
-| **gf0** | Task_A 全参 fine-tune (主战) | 50k step 长训, vePFS 数据 |
+| **gf0** | Task_A 全参 fine-tune (主战, 华东) | 50k step 长训, vePFS 数据 |
 | ~~gf1~~ | 已退役 (2026-05-06) | — |
+| **gf3** | dev + smoke (单卡 H20) / volc 多卡集群训练入口 (华北) | 单卡 H20 跑小 batch smoke; 集群提交 2-7 节点 16-56 卡训练 |
 | **uc01** | Advantage Estimator / AWBC 训练 + 3-host HSDP/FSDP (§13) | 数据本地, 24 GPU 集群训练 |
 | **uc02** | 同 uc01 (3-host 集群成员) | 同 |
 | **uc03** | 同 uc01 (3-host 集群成员, 原 gf4) | 同 |
@@ -526,6 +718,8 @@ serve_policy.py 启动推理服务
 | 同上, data on /dev/shm | gf1 | **3.16** | 修复后, GPU 100% util |
 | 同上 | uc01/uc02 | (待测) | 期望 ~2-3 s/step |
 | pi05 全参 fine-tune, batch=128, fsdp=24, HSDP 3-host | uc01+02+03 | (见 §13) | NCCL+IB+GDR ~800 Gbps |
+| pi05 全参 fine-tune, **batch=16, fsdp=1**, vePFS-North-E data | **gf3** (单 H20) | **2.9** | 2026-05-20 smoke: `run_gf3_smoke.sh`, JAX 0.5.3 + CUDA 12.8, Hopper sm_90 |
+| pi05 全参 fine-tune, batch=128, fsdp=16, 2-host RDMA | **Robot-North-H20** 2 节点 | (待测) | 2 × `ml.hpcpni3ln.45xlarge`, 提交 `gf3_cluster_smoke_16gpu.yaml` |
 
 inline-eval 时间 (200 frames 采样):
 - 17 val ep: 660s
@@ -540,6 +734,7 @@ inline-eval 时间 (200 frames 采样):
 
 | 日期 | 内容 |
 |---|---|
+| 2026-05-20 | **新增 gf3 (火山华北 H20 单卡)**: §1 表格扩到 5 台; §2/§3/§4 增 gf3 行/列; §5.6.gf3 单卡 launcher (`run_gf3_smoke.sh`) + §5.6.b cn-beijing 16 卡 yaml (`gf3_cluster_smoke_16gpu.yaml`); §11 加 gf3 单卡 2.9 s/it 基线; `submit_yaml.py` 加 `Robot-North-H20` queue 映射 (cn-beijing, q-20260516104642-khch9, cn-beijing-e); `setup_env.sh` 加 `profile=gf3`. gf3 venv 通过 uc01 → TOS → gf3 + path 重写方案 (GitHub HTTPS 跨 region 失败) |
 | 2026-05-20 | **删除 js01-04 服务器全部条目** (集群停用); §1/§2/§3/§4/§5/§6/§7/§9/§11 表格还原为 4 台 (gf0+uc01/02/03); §14 (js 集群章节) 整体移除; §6.4/§6.5 (js 内部 + 跨集群同步) 整体移除 |
 | 2026-05-18 | uc01/02/03 重装 (mining 入侵), 改用 ubuntu 账户; gf1 条目从文档删除 (已退役) |
 | 2026-05-13 | (已并入 5-20 移除) §2/§3/§4/§5/§6/§7/§9/§11 全部扩展加入 js 集群行; §6.4/§6.5 新增 js 内部 + 跨集群同步; §7.5 新增 JuiceFS 元数据延迟坑 |
