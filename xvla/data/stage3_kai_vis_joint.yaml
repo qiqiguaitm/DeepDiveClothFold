@@ -1,0 +1,7 @@
+# Track C Stage 3 — kai+vis joint finetune dataset list.
+# Used by xvla_actcond_stage3_joint_finetune to train action_head_cond_hub[0/1]
+# jointly under full unfreeze.
+roots:
+  - {root: /vePFS/tim/workspace/deepdive_kai0/kai0/data/Task_A/kai0_base, domain_id: 0}
+  - {root: /vePFS/tim/workspace/deepdive_kai0/kai0/data/Task_A/kai0_dagger, domain_id: 0}
+  - {root: /vePFS/tim/workspace/deepdive_kai0/kai0/data/Task_A/vis_v2_merged, domain_id: 1}

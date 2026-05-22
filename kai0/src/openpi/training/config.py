@@ -1159,6 +1159,111 @@ _CONFIGS = [
         inline_eval_dataset_id=1,
     ),
 
+    # ===================================================================================
+    # Track C: Action Head Conditioning Token (方案 A) — 2026-05-22 选定
+    # Concat 1 learnable domain token to action expert input. paligemma unaware of domain.
+    # 1:1 sparse-prefix 对照 Track B Soft Prompt (32 tokens in VLM input).
+    # See docs/deployment/cross_embodiment_data_reuse_plan.md §6.3 for design rationale.
+    # ===================================================================================
+
+    # C-Stage 1 — kai warmup with action_head_cond_hub (50k step on kai0_base+dagger).
+    # Init: pi05_base. action_head_cond_hub[0] (kai) gets trained, slot[1] (vis) random.
+    TrainConfig(
+        name="xvla_actcond_stage1_kai_warmup",
+        model=pi0_config.Pi0Config(
+            pi05=True,
+            action_head_cond_num_domains=2,
+        ),
+        data=LerobotAgilexDataConfig(
+            repo_id="/vePFS/tim/workspace/deepdive_kai0/kai0/data/Task_A/kai0_base",
+            datasets_yaml="/vePFS/tim/workspace/deepdive_kai0/xvla/data/stage1_kai_only.yaml",
+            default_prompt="Flatten and fold the cloth.",
+            use_delta_joint_actions=False,
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader(
+            "/vePFS/tim/workspace/openpi_cache/openpi-assets/checkpoints/pi05_base/params"
+        ),
+        lr_schedule=_optimizer.CosineDecaySchedule(warmup_steps=1_000, peak_lr=1.5e-5, decay_steps=50_000, decay_lr=1.5e-6),
+        ema_decay=0.9999,
+        num_train_steps=50_000,
+        keep_period=10_000,
+        save_interval=2_000,
+        num_workers=8,
+        batch_size=128,
+        fsdp_devices=16,
+        inline_eval_val_root="/vePFS/tim/workspace/deepdive_kai0/kai0/data/Task_A/vis_v2_merged_val",
+        inline_eval_n_frames=200,
+        inline_eval_every=4,
+        inline_eval_dataset_id=1,
+    ),
+
+    # C-Stage 2 — Freeze backbone, only train action_head_cond_hub on vis (~5k step, lr 5e-4).
+    # Init: C-Stage 1 final ckpt. Goal: align vis action-cond token slot before unfreezing.
+    TrainConfig(
+        name="xvla_actcond_stage2_vis_only",
+        model=pi0_config.Pi0Config(
+            pi05=True,
+            action_head_cond_num_domains=2,
+            freeze_mode="only_action_head_cond",
+        ),
+        data=LerobotAgilexDataConfig(
+            repo_id="/vePFS/tim/workspace/deepdive_kai0/kai0/data/Task_A/vis_v2_merged",
+            datasets_yaml="/vePFS/tim/workspace/deepdive_kai0/xvla/data/stage2_3_vis_only.yaml",
+            default_prompt="Flatten and fold the cloth.",
+            use_delta_joint_actions=False,
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader(
+            # ← update to final C-stage 1 ckpt path once it finishes
+            "/vePFS/tim/workspace/deepdive_kai0/kai0/checkpoints/xvla_actcond_stage1_kai_warmup/xvla_actcond_stage1_kai_warmup/49999/params"
+        ),
+        freeze_filter=nnx.Not(nnx_utils.PathRegex(".*action_head_cond_hub.*")),
+        lr_schedule=_optimizer.CosineDecaySchedule(warmup_steps=200, peak_lr=5e-4, decay_steps=5_000, decay_lr=5e-5),
+        ema_decay=None,  # EMA meaningless with ~1K trainable params
+        num_train_steps=5_000,
+        keep_period=1_000,
+        save_interval=1_000,
+        num_workers=8,
+        batch_size=128,
+        fsdp_devices=16,
+        inline_eval_val_root="/vePFS/tim/workspace/deepdive_kai0/kai0/data/Task_A/vis_v2_merged_val",
+        inline_eval_n_frames=200,
+        inline_eval_every=1,
+        inline_eval_dataset_id=1,
+    ),
+
+    # C-Stage 3 — Full unfreeze, joint finetune kai+vis (50k step).
+    # Init: C-Stage 2 final ckpt. C3.0 终态 = paper E3.8 baseline.
+    TrainConfig(
+        name="xvla_actcond_stage3_joint_finetune",
+        model=pi0_config.Pi0Config(
+            pi05=True,
+            action_head_cond_num_domains=2,
+        ),
+        data=LerobotAgilexDataConfig(
+            # Use the same merged kai+vis dataset as exp1 Hard Prompt baseline for direct comparability.
+            repo_id="/vePFS/tim/workspace/deepdive_kai0/kai0/data/Task_A/self_built/xvla_exp1_hard_merged",
+            datasets_yaml="/vePFS/tim/workspace/deepdive_kai0/xvla/data/stage3_kai_vis_joint.yaml",
+            default_prompt="Flatten and fold the cloth.",
+            use_delta_joint_actions=False,
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader(
+            # ← update to final C-stage 2 ckpt path once it finishes
+            "/vePFS/tim/workspace/deepdive_kai0/kai0/checkpoints/xvla_actcond_stage2_vis_only/xvla_actcond_stage2_vis_only/5000/params"
+        ),
+        lr_schedule=_optimizer.CosineDecaySchedule(warmup_steps=1_000, peak_lr=1.5e-5, decay_steps=50_000, decay_lr=1.5e-6),
+        ema_decay=0.9999,
+        num_train_steps=50_000,
+        keep_period=10_000,
+        save_interval=2_000,
+        num_workers=8,
+        batch_size=128,
+        fsdp_devices=16,
+        inline_eval_val_root="/vePFS/tim/workspace/deepdive_kai0/kai0/data/Task_A/vis_v2_merged_val",
+        inline_eval_n_frames=200,
+        inline_eval_every=4,
+        inline_eval_dataset_id=1,
+    ),
+
     # Task A: 100 ep originals (no mirror) + init from Task_A/mixed_1.
     # Submitted as volc 8-GPU job, batch 128, 50k step, cosine LR 1.5e-5 → 1.5e-6.
     TrainConfig(

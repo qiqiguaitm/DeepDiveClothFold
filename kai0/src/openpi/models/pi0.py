@@ -147,6 +147,21 @@ class Pi0(_model.BaseModel):
                 rngs=rngs,
             )
 
+        # Track C action head conditioning hub (方案 A: Concat domain token at action
+        # expert input). 1 learnable token per domain, prepended in embed_suffix.
+        # PaliGemma is unaware of domain — only the action expert sees the conditioning.
+        # See cross_embodiment_data_reuse_plan.md §6.3.1 for design.
+        # Backward compatible: when num_domains=0 (default), no module created;
+        # old ckpts load unchanged.
+        self.action_head_cond_num_domains = int(getattr(config, "action_head_cond_num_domains", 0) or 0)
+        if self.action_head_cond_num_domains > 0:
+            self.action_head_cond_hub = nnx.Embed(
+                num_embeddings=self.action_head_cond_num_domains,
+                features=action_expert_config.width,
+                embedding_init=_SOFT_PROMPT_INIT,  # reuse N(0, 0.02) init
+                rngs=rngs,
+            )
+
         # Store augment_level so compute_loss can read it (Pi0 doesn't keep full config).
         self.augment_level = getattr(config, "augment_level", "mild")
         self.use_dct_loss = getattr(config, "use_dct_loss", False)
@@ -219,6 +234,21 @@ class Pi0(_model.BaseModel):
         input_mask = []
         ar_mask = []
         tokens = []
+
+        # Track C action head conditioning (方案 A): prepend 1 domain token to suffix.
+        # Only the action expert (not paligemma) sees this token — paligemma is
+        # unaware of domain. The token forms its own ar group (ar_mask=True) so it
+        # breaks from the prefix; subsequent state/action tokens follow their
+        # original ar pattern (each starts a new group).
+        if self.action_head_cond_num_domains > 0 and obs.dataset_id is not None:
+            B = obs.dataset_id.shape[0]
+            domain_token = self.action_head_cond_hub(obs.dataset_id)
+            domain_token = domain_token.astype(jnp.bfloat16)[:, None, :]  # (B, 1, action_expert_width)
+            tokens.append(domain_token)
+            input_mask.append(jnp.ones((B, 1), dtype=jnp.bool_))
+            # standalone group; action_expert tokens follow with their own ar pattern
+            ar_mask += [True]
+
         if not self.pi05:
             # add a single state token
             state_token = self.state_proj(obs.state)[:, None, :]

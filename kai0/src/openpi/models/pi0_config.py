@@ -58,10 +58,22 @@ class Pi0Config(_model.BaseModelConfig):
     # When disabled (default 0), the model behaves identically to upstream pi0/pi05.
     soft_prompt_num_domains: int = 0
     soft_prompt_len: int = 0
+
+    # Track C action head conditioning token (方案 A: Concat domain token at action expert input).
+    # `action_head_cond_num_domains > 0` enables the hub; obs.dataset_id ∈ [0, num_domains).
+    # The token is prepended to the suffix (action expert input only), so paligemma is
+    # unaware of the domain — conditioning only modulates action denoising.
+    # When disabled (default 0), the model behaves identically to upstream pi0/pi05 (and
+    # to soft-prompt-only configs); old ckpts load fine because the new param is just
+    # not instantiated. See cross_embodiment_data_reuse_plan.md §6.3.1 for design.
+    action_head_cond_num_domains: int = 0
+
     # Freeze policy. "none" = train all (default, LoRA still respected).
     # "only_soft_prompt" = freeze everything except `soft_prompt_hub` (Stage 2 of
     # the X-VLA 3-stage curriculum: align soft prompt for new domain before
     # unfreezing the rest).
+    # "only_action_head_cond" = freeze everything except `action_head_cond_hub`
+    # (Track C Stage 2 analogue).
     freeze_mode: str = "none"
 
     def __post_init__(self):
@@ -119,6 +131,14 @@ class Pi0Config(_model.BaseModelConfig):
                     "and soft_prompt_len>0 (the module to keep trainable must exist)."
                 )
             return nnx.Not(nnx_utils.PathRegex(".*soft_prompt_hub.*"))
+
+        if self.freeze_mode == "only_action_head_cond":
+            if self.action_head_cond_num_domains <= 0:
+                raise ValueError(
+                    "freeze_mode='only_action_head_cond' requires "
+                    "action_head_cond_num_domains>0 (the module to keep trainable must exist)."
+                )
+            return nnx.Not(nnx_utils.PathRegex(".*action_head_cond_hub.*"))
 
         filters = []
         has_lora = False
