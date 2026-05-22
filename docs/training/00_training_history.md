@@ -1,12 +1,18 @@
-# 实验历史汇总（pi05 / kai0）
+# 训练实验历史汇总（pi05 / kai0 / X-VLA）
 
-> **作用**：集成本机所有训练实验的历史记录与结果，**含每步 inline-eval MAE@{1,10,25,50} 完整曲线**。涵盖训练类型: action-only freeze、全参数解冻 (full-finetune)、LoRA (r=16/32)、AWBC、cold-start 混合数据训练 (mix_vis600 / pure_vis600 / mixed_visrobot01) 等。
-> **范围**：Task E（扶起倒箱）+ Task P（抓放盒子）+ Task A（FlattenFold） — 三个任务下的所有 train run, 每条 run 的 best step / best MAE / 数据规模 / freeze 策略 / LoRA r 都在此聚合; 详细超参 / 数据配方移到下方 "关联详细文档" 列表的对应专题文件。
-> **最近更新**：2026-05-16 18:10 CST (uc02 `task_a_new_pure_1800_new_norm_base_mixed1` 完成: MAE@1=**0.0088**, 全 long-horizon (@10/@25/@50) 胜老 SOTA 9-23%, **首次验证两阶段 (mixed_1+1800ep) 范式在 chunk planner 上的优势**; uc03 `task_a_new_smooth_800_new_norm` 完成: MAE@1=0.0089. 训练期间 uc 集群三节点遭 Ravencoin 挖矿木马入侵, 已完整处置并写事件报告 `docs/security/2026-05-16_rvn_miner_incident.md`. 范式对比文档见 `training_paradigm_comparison.md`)
-> **数据来源**：`logs/train_*.log` 中 `[inline-eval] step=N MAE@1=… @10=… @25=… @50=…` 行（9 val ep × 20 frames，~30s/eval），与 `logs/eval_history_v2/v2_step_*.json` 离线归档（9 val ep × 50 queries）。
+> **作用**：集成本机所有训练实验的历史记录与结果，**含每步 inline-eval MAE@{1,10,25,50} 完整曲线**。涵盖训练类型: action-only freeze、全参数解冻 (full-finetune)、LoRA (r=16/32)、AWBC、cold-start 混合数据训练 (mix_vis600 / pure_vis600 / mixed_visrobot01)、**X-VLA conditioning 系列 (hard prompt / soft prompt / action head cond)** 等。
+> **范围**：Task E（扶起倒箱）+ Task P（抓放盒子）+ Task A（FlattenFold） — 三个任务下的所有 train run, 每条 run 的 best step / best MAE / 数据规模 / freeze 策略 / LoRA r / conditioning 方式 都在此聚合; 详细超参 / 数据配方移到下方 "关联详细文档" 列表的对应专题文件。
+> **最近更新**：2026-05-22 (X-VLA 三种 conditioning 方式 (hard prompt / soft prompt / action head cond) 主线开启, 新增 `xvla_conditioning_methods_results.md` 专题跟踪文档. Track B Stage 1 Beijing 16 H20 step 2000 mu PASS 验证, soft prompt 实现端到端正确. Hard Prompt exp1 完成 step 49999. 文件由 `00_action_only_finetune_history.md` 改名为 `00_training_history.md` 反映文档已扩展超出 action-only 范围)
+> **数据来源**：`logs/train_*.log` 中 `[inline-eval] step=N MAE@1=… @10=… @25=… @50=…` 行（9 val ep × 20 frames，~30s/eval），与 `logs/eval_history_v2/v2_step_*.json` 离线归档（9 val ep × 50 queries）。X-VLA 系列 inline_eval 配置见各专题文档。
 > **命名前缀 `00_` 用于按文件名排序时置顶。**
 >
 > **关联详细文档**：
+>
+> **X-VLA conditioning 主线 (2026-05-22 新增)**:
+> - **`xvla_conditioning_methods_results.md`** ⭐ — **新增主索引**: Hard Prompt / Soft Prompt (Track B) / Action Head Cond (Track C) 三种 conditioning 方式在 kai+vis 混合数据 (7407 ep) 同等条件下的对照实验, paper E3.7/E3.8/E3.9 ablation 主线
+> - `../deployment/cross_embodiment_data_reuse_plan.md` — Track A SSL / Track B Soft Prompt / Track C Action Head Cond 完整执行计划 + 假说 H1-H4 + 决策点
+>
+> **action-only / finetune 历史**:
 > - `task_e_master_plan.md` — Task E 完整规划与所有 Phase 1/2 实验细节
 > - `task_p_unfreeze_8k_20k_analysis.md` — Task P 全参数解冻对照
 > - **`task_a_visrobot01_mixed_600.md`** — Task A 全参数微调系列 (mixed_gf0_173 / visrobot01_only / mix_vis600 / pure_vis600)
