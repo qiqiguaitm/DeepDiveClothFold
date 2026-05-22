@@ -55,10 +55,10 @@
 
 ### 2.2 Soft Prompt (Track B — X-VLA style)
 
-| Config | Job ID | Init | 数据 | Step | num_workers | rate | Best Val MAE@1 | 真机平滑度 | 真机成功率 | 备注 |
-|---|---|---|---|---:|---:|---:|---:|---:|---:|---|
-| **Stage 1**: `xvla_stage1_kai_warmup` | t-20260521154828-76d44 (Beijing 16 H20) | pi05_base + soft_prompt_hub init N(0, 0.02) | kai0_base+dagger (domain_id=0) | running ~49000 / 50k | 32 | 1.4 s/it | TBD | — | — | ✅ **Step 2000 ckpt mu PASS** (d0 absmax=1.15e-3): RepackTransform + AgilexInputs 两处 dataset_id passthrough 修复后端到端验证通过。完成后 → Stage 2 |
-| **Stage 2**: `xvla_stage2_soft_prompt_only_vis` | (Auto-submit on Stage 1 done) | Stage 1 ckpt 49999 | vis_v2_merged (domain_id=1) | — / 5k | 32 | TBD | TBD | TBD | TBD | Freeze backbone, only `soft_prompt_hub` trainable. LR 5e-4, batch 128, 16 H20, ETA ~1-2h |
+| Config | Job ID | Init | 数据 | Step | num_workers | rate | Best Val MAE@1 (per-source) | 真机平滑度 | 真机成功率 | 备注 |
+|---|---|---|---|---:|---:|---:|---|---:|---:|---|
+| **Stage 1**: `xvla_stage1_kai_warmup` | t-20260521154828-76d44 (Beijing 16 H20) | pi05_base + soft_prompt_hub init N(0, 0.02) | kai0_base+dagger (domain_id=0) | **49999 / 50k ✅ done** | 32 | 1.4 s/it | kai0_base: **0.0083** / kai0_dagger: **0.0136** | TBD | TBD | ✅ Step 2000 ckpt mu PASS (d0 absmax=1.15e-3). Offline eval 完成 2026-05-22 11:51 (gf3 1 H20 sequential), dataset_id=0 |
+| **Stage 2**: `xvla_stage2_soft_prompt_only_vis` | t-20260522113931-vc7q8 (Beijing 16 H20, auto-submitted) | Stage 1 ckpt 49999 | vis_v2_merged (domain_id=1) | running ~0 / 5k | 32 | TBD | TBD | TBD | TBD | Freeze backbone, only `soft_prompt_hub` trainable. LR 5e-4, batch 128, 16 H20, ETA ~1-2h. Auto-submit triggered 2026-05-22 11:39 |
 | **Stage 3**: `xvla_stage3_full_finetune_vis` | (Pending Stage 2) | Stage 2 ckpt | kai + vis 混训 | — / 50k | 32 | TBD | TBD | TBD | TBD | Unfreeze all, joint finetune. ETA ~12h |
 | **B3.0**: Track B 最终 ckpt (=Stage 3 49999) | (Pending) | — | — | — | — | — | TBD | TBD | TBD | Track B 最终模型用于 paper ablation E3.7 |
 
