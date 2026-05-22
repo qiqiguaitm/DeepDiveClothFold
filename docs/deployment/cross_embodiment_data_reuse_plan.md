@@ -349,12 +349,13 @@ Layer 3 (Phase 3 ablation):
 | **E3.0** baseline | × | per-dataset (single ds smooth_800) | 当前 SOTA |
 | **E3.5** | × | **Naive joint norm** (A) | 故意复现失败假说 |
 | **E3.6** | × | **Per-dataset norm + Single model** (B) | **验证 §3.5.5 insight** |
-| **E3.7** | **Soft Prompt** (LLM input 端) | Per-DS norm + Soft Prompt (C) | Track B 路线 |
-| **E3.8** ⭐ 新 | **Action Head Cond Emb** (Action expert 端) | Per-DS norm | 与 E3.7 同价位对照, 验证 conditioning 注入点选择 |
-| **E3.9** ⭐ 新 | **Soft Prompt + Action Head Cond** | Per-DS norm | 双端组合, 验证两者增益是否互补 |
+| **E3.7** | **Soft Prompt** (VLM input 端) | Per-DS norm + Soft Prompt (C) | Track B 路线 |
+| **E3.8** ⭐ 主线 | **Action Head Cond Token** (方案 A, action expert input 端) | Per-DS norm | Track C 路线 — 与 E3.7 1:1 对照, 验证 "VLM 端 vs Action expert 端" 注入点选择 |
+| ~~**E3.9**~~ Dual Cond | ~~Soft Prompt + Action Head Cond~~ | — | **2026-05-22 搁置** — 双端组合, 待 E3.7/E3.8 单端结果出来再决定是否启用 |
 
 → E3.5 vs E3.6 量化 "naive joint vs per-dataset norm" 的真机抖动差异。
-→ **E3.7 vs E3.8 vs E3.9 量化 conditioning 注入点选择 (LLM input vs Action expert vs 两端)** — 新主线 ablation set (2026-05-22 决策)。
+→ **E3.7 vs E3.8 量化 conditioning 注入点选择 (VLM input vs Action expert)** — 主线 ablation (2026-05-22 决策, 双端组合 E3.9 待资源充足再启)。
+→ Action Head Cond 选定方案 A (Concat token), B/C/D 暂搁置 — 详见 §6.3.1。
 → EE-relative 路线 (旧 E3.8 delta EE) 已 deprioritize, paired shift 由 conditioning 处理。
 
 ---
@@ -473,8 +474,8 @@ for delta in predicted_chunk:
 |---|---|---|---|
 | **Hard prompt** (`"[D405 wrist] ..."`) — 改 prompt 字符串 | 极低 (0 改 model) | ✅ 任意 config 都可用 | ⭐⭐ 弱版本 (信号沿 LLM attention 自然传播, 不显式 gate) |
 | **Soft prompt** (X-VLA style, 每 domain 32×2048 learnable vec) | 0 (代码已实现) | ✅ **`pi0.py:136-181` 已有 `soft_prompt_hub` 实现** + `xvla_stage1/2/3` config 模板就绪 | ⭐⭐⭐ **正确路径** — 显式 inject 到 LLM input, 推理时可 hard-force domain |
-| **Action head embedding** ⭐ 升级为主线 | 中 (改 model arch, action expert 前 concat 或 FiLM) | ❌ 待加 (Phase 1.5 实现) | ⭐⭐⭐ **新增主线** — soft prompt 在 LLM input 注入, action head emb 在 action expert 注入, 两端互补 gate domain shift |
-| **Soft prompt + Action head emb 结合** | 中-高 | 部分 | ⭐⭐⭐⭐ 终态最强 (Phase 3 E3.5 验证组合增益) |
+| **Action head embedding** ⭐ Track C 主线 (方案 A 选定 2026-05-22) | 极低 (action expert input concat 1 domain token) | ❌ 待加 (Phase 1.5 实现) | ⭐⭐⭐ — 注入 action expert input 端 (paligemma 不知 domain), 与 soft prompt 1:1 sparse-prefix 对照, 验证"VLM 端 vs Action expert 端"注入点选择 |
+| ~~Soft prompt + Action head emb 结合~~ | ~~中-高~~ | 部分 | **2026-05-22 暂搁置** — 双端组合 (E3.9), 待 E3.7/E3.8 单端结果出来再决定 |
 
 #### 6.2.1 本地代码与 ckpt 现状 (2026-05-21 实测)
 
@@ -521,74 +522,96 @@ Stage 3: xvla_stage3_joint_finetune
 
 > X-VLA Soft Prompt 已在 290K episodes 跨 7 个 platforms × 5 个 arm types 验证可行 (ICLR 2026)。每域仅 65K 参数 (32×2048), 整体 0.04% 非共享参数。
 
-### 6.3 Action Head Conditioning Embedding (2026-05-22 新主线)
+### 6.3 Action Head Conditioning Embedding (2026-05-22 新主线 — **方案 A 选定**)
 
-> **动机**: Soft Prompt 在 **LLM 输入端**注入 domain embedding，sigmoid-gate 经 PaliGemma + action expert attention 累积传播到最终 action。但 action expert 是独立模块 (adaRMS), 离 LLM 端 layers 较远 — domain shift 信号可能稀释。**在 action expert 内部直接注入 domain emb**, 形成"双端 condition" (LLM + Action expert), 更强 gate 区分 A/B/XVLA。
+> **动机**: Soft Prompt 在 **VLM (PaliGemma) 输入端**注入 domain embedding，信号经 24 层 LLM attention + cross-attn → action expert KV cache → action。**在 action expert 输入端直接注入 domain token**，paligemma 完全不知 domain，conditioning 只调制 action expert 的 denoise 行为，与 Soft Prompt 形成 "VLM 端 vs Action expert 端" 1:1 对照。
 
-#### 6.3.1 实现方案
+#### 6.3.1 实现方案 — 方案 A: Concat Domain Token at Action Expert Input
 
-| 注入方式 | 复杂度 | 优点 | 缺点 |
-|---|---|---|---|
-| **A. Concat to action token input** | 极低 | 0 改 attention, 直接 prepend emb token | gate 弱 (只在 prefix 出现一次) |
-| **B. FiLM (Feature-wise Linear Modulation)** ⭐ | 中 | scale/shift action expert hidden, 强 gate | 改 RMSNorm 后的 layer norm 行为 |
-| **C. adaLN (adaptive LayerNorm) condition** | 中 | 与 DiT 同款, 已有 adaRMS scaffold | 更复杂的训练动力学 |
-| **D. Cross-attn from emb to action layers** | 高 | 最强表达 | 改 model 架构, 计算开销大 |
+> **2026-05-22 用户决策**: 4 候选方案中选定 **方案 A**（B/C/D 暂搁置）。理由: 工程最简, paper 与 Soft Prompt 形成最干净 sparse-prefix 对照, 直接验证 "domain conditioning 模块选择" 这一核心 question。
 
-**推荐方案 B (FiLM)** — 在 action expert 每个 transformer block 的 LayerNorm 后:
-```python
-# pseudo-code:
-action_head_cond_hub = nnx.Embed(num_domains=2, features=2 * hidden)  # gamma + beta per domain
-gamma, beta = jnp.split(action_head_cond_hub(obs.dataset_id), 2, axis=-1)
-h = (1 + gamma) * h + beta   # FiLM modulation
+**信号路径对比 (Soft Prompt vs 方案 A)**:
+
 ```
+Soft Prompt (Track B):
+  d → soft_prompt_hub[d] (B,32,2048)
+      → 拼到 PaliGemma input
+      → 24 层 LLM attention 处理
+      → KV cache (含 domain 信号)
+      → action expert cross-attn 读 → action
+
+方案 A (Track C):
+  d → action_head_cond_hub[d] (B,1,1024)
+      → 拼到 action expert input (与 noise_action_token 同级)
+      → action expert self-attn (4-8 层)
+      → action
+      [paligemma 完全不知 domain]
+```
+
+**关键差异**:
+- Soft Prompt: 控制 *VLM 如何看世界*（domain-specific perception）
+- 方案 A: 控制 *action expert 如何 denoise*（domain-specific motor output）
+- 互不竞争, 但 paper E3.7 vs E3.8 验证 "perception vs motor" 注入点选择
 
 #### 6.3.2 代码改造点
 
 | 文件 | 改动 |
 |---|---|
-| `kai0/src/openpi/models/pi0_config.py` | 加 `action_head_cond_num_domains: int = 0`, `action_head_cond_emb_dim: int = ?` |
-| `kai0/src/openpi/models/pi0.py` | (1) 加 `action_head_cond_hub = nnx.Embed(...)` (2) 在 `embed_suffix` 或 action expert forward 中读 `obs.dataset_id` → FiLM |
-| `kai0/src/openpi/training/config.py` | 新 config `xvla_action_head_cond_only` (E3.8) + `xvla_dual_cond` (E3.9 Soft+Action Head) |
-| `kai0/src/openpi/transforms.py` | 已修, dataset_id 已透传 (2026-05-21 fix) |
+| `kai0/src/openpi/models/pi0_config.py` | 加 `action_head_cond_num_domains: int = 0`（默认禁用）|
+| `kai0/src/openpi/models/pi0.py` | (1) `__init__` 加 `self.action_head_cond_hub = nnx.Embed(num_domains, action_expert_width)` (init N(0, 0.02)); (2) action expert forward 中读 `obs.dataset_id` → embed → reshape (B, 1, D) → 拼到 noise_action_tokens 前 |
+| `kai0/src/openpi/training/config.py` | 新 config: `xvla_actcond_stage1_kai_warmup` / `xvla_actcond_stage2_vis_only` / `xvla_actcond_stage3_joint_finetune` |
+| `kai0/src/openpi/transforms.py` | 已修, dataset_id 已透传 ✓ |
 
-#### 6.3.3 训练曲线 (与 Soft Prompt 类比)
+**伪代码**:
+```python
+# pi0_config.py
+@dataclasses.dataclass
+class Pi0Config:
+    ...
+    action_head_cond_num_domains: int = 0  # 0 = disabled
 
-| Variant | Stage 1 (kai warmup) | Stage 2 (vis cond emb only) | Stage 3 (joint finetune) |
+# pi0.py:Pi0.__init__
+if config.action_head_cond_num_domains > 0:
+    self.action_head_cond_hub = nnx.Embed(
+        num_embeddings=config.action_head_cond_num_domains,
+        features=action_expert_width,
+        embedding_init=nnx.initializers.normal(0.02),
+    )
+
+# pi0.py: action expert forward (or wherever noise_action_tokens are prepared)
+if self.action_head_cond_hub is not None:
+    domain_token = self.action_head_cond_hub(obs.dataset_id)  # (B, D)
+    domain_token = domain_token[:, None, :]                    # (B, 1, D)
+    action_input = jnp.concat([domain_token, action_input], axis=1)  # (B, 1+L, D)
+    # adjust attention mask + position embeddings accordingly
+```
+
+#### 6.3.3 训练曲线 (方案 A only)
+
+| Stage | 状态 | 备注 |
+|---|---|---|
+| Phase 1.5 编码 + smoke test | ⏳ pending | uc01 1-2 GPU, 验证 mu(action_head_cond_hub) non-zero |
+| Stage 1 kai warmup | ⏳ pending | Shanghai 16 A100 (推荐, 避开 Beijing) |
+| Stage 2 vis cond only | ⏳ pending | Freeze backbone, only `action_head_cond_hub` trainable |
+| Stage 3 joint finetune | ⏳ pending | Unfreeze all, kai+vis 混训 |
+
+#### 6.3.4 真机评估目标
+
+> **2026-05-22 用户决策**: Track C 训练用 **kai + vis 跨本体混合数据**, 真机测试用 **vis (B 真机)** — 验证 cross-embodiment training 是否提升 B 真机表现。
+
+| Variant | 训练数据 | 真机平台 | 关键 metric |
 |---|---|---|---|
-| Soft Prompt (Track B 现状) | ✅ 76d44 验证 PASS | 待 | 待 |
-| **Action Head Cond Emb** (E3.8) | 待 | 待 | 待 |
-| **Soft Prompt + Action Head Cond** (E3.9) | 待 | 待 | 待 |
+| **C3.0 (Track C 终态 = Action A Stage 3)** | kai+vis 混训 | **vis (B 真机)** | 抓衣角成功率 / 折叠成功率 / 抖动 p99 / 30 ep × 固定 + 3 OOD |
 
-#### 6.3.4 实验序列 (Phase 3 集成)
+#### ~~6.3.5 方案 B/C/D — 暂搁置 (2026-05-22)~~
 
-```
-Phase 1.5 (插入 Phase 1 之后 Phase 2 之前):
-  └─ 实现 action_head_cond_hub (~1 day 编码 + 测试)
-     └─ smoke test on uc01: kai+vis mixed, verify gradient 流通过 action_head_cond
-        └─ 验证 mu(action_head_cond_hub) non-zero after step 100
+以下 3 个方案暂时不实施, 保留作技术参考。如未来 Track C 方案 A 真机效果不达预期, 可回看:
 
-Phase 3 Ablation (与 E3.5/E3.6/E3.7 一起跑):
-  ├─ E3.8: Action Head Cond Only (LR + step 同 E3.7)
-  └─ E3.9: Soft Prompt + Action Head Cond 同时启用
-```
+- ~~B. FiLM (Feature-wise Linear Modulation)~~ — per-block γ/β modulation
+- ~~C. adaLN (adaptive LayerNorm)~~ — DiT-style, 与现有 adaRMS 互动复杂
+- ~~D. Cross-Attention from domain emb to action layers~~ — 最 expressive 但计算 +15%
 
-> **关键 question**: Soft Prompt (LLM input) vs Action Head Cond (Action expert) 哪个 conditioning 更有效? — E3.7 vs E3.8 直接量化, E3.9 验证是否互补 (有可能 LLM 端已经吸收掉 conditioning, 加 Action expert 端 redundant)。
-
-#### 6.3.5 Track C: Action Head Cond 独立训练路线 (并行于 Track B)
-
-```
-Track C Stage 1 (kai warmup with action_head_cond):
-  Init: pi05_base + action_head_cond_hub init N(0, 0.02)
-  Data: kai0_base + dagger (domain_id=0)
-  Train: 50k step on 16 H20
-
-Track C Stage 2: action_head_cond only on vis (freeze backbone), 5k step
-
-Track C Stage 3: joint finetune, 50k step
-
-→ Track C 终态 ckpt 作为 E3.8 baseline,
-   与 Track B (Soft Prompt) E3.7 终态 ckpt 对照
-```
+(完整设计与对比见 git history commit `4306b4c` ↔ 之前的 §6.3 版本)
 
 ---
 
@@ -998,18 +1021,29 @@ KAI0 原始数据从 sim01 上传 TOS, 各训练服务器从 TOS 拉到本地 mi
 
 > **2026-05-21 重大 bug 修复**: 之前 Stage 2 grad_norm=0 + 旧 Stage 1 soft_prompt_hub 不训练的根因, 是 `RepackTransform` 和 `AgilexInputs` 两处都重建 data dict 时丢掉了 `dataset_id`, 导致 obs.dataset_id=None → embed_prefix soft prompt 分支被 dead-code-eliminate。修复 commits: `9d2184a` (RepackTransform) + `df23d5a` (AgilexInputs)。
 
-### 10.6 Track C — Action Head Conditioning Embedding ⏳ 待启动 (新增 2026-05-22)
+### 10.6 Track C — Action Head Conditioning Embedding (方案 A: Concat Token) ⏳ 待启动 (2026-05-22 选定)
+
+> **方案选定**: 4 候选方案 (A/B/C/D) 中选 **A (Concat domain token at action expert input)**。B/C/D 暂搁置, 详见 §6.3.1 + §6.3.5。
+>
+> **训练数据**: kai (KAI0 base+dagger) + vis (vis_v2_merged) 跨本体混合, 与 Track B 同等条件。
+>
+> **真机评估**: vis (B 真机) — 验证 cross-embodiment training 在 B 真机的迁移效果。
 
 | Stage | 状态 | Job ID | Start | End | Step | Best Val | 备注 |
 |---|---|---|---|---|---|---|---|
-| Phase 1.5 代码实现 | ⏳ pending | — | — | — | — | — | `action_head_cond_hub: nnx.Embed` + FiLM modulation in action expert. 见 §6.3.2 |
-| Smoke test (kai+vis mixed) | ⏳ pending | — | — | — | — | — | uc01 1-2 GPU, 验证 `mu(action_head_cond_hub)` non-zero (与 Soft Prompt PASS 测试同 pattern) |
-| Stage 1 kai warmup | ⏳ pending | — | — | — | — / 50k | — | Shanghai 16 A100 或 Beijing 16 H20 |
-| Stage 2 vis cond only | 待 Stage 1 | — | — | — | — / 5k | — | freeze backbone, only `action_head_cond_hub` |
-| Stage 3 joint finetune | 待 Stage 2 | — | — | — | — | — | Joint train all |
-| **Track C 整体** | 待启动 | — | — | — | — | — | 编码 ~1 day, training 3 stages 总 ETA ~22-26h |
+| Phase 1.5 代码实现 | ⏳ pending | — | — | — | — | — | `pi0_config.py: action_head_cond_num_domains` + `pi0.py: action_head_cond_hub: nnx.Embed(num_domains, D)` + action expert input concat 1 domain token. 见 §6.3.2 |
+| Smoke test (kai+vis mixed) | ⏳ pending | — | — | — | — | — | uc01 1-2 GPU, 1k step 验证 `mu(action_head_cond_hub)` non-zero (与 Soft Prompt PASS 同 pattern) |
+| Stage 1 kai warmup | ⏳ pending | — | — | — | — / 50k | — | Shanghai 16 A100 (推荐, 与 Track B Beijing 不抢资源) |
+| Stage 2 vis cond only | 待 Stage 1 | — | — | — | — / 5k | — | freeze backbone, only `action_head_cond_hub` trainable |
+| Stage 3 joint finetune | 待 Stage 2 | — | — | — | — / 50k | — | Unfreeze all, kai+vis 混训 |
+| **Track C 整体 (C3.0 终态)** | 待启动 | — | — | — | — | — | 编码 ~半天 (方案 A 极简) + 3 stages 总 ETA ~22-26h. 终 ckpt → **vis 真机评估** |
 
-> Track C 与 Track B 同节奏并行执行 (Soft Prompt LLM 端 vs Action Head expert 端) → Phase 3 E3.7 vs E3.8 vs E3.9 三角对比验证 conditioning 注入点。
+> Track C (方案 A) 与 Track B 形成 1:1 对照:
+> - Soft Prompt: VLM input 端, 32 tokens, 信号经 24 层 paligemma attention
+> - Action Cond (方案 A): action expert input 端, 1 token, 信号仅在 action expert 4-8 层 self-attn
+> - 不同模块、相同 sparse-prefix 设计 → paper E3.7 vs E3.8 直接量化 "domain conditioning 应放 VLM 还是 action expert"
+>
+> 双端组合 (E3.9 Soft Prompt + Action Cond) **暂搁置**, 待 E3.7/E3.8 单端结果出来再决定是否启用。
 
 ---
 
@@ -1037,12 +1071,13 @@ KAI0 原始数据从 sim01 上传 TOS, 各训练服务器从 TOS 拉到本地 mi
 - L2 (policy): ❌ 不引入 (抖动 +62%, 污染 action prior)
 - L3 (aux): ⚠️ 可选 (作为 inverse dynamics 目标)
 
-### 决策点 2: Embodiment conditioning 实现方式? ✅ **重新决策 (2026-05-22)**
+### 决策点 2: Embodiment conditioning 实现方式? ✅ **重新决策 (2026-05-22, 二次更新)**
 - ~~Hard prompt only~~ (信号沿 LLM attention 隐式传播, 不显式 gate)
-- ✅ **Soft Prompt (X-VLA style)** — Track B, 在 LLM input 端 (`pi0.py:soft_prompt_hub`) 已实现并验证 PASS (76d44)
-- ⭐ **Action Head Cond Emb** (新) — Track C, 在 action expert 端 FiLM modulation (待加, 见 §6.3)
-- 终态 (E3.9 / E3.4): SSL backbone + **Soft Prompt + Action Head Cond 双端 condition** + dynamics motion-residual
-- E3.7 (Soft only) vs E3.8 (Action Head only) vs E3.9 (双端) 量化注入点选择
+- ✅ **Soft Prompt (X-VLA style)** — Track B, 在 VLM input 端 (`pi0.py:soft_prompt_hub`) 已实现并验证 PASS (76d44)
+- ⭐ **Action Head Cond Token (方案 A)** — Track C 选定, 在 action expert input 端 concat 1 domain token (待加, 见 §6.3.1)
+- ~~方案 B (FiLM) / C (adaLN) / D (Cross-attn)~~ **2026-05-22 暂搁置** — 4 选 1 后选定方案 A, 工程最简 + paper 与 Soft Prompt 1:1 sparse-prefix 对照
+- ~~终态 E3.9 双端 Soft + Action Cond~~ **暂搁置** — 待 E3.7 (Soft only) vs E3.8 (Action Cond only) 单端结果出来再决定是否启用双端
+- 真机评估: 全部 Track B/C 终态在 **vis (B 真机)** 测试
 
 ### 决策点 3: EE-relative action 是否启用? ❌ **已 deprioritize (2026-05-22)**
 - ~~Phase 0 E0.5 EE-relative preprocessing~~ 取消
@@ -1060,7 +1095,8 @@ KAI0 原始数据从 sim01 上传 TOS, 各训练服务器从 TOS 拉到本地 mi
 
 | 日期 | 内容 |
 |---|---|
-| 2026-05-22 | **Tri-track + Action Head Cond 启用 + EE-relative deprioritize**: §6.3 新增 Track C Action Head Conditioning Embedding (FiLM modulation in action expert) 与 Track B Soft Prompt (LLM input) 互补; §10.6 Track C 状态跟踪表; §3.5.7 Phase 3 ablation 新增 E3.8 (Action Head only) / E3.9 (Soft + Action Head 双端); §10.4 ablation 表新增 C3.0/E3.7/E3.8/E3.9 列; §10.1 E0.5 + Phase 3 E3.8 delta EE 全部取消; §5 整节标 deprioritized 保留作参考; 决策点 2/3 重新决策 (Soft + Action Head 双端, EE deprioritize); §7 三轨架构图. SAM2 (E0.3) 状态 ✅ done. 资源更新: robot-task 20 A100 free 已可用 |
+| 2026-05-22 (晚) | **Track C 方案 A 选定 + B/C/D 搁置**: 4 候选 Action Head Cond 方案 (A Concat / B FiLM / C adaLN / D Cross-Attn) 详细对比后, 选 **方案 A** (Concat domain token at action expert input)。理由: 工程最简 + 与 Soft Prompt 形成 1:1 sparse-prefix 对照 (不同模块、相同设计模式), paper E3.7 vs E3.8 直接量化 "VLM 端 vs Action expert 端" 注入点选择。B/C/D 暂搁置作技术参考。E3.9 双端组合也搁置, 待单端结果出来再决定。Track C 训练用 kai+vis 跨本体混合, 真机评估用 vis B 真机。§6.3 / §6.2 / §3.5.7 / §10.4 / §10.6 / 决策点 2 同步更新 |
+| 2026-05-22 (中) | **Tri-track + Action Head Cond 启用 + EE-relative deprioritize**: §6.3 新增 Track C Action Head Conditioning Embedding (含 4 候选方案) 与 Track B Soft Prompt 互补; §10.6 Track C 状态跟踪表; §3.5.7 Phase 3 ablation 新增 E3.8 / E3.9; §10.4 ablation 表新增 C3.0/E3.7/E3.8/E3.9 列; §10.1 E0.5 + Phase 3 E3.8 delta EE 全部取消; §5 整节标 deprioritized 保留作参考; §7 三轨架构图. SAM2 (E0.3) 状态 ✅ done. 资源更新: robot-task 20 A100 free 已可用 |
 | 2026-05-21 (深夜) | **§3.5 vis operator + 时间漂移分析**: 澄清 ztm+lym 同一人 (G1=872 ep, G2=gsy=23 ep); G1 内时间漂移 0.47 ≈ cross-robot drift; gsy 对 norm 影响微弱 (0.08 rad). **§3.6 混训策略 6 方案 + 实证一致性**: per-dataset norm 实测 MMD 降低 90.7% (0.06→0.006), **修正方案 B 评级 ⭐⭐→⭐⭐⭐ (实际可行!)**; 识别残余 10% 来自 higher moments + joint correlation; 推荐 layered (E + C + D); §3.6.7 加 E3.5-E3.8 ablation 验证 naive joint vs per-DS norm |
 | 2026-05-21 (晚) | **Dual-track 化 + 放弃 FOV crop**: 加 §6.2.1 本地 soft_prompt_hub 代码 + ckpt 现状 (代码已实现但未训过); §6.2.2 X-VLA 3-stage 流程; §7 dual-track 架构图 (Track A SSL + Track B X-VLA 并行); §8.7 Track B 完整 X-VLA stage 1/2/3 计划 (Stage 1 t-20260521154828-76d44 已提交); §10.5 Track B 状态跟踪表; §10.4 加入 B3.0 + 改 E3.4 为 dual-track merge; 决策点 2 已决策为 soft prompt. **取消 E0.4 Wrist FOV crop** — 不可持续, 替换为 view-cond token + RandomResizedCrop (§8.2 + §11 #3) |
 | 2026-05-21 (早) | **Consolidated**: 合并 `ssl_pretraining_experiment_plan.md` 到本文档 §8; 删除 X1/X2/X3 详细配置 (deprioritize M1); 加 §6 与 π0.5/X-VLA 默认对照 + 实证调研; 加 §4 假说矩阵 H1-H4; 加 §10 状态跟踪 |

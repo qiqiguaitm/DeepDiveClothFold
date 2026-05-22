@@ -19,13 +19,18 @@
 
 ## 1. 三种 Conditioning 方式核心区别
 
-| 方式 | 注入位置 | 实现 | 参数量 | gate 强度 |
-|---|---|---|---|---|
-| **Hard Prompt** | LLM input (prompt 字符串前缀) | 改 `InjectDefaultPrompt` 走 per-dataset prefix, e.g. `"[KAI] Flatten and fold the cloth."` vs `"[VIS] ..."` | 0 (复用 paligemma tokenizer + 已有 LLM weights) | ⭐⭐ 弱 (信号经 LLM attention 隐式传播) |
-| **Soft Prompt** (X-VLA) | LLM input (learnable prefix token) | `soft_prompt_hub = nnx.Embed(num_domains, len × paligemma_width)`, 在 `Pi0.embed_prefix` prepend soft tokens | 65K × num_domains | ⭐⭐⭐ 中 (显式 gate, 但仍在 LLM 端) |
-| **Action Head Cond Emb** | Action expert 内部 (FiLM modulation) | `action_head_cond_hub = nnx.Embed(num_domains, 2 × hidden)`, gamma/beta apply to action expert layer hidden | 2 × hidden × num_domains | ⭐⭐⭐⭐ 强 (per-block scale/shift, action 输出端直接 gate) |
+| 方式 | 注入模块 | 注入位置 | 实现 | 参数量 | gate 强度 |
+|---|---|---|---|---|---|
+| **Hard Prompt** | VLM | input (prompt 字符串前缀) | 改 `InjectDefaultPrompt` 走 per-dataset prefix, e.g. `"[KAI] Flatten and fold the cloth."` vs `"[VIS] ..."` | 0 (复用 paligemma tokenizer + 已有 LLM weights) | ⭐⭐ 弱 (信号经 LLM attention 隐式传播) |
+| **Soft Prompt** (X-VLA) | VLM | input (learnable prefix token, 32 个) | `soft_prompt_hub = nnx.Embed(num_domains, len × paligemma_width)`, 在 `Pi0.embed_prefix` prepend soft tokens | 65K × num_domains | ⭐⭐⭐ 中 (显式 gate, 在 VLM input 端, 信号经 24 层 paligemma attention) |
+| **Action Head Cond Token** (方案 A) | **Action Expert** | input (1 domain token, concat 前置) | `action_head_cond_hub = nnx.Embed(num_domains, action_expert_width)`, 拼到 action expert input 之前 | ~1K × num_domains | ⭐⭐⭐ 中 (action expert input 端 sparse-prefix, 仅 4-8 层 self-attn, **paligemma 不知 domain**) |
 
-> **关键 question (本文档要回答)**: domain conditioning 信号应该注入到 **LLM 输入端** 还是 **action expert 端**? 哪个更有效, 还是组合最优?
+> **关键 question (本文档要回答)**: domain conditioning 信号应该注入到 **VLM (perception 端)** 还是 **action expert (motor 端)**?
+>
+> Track B vs Track C 是 1:1 sparse-prefix 对照实验:
+> - 同设计模式 (input concat 一个/几个 learnable token)
+> - 不同模块 (VLM vs action expert)
+> - 直接量化 "module 选择" 的真机效益
 
 ---
 
@@ -62,22 +67,28 @@
 | **Stage 3**: `xvla_stage3_full_finetune_vis` | (Pending Stage 2) | Stage 2 ckpt | kai + vis 混训 | — / 50k | 32 | TBD | TBD | TBD | TBD | Unfreeze all, joint finetune. ETA ~12h |
 | **B3.0**: Track B 最终 ckpt (=Stage 3 49999) | (Pending) | — | — | — | — | — | TBD | TBD | TBD | Track B 最终模型用于 paper ablation E3.7 |
 
-### 2.3 Action Head Conditioning Embedding (Track C — 新主线)
+### 2.3 Action Head Conditioning Embedding (Track C — 方案 A 选定)
 
-| Config | Job ID | Init | 数据 | Step | num_workers | rate | Best Val MAE@1 | 真机平滑度 | 真机成功率 | 备注 |
-|---|---|---|---|---:|---:|---:|---:|---:|---:|---|
-| Phase 1.5 代码 | — | — | — | — | — | — | — | — | — | 待实现 (`action_head_cond_hub: nnx.Embed` + FiLM modulation in action expert), 见 cross_embodiment_data_reuse_plan.md §6.3.2 |
-| **Smoke test** | (Pending code) | pi05_base | kai+vis mix (1-2 ep × 10 step) | — / 10 | 1 | — | — | — | — | uc01 1-2 GPU, 验证 `mu(action_head_cond_hub)` non-zero (与 Soft Prompt PASS 同 pattern) |
-| **C-Stage 1**: kai warmup | (Pending) | pi05_base | kai0_base+dagger (domain_id=0) | — / 50k | 32 | — | — | — | — | Shanghai 16 A100 (推荐) 或 Beijing 16 H20, ETA ~12-15h |
-| **C-Stage 2**: vis cond only | (Pending) | C-Stage 1 ckpt | vis_v2_merged | — / 5k | 32 | — | — | — | — | Freeze backbone, only `action_head_cond_hub` trainable |
-| **C-Stage 3**: joint finetune | (Pending) | C-Stage 2 ckpt | kai + vis 混训 | — / 50k | 32 | — | — | — | — | Unfreeze all |
-| **C3.0**: Track C 最终 | (Pending) | — | — | — | — | — | TBD | TBD | TBD | Track C 最终模型用于 paper ablation E3.8 |
+> **方案 A 选定 (2026-05-22)**: 4 候选 (A Concat / B FiLM / C adaLN / D Cross-Attn) 中选 **A (Concat domain token at action expert input)**。B/C/D 暂搁置。
+> **真机评估目标**: vis (B 真机). 训练数据: kai + vis 跨本体混合。
+> 设计原理详见 `cross_embodiment_data_reuse_plan.md` §6.3.1。
 
-### 2.4 双端组合 (Soft Prompt + Action Head Cond)
+| Config | Job ID | Init | 数据 | Step | num_workers | rate | Best Val MAE@1 (per-source) | 真机平滑度 | 真机成功率 (B 真机) | 备注 |
+|---|---|---|---|---:|---:|---:|---|---:|---:|---|
+| Phase 1.5 代码 | — | — | — | — | — | — | — | — | — | 待实现: `pi0_config.py: action_head_cond_num_domains` + `pi0.py: action_head_cond_hub: nnx.Embed(num_domains, action_expert_width)` + action expert input concat 1 domain token. ~半天 编码 |
+| **Smoke test** | (Pending code) | pi05_base | kai+vis mix (1-2 ep × 1k step) | — / 1k | 16 | — | — | — | — | uc01 1-2 GPU, 验证 `mu(action_head_cond_hub)` non-zero (与 Soft Prompt PASS 同 pattern) |
+| **C-Stage 1**: kai warmup | (Pending) | pi05_base + action_head_cond_hub init N(0, 0.02) | kai0_base+dagger (domain_id=0) | — / 50k | 32 | — | — | — | — | Shanghai 16 A100 (推荐, 与 Track B Beijing 不抢资源), ETA ~12-15h |
+| **C-Stage 2**: vis cond only | (Pending) | C-Stage 1 ckpt | vis_v2_merged (domain_id=1) | — / 5k | 32 | — | — | — | — | Freeze backbone, only `action_head_cond_hub` trainable, LR 5e-4 |
+| **C-Stage 3**: joint finetune | (Pending) | C-Stage 2 ckpt | kai + vis 混训 | — / 50k | 32 | — | — | TBD | TBD | Unfreeze all. 终 ckpt → vis 真机评估 |
+| **C3.0**: Track C 最终 | (Pending) | — | — | — | — | — | TBD | TBD | TBD | paper ablation E3.8 baseline, 与 Track B B3.0 (Soft Prompt) 1:1 对照 |
+
+### 2.4 双端组合 (Soft Prompt + Action Head Cond) — **2026-05-22 暂搁置**
+
+> 等 E3.7 (Soft only) vs E3.8 (Action Cond only) 单端结果出来再决定是否启用。
 
 | Config | Job ID | Init | 数据 | Step | Best Val MAE@1 | 真机平滑度 | 真机成功率 | 备注 |
 |---|---|---|---|---:|---:|---:|---:|---|
-| **E3.9**: Dual Cond | (Pending Track B + C 完成) | best of B/C | kai + vis 混训 | — / 50k | TBD | TBD | TBD | paper E3.9 双端 ablation. 验证 LLM 输入端 + Action expert 端 是否互补 |
+| ~~**E3.9**: Dual Cond~~ | — | — | — | — | — | — | — | **2026-05-22 搁置**, 待 Track B/C 单端结果出来 |
 
 ---
 
@@ -94,14 +105,16 @@
 | Action Head Cond (Track C) | TBD | TBD | TBD | TBD | ?% better/worse |
 | Dual Cond (Soft + Action Head) | TBD | TBD | TBD | TBD | ?% better/worse |
 
-### 3.2 真机表现对比
+### 3.2 真机表现对比 (B 真机 — vis)
+
+> 所有 Track 终态 ckpt 在 vis (B 真机) 上 evaluate. 训练数据均为 kai+vis 跨本体混合 (7407 ep), 验证 cross-embodiment training 是否提升 B 真机表现.
 
 | 方法 | 抓衣角成功率 (30 ep × 固定场景) | 完整折叠成功率 | 平均执行时长 | 抖动 metric (action diff p99) | OOD 场景成功率 (3 OOD × 30 ep) |
 |---|---:|---:|---:|---:|---:|
 | Hard Prompt | TBD | TBD | TBD | TBD | TBD |
-| Soft Prompt | TBD | TBD | TBD | TBD | TBD |
-| Action Head Cond | TBD | TBD | TBD | TBD | TBD |
-| Dual Cond | TBD | TBD | TBD | TBD | TBD |
+| Soft Prompt (Track B) | TBD | TBD | TBD | TBD | TBD |
+| Action Cond (Track C, 方案 A) | TBD | TBD | TBD | TBD | TBD |
+| ~~Dual Cond~~ (2026-05-22 搁置) | — | — | — | — | — |
 
 ### 3.3 资源消耗对比
 
@@ -119,9 +132,10 @@
 | Hypothesis | 验证实验 | 当前状态 |
 |---|---|---|
 | **H_HP-vs-SP**: Soft Prompt 显式 gate 强于 Hard Prompt 隐式信号传播 | Track B Stage 3 vs Hard Prompt baseline | 待 Stage 3 完成 |
-| **H_LLM-vs-Action**: Action expert 端 conditioning > LLM 输入端 conditioning (信号离 action 输出更近) | C3.0 vs B3.0 | 待 Track C 完成 |
-| **H_Dual-Synergy**: 双端 condition 优于单端, 信号互补 | E3.9 vs B3.0 / C3.0 | 待 E3.9 完成 |
-| **H_PairedShift-Recoverable**: 21° R wrist paired shift (§3.3 in plan) 可由 conditioning 恢复, 不需要 EE-relative | 真机 OOD wrist 评估 | 待真机评估 |
+| **H_VLM-vs-Action**: Action expert 端 conditioning > VLM 输入端 conditioning (信号离 action 输出更近) | C3.0 (方案 A) vs B3.0 (Soft Prompt) | 待 Track C 完成 |
+| ~~**H_Dual-Synergy**~~ 双端 condition 互补 | ~~E3.9~~ 暂搁置 | **2026-05-22 搁置**, 待单端结果再启 |
+| **H_PairedShift-Recoverable**: 21° R wrist paired shift (§3.3 in plan) 可由 conditioning 恢复, 不需要 EE-relative | 真机 OOD wrist 评估 (B 真机 vis) | 待真机评估 |
+| **H_CrossEmbodiment-Useful**: kai+vis 跨本体训练在 B 真机优于单 vis 训练 | Track C C3.0 vs `task_a_new_pure_200_new_norm` (NEW SOTA 0.0065, vis only) | 待 Track C 完成 |
 
 ---
 
@@ -138,9 +152,15 @@
 | 2026-05-22 (早) | Hard Prompt exp1 ckpt 49999 save 完成 (Track A 主线) |
 | 2026-05-22 | Track C (Action Head Cond) 计划升级为主线; 取消 EE-relative |
 
+### 已决策 (2026-05-22)
+
+- ✅ 议题 3 (Action Head Cond 实现): **选定方案 A** (Concat domain token at action expert input). B/C/D 暂搁置.
+- ✅ Track C 训练数据: kai + vis 跨本体混合 (同 Track B)
+- ✅ Track C 真机评估: vis (B 真机)
+- ✅ E3.9 双端组合: 暂搁置, 待 E3.7/E3.8 单端结果出来
+
 ### 待决策
 
-- 议题 3 (Action Head Cond 实现): 4 候选方案 (Concat / FiLM / adaLN / Cross-attn), 当前推荐 FiLM, 待用户确认细节
 - 议题 8 (真机 eval 规模): 30 ep × 3 OOD vs 60-100 ep, 当前推荐 30 + 30×3 = 120 / ablation
 - 议题 9 (E3.5 norm ablation): 是否跑 50k 长训, 看资源决定
 
@@ -157,7 +177,8 @@
 
 ```bash
 # 推荐 Shanghai 16 A100 (与 Track B Beijing 不抢资源)
-/skill submit-training-job --task xvla_stage1_action_head_cond_kai_warmup
+# 方案 A: Concat domain token at action expert input
+/skill submit-training-job --task xvla_actcond_stage1_kai_warmup
 ```
 
 ### 6.3 Offline eval (val MAE 数字)
