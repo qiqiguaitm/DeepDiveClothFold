@@ -1160,6 +1160,35 @@ _CONFIGS = [
     ),
 
     # ===================================================================================
+    # pi05 + delta-joint-actions on Task_A/base (kai0_base 3055 ep) from pi05_base.
+    # 2026-05-22 用户决策: 对比 absolute baseline (mixed_pure2_1800/exp1 etc) 看 delta 是否帮 cloth fold.
+    # delta_action_mask = make_bool_mask(6, -1, 6, -1) → 12 joint dims become delta, 2 gripper stay absolute.
+    # ===================================================================================
+    TrainConfig(
+        name="pi05_flatten_fold_task_a_base_delta",
+        model=pi0_config.Pi0Config(pi05=True),  # no conditioning, vanilla pi05
+        data=LerobotAgilexDataConfig(
+            repo_id="/vePFS/tim/workspace/deepdive_kai0/kai0/data/Task_A/base",
+            default_prompt="Flatten and fold the cloth.",
+            use_delta_joint_actions=True,  # ← 关键: delta 训练
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader(
+            "/vePFS/tim/workspace/openpi_cache/openpi-assets/checkpoints/pi05_base/params"
+        ),
+        lr_schedule=_optimizer.CosineDecaySchedule(warmup_steps=1_000, peak_lr=1.5e-5, decay_steps=50_000, decay_lr=1.5e-6),
+        ema_decay=0.9999,
+        num_train_steps=50_000,
+        keep_period=10_000,
+        save_interval=2_000,
+        num_workers=8,
+        batch_size=128,
+        fsdp_devices=16,
+        inline_eval_val_root="/vePFS/tim/workspace/deepdive_kai0/kai0/data/Task_A/vis_v2_merged_val",
+        inline_eval_n_frames=200,
+        inline_eval_every=4,
+    ),
+
+    # ===================================================================================
     # E3.6 — per-dataset norm + NO conditioning (2026-05-22).
     # Replicates "mixed_pure2_1800 failure hypothesis fix" §3.5.5: per-DS norm alone
     # might rescue cross-embodiment training without needing soft/action-cond.
