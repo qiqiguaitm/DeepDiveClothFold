@@ -344,15 +344,18 @@ Layer 3 (Phase 3 ablation):
 
 #### 3.5.7 验证假说的新 Ablation Set (Phase 3 加)
 
-| Exp | Action | Norm 策略 | 用途 |
+| Exp | Cond Method | Norm 策略 | 用途 |
 |---|---|---|---|
-| **E3.0** baseline | absolute joint | per-dataset (single ds smooth_800) | 当前 SOTA |
-| **E3.5** | absolute joint | **Naive joint norm** (A) | 故意复现失败假说 |
-| **E3.6** | absolute joint | **Per-dataset norm + Single model** (B) | **验证 §3.5.5 insight** |
-| **E3.7** | absolute joint | Per-DS norm + Soft Prompt (C) | Track B 路线 |
-| **E3.8** | delta EE | Per-DS norm + Soft Prompt | + F 维度 ablation |
+| **E3.0** baseline | × | per-dataset (single ds smooth_800) | 当前 SOTA |
+| **E3.5** | × | **Naive joint norm** (A) | 故意复现失败假说 |
+| **E3.6** | × | **Per-dataset norm + Single model** (B) | **验证 §3.5.5 insight** |
+| **E3.7** | **Soft Prompt** (LLM input 端) | Per-DS norm + Soft Prompt (C) | Track B 路线 |
+| **E3.8** ⭐ 新 | **Action Head Cond Emb** (Action expert 端) | Per-DS norm | 与 E3.7 同价位对照, 验证 conditioning 注入点选择 |
+| **E3.9** ⭐ 新 | **Soft Prompt + Action Head Cond** | Per-DS norm | 双端组合, 验证两者增益是否互补 |
 
-→ E3.5 vs E3.6 直接量化 "naive joint vs per-dataset norm" 的真机抖动差异。
+→ E3.5 vs E3.6 量化 "naive joint vs per-dataset norm" 的真机抖动差异。
+→ **E3.7 vs E3.8 vs E3.9 量化 conditioning 注入点选择 (LLM input vs Action expert vs 两端)** — 新主线 ablation set (2026-05-22 决策)。
+→ EE-relative 路线 (旧 E3.8 delta EE) 已 deprioritize, paired shift 由 conditioning 处理。
 
 ---
 
@@ -381,9 +384,13 @@ Layer 3 (Phase 3 ablation):
 
 # Part II — 技术参考
 
-## 5. EE-relative Action 可行性
+## 5. EE-relative Action 可行性 ⚠️ DEPRIORITIZED (2026-05-22)
 
-### 5.1 可用资源
+> **2026-05-22 决策**: EE-relative action 路线**整体暂停**, 不进入近期实验计划。R 腕 21° paired shift (§3.3) 由 **Soft Prompt + Action Head Cond Emb 组合 (新主线 E3.7/E3.8/E3.9)** 处理 — 在 LLM input 端 + Action expert 端双端 condition embodiment domain, 实现与 EE-based 等价的 paired shift 消除, 但工程量更低 + 不引入 IK 不连续风险。
+>
+> 本节内容**保留为技术参考**, 但 Phase 0 E0.5 / Phase 3 E3.4 (EE-relative) / E3.8 (delta EE) 全部移出执行计划。新主线见 §6.3。
+
+### 5.1 可用资源 (参考)
 
 | 资源 | 位置 |
 |---|---|
@@ -466,8 +473,8 @@ for delta in predicted_chunk:
 |---|---|---|---|
 | **Hard prompt** (`"[D405 wrist] ..."`) — 改 prompt 字符串 | 极低 (0 改 model) | ✅ 任意 config 都可用 | ⭐⭐ 弱版本 (信号沿 LLM attention 自然传播, 不显式 gate) |
 | **Soft prompt** (X-VLA style, 每 domain 32×2048 learnable vec) | 0 (代码已实现) | ✅ **`pi0.py:136-181` 已有 `soft_prompt_hub` 实现** + `xvla_stage1/2/3` config 模板就绪 | ⭐⭐⭐ **正确路径** — 显式 inject 到 LLM input, 推理时可 hard-force domain |
-| **Action head embedding** | 中 (改 model arch) | ❌ 待加 | ⭐⭐ 与 soft prompt 互补 |
-| **Soft prompt + Action head emb 结合** | 中-高 | 部分 | ⭐ 终态最强 |
+| **Action head embedding** ⭐ 升级为主线 | 中 (改 model arch, action expert 前 concat 或 FiLM) | ❌ 待加 (Phase 1.5 实现) | ⭐⭐⭐ **新增主线** — soft prompt 在 LLM input 注入, action head emb 在 action expert 注入, 两端互补 gate domain shift |
+| **Soft prompt + Action head emb 结合** | 中-高 | 部分 | ⭐⭐⭐⭐ 终态最强 (Phase 3 E3.5 验证组合增益) |
 
 #### 6.2.1 本地代码与 ckpt 现状 (2026-05-21 实测)
 
@@ -514,37 +521,119 @@ Stage 3: xvla_stage3_joint_finetune
 
 > X-VLA Soft Prompt 已在 290K episodes 跨 7 个 platforms × 5 个 arm types 验证可行 (ICLR 2026)。每域仅 65K 参数 (32×2048), 整体 0.04% 非共享参数。
 
+### 6.3 Action Head Conditioning Embedding (2026-05-22 新主线)
+
+> **动机**: Soft Prompt 在 **LLM 输入端**注入 domain embedding，sigmoid-gate 经 PaliGemma + action expert attention 累积传播到最终 action。但 action expert 是独立模块 (adaRMS), 离 LLM 端 layers 较远 — domain shift 信号可能稀释。**在 action expert 内部直接注入 domain emb**, 形成"双端 condition" (LLM + Action expert), 更强 gate 区分 A/B/XVLA。
+
+#### 6.3.1 实现方案
+
+| 注入方式 | 复杂度 | 优点 | 缺点 |
+|---|---|---|---|
+| **A. Concat to action token input** | 极低 | 0 改 attention, 直接 prepend emb token | gate 弱 (只在 prefix 出现一次) |
+| **B. FiLM (Feature-wise Linear Modulation)** ⭐ | 中 | scale/shift action expert hidden, 强 gate | 改 RMSNorm 后的 layer norm 行为 |
+| **C. adaLN (adaptive LayerNorm) condition** | 中 | 与 DiT 同款, 已有 adaRMS scaffold | 更复杂的训练动力学 |
+| **D. Cross-attn from emb to action layers** | 高 | 最强表达 | 改 model 架构, 计算开销大 |
+
+**推荐方案 B (FiLM)** — 在 action expert 每个 transformer block 的 LayerNorm 后:
+```python
+# pseudo-code:
+action_head_cond_hub = nnx.Embed(num_domains=2, features=2 * hidden)  # gamma + beta per domain
+gamma, beta = jnp.split(action_head_cond_hub(obs.dataset_id), 2, axis=-1)
+h = (1 + gamma) * h + beta   # FiLM modulation
+```
+
+#### 6.3.2 代码改造点
+
+| 文件 | 改动 |
+|---|---|
+| `kai0/src/openpi/models/pi0_config.py` | 加 `action_head_cond_num_domains: int = 0`, `action_head_cond_emb_dim: int = ?` |
+| `kai0/src/openpi/models/pi0.py` | (1) 加 `action_head_cond_hub = nnx.Embed(...)` (2) 在 `embed_suffix` 或 action expert forward 中读 `obs.dataset_id` → FiLM |
+| `kai0/src/openpi/training/config.py` | 新 config `xvla_action_head_cond_only` (E3.8) + `xvla_dual_cond` (E3.9 Soft+Action Head) |
+| `kai0/src/openpi/transforms.py` | 已修, dataset_id 已透传 (2026-05-21 fix) |
+
+#### 6.3.3 训练曲线 (与 Soft Prompt 类比)
+
+| Variant | Stage 1 (kai warmup) | Stage 2 (vis cond emb only) | Stage 3 (joint finetune) |
+|---|---|---|---|
+| Soft Prompt (Track B 现状) | ✅ 76d44 验证 PASS | 待 | 待 |
+| **Action Head Cond Emb** (E3.8) | 待 | 待 | 待 |
+| **Soft Prompt + Action Head Cond** (E3.9) | 待 | 待 | 待 |
+
+#### 6.3.4 实验序列 (Phase 3 集成)
+
+```
+Phase 1.5 (插入 Phase 1 之后 Phase 2 之前):
+  └─ 实现 action_head_cond_hub (~1 day 编码 + 测试)
+     └─ smoke test on uc01: kai+vis mixed, verify gradient 流通过 action_head_cond
+        └─ 验证 mu(action_head_cond_hub) non-zero after step 100
+
+Phase 3 Ablation (与 E3.5/E3.6/E3.7 一起跑):
+  ├─ E3.8: Action Head Cond Only (LR + step 同 E3.7)
+  └─ E3.9: Soft Prompt + Action Head Cond 同时启用
+```
+
+> **关键 question**: Soft Prompt (LLM input) vs Action Head Cond (Action expert) 哪个 conditioning 更有效? — E3.7 vs E3.8 直接量化, E3.9 验证是否互补 (有可能 LLM 端已经吸收掉 conditioning, 加 Action expert 端 redundant)。
+
+#### 6.3.5 Track C: Action Head Cond 独立训练路线 (并行于 Track B)
+
+```
+Track C Stage 1 (kai warmup with action_head_cond):
+  Init: pi05_base + action_head_cond_hub init N(0, 0.02)
+  Data: kai0_base + dagger (domain_id=0)
+  Train: 50k step on 16 H20
+
+Track C Stage 2: action_head_cond only on vis (freeze backbone), 5k step
+
+Track C Stage 3: joint finetune, 50k step
+
+→ Track C 终态 ckpt 作为 E3.8 baseline,
+   与 Track B (Soft Prompt) E3.7 终态 ckpt 对照
+```
+
 ---
 
 # Part III — 执行计划
 
-## 7. Milestone 总览 (M1-M4) — Dual-Track Parallel
+## 7. Milestone 总览 (M1-M4) — Tri-Track Parallel
 
-### 📐 双轨并行架构 (2026-05-21 起)
+### 📐 三轨并行架构 (2026-05-22 起)
 
 ```
                      ┌─────────────────────────────────────┐
-                     │   Track A: SSL 主线 (uc02 + H20)    │
+                     │   Track A: SSL 主线                 │
+                     │   (uc02 + Robot-North-H20)          │
                      │   ├── Phase 0 Pseudo-labels         │
                      │   ├── Phase 1 V-JEPA + track + flow │
                      │   ├── Phase 2 Dynamics + Embodiment │
                      │   └── Phase 3 Policy + Ablation     │
                      ├─────────────────────────────────────┤
                      │   Track B: X-VLA Soft Prompt        │
-                     │   (Robot-North-H20, 16 H20)         │
-                     │   ├── Stage 1 kai warmup (in_progress) │
+                     │   (LLM input 端 cond, 16 H20)       │
+                     │   ├── Stage 1 kai warmup ✅ PASS    │
                      │   ├── Stage 2 vis soft_prompt only  │
+                     │   └── Stage 3 joint finetune        │
+                     ├─────────────────────────────────────┤
+                     │   Track C: Action Head Cond Emb ⭐  │
+                     │   (Action expert 端 cond, 16 GPU)   │
+                     │   ├── Phase 1.5 code (~1 day)       │
+                     │   ├── Stage 1 kai warmup            │
+                     │   ├── Stage 2 vis cond only         │
                      │   └── Stage 3 joint finetune        │
                      └─────────────────┬───────────────────┘
                                        ↓
                           ┌──────── Final Merge ────────┐
                           │ SSL Visual Backbone +       │
                           │ X-VLA Soft Prompt Hub +     │
+                          │ Action Head Cond Emb +      │  ← 新
                           │ Dynamics-conditioned policy │
                           └─────────────────────────────┘
 ```
 
-**两条 track 互不冲突**: Track A 主要用 uc02 (Phase 0) + Robot-North-H20 (Phase 1-3); Track B 用 Robot-North-H20 16 GPU。在 Robot-North-H20 39 GPU 可用前提下并行 OK (Track A 单 exp 16 GPU, Track B 同 16 GPU, 共 32, 余 7)。
+**三条 track 互不冲突 (2026-05-22 资源分配)**:
+- Track A 主要用 uc02 (Phase 0) + Robot-North-H20 (Phase 1-3)
+- Track B 用 Robot-North-H20 16 GPU (Stage 1 已完成, Stage 2/3 链)
+- Track C 用 robot-task 20 A100 (cn-shanghai) 或 Robot-North-H20 余 16 GPU
+- Beijing 32-40 H20 + Shanghai 20 A100 完全够 3 track 并发
 
 ### 🚀 M1 (1-2 周): 短期真机修复 — **已 deprioritize**
 
@@ -594,7 +683,7 @@ Stage 3: xvla_stage3_joint_finetune
 | **E0.2** Optical flow | RAFT-Large | adjacent pair, **temporal stride 3** → ~2.3M pairs × 3 view | `flow/{ep_id}/{view}.npz` (H/8, W/8, 2) | uc02 4 GPU 并行 | ~20h |
 | **E0.3** Cloth mask | SAM2 (Hiera-L) | 1 frame/sec × 9136 ep × 3 view ≈ 820k mask | `mask/{ep_id}/{view}.npz` | Robot-North-H20 8 H20 | ~12h |
 | **E0.4** ~~FOV align~~ | ~~OpenCV~~ | **取消 (用户决策, 不可持续)** | — | — | — |
-| **E0.5** EE-relative action | Python + PiperFK | A + B + XVLA actions | `action_ee_relative/{ep_id}.npz` (T, 14) | CPU | 几小时 |
+| ~~**E0.5** EE-relative action~~ | ~~Python + PiperFK~~ | ~~A + B + XVLA actions~~ | ~~`action_ee_relative/{ep_id}.npz` (T, 14)~~ | ~~CPU~~ | ❌ **取消 (2026-05-22)** — EE-relative 路线整体 deprioritize, R 腕 21° paired shift 由 Soft Prompt + Action Head Cond 处理 |
 
 > **E0.4 已取消 (2026-05-21 决策)**: D405 → D435 FOV pixel-level crop 不可持续 (训练-推理双向维护负担 + 跨相机不通用 + 丢失 D405 周边信息)。
 > **替代方案**: (1) **View-conditioned token** (data loader 标记 `view_id`, model 自学区分) — 由 Phase 1 E1.4/E1.5 中的 `xview_head` 自然实现; (2) **RandomResizedCrop augmentation** (scale 0.6-1.0) 让 model 自然 robust 到 FOV 差异。原理: representation-level invariance > input-level pixel hack。详见 §11 风险 #3。
@@ -686,13 +775,13 @@ weights:      固定 (w_vjepa=1.0, w_track=0.5, w_flow=0.3, w_xview=0.2)
 
 **核心**: 把 Phase 1+2 产出接到 π0.5 policy, B-only finetune, 真机评估。
 
-| Exp | Visual | Dynamics | Action | Data | 用途 |
+| Exp | Visual | Dynamics | Cond Method | Data | 用途 |
 |---|---|---|---|---|---|
-| **E3.0** baseline | π0.5 default | × | absolute | B (smooth_800) | 当前 SOTA, baseline |
-| **E3.1** | E1.5 frozen | × | absolute | B | 测 H1 (visual repr 单独 value) |
-| **E3.2** | E1.5 LoRA | × | absolute | B | 测 fine-tunable 是否更好 |
-| **E3.3** | E1.5 LoRA | E2.3 frozen | absolute | B | 测 H3 (dynamics 额外贡献) |
-| **E3.4** Full Stack | E1.5 LoRA | E2.3 frozen | EE-relative | B + A weighted (embodiment cond) | 终态最强 |
+| **E3.0** baseline | π0.5 default | × | × | B (smooth_800) | 当前 SOTA, baseline |
+| **E3.1** | E1.5 frozen | × | × | B | 测 H1 (visual repr 单独 value) |
+| **E3.2** | E1.5 LoRA | × | × | B | 测 fine-tunable 是否更好 |
+| **E3.3** | E1.5 LoRA | E2.3 frozen | × | B | 测 H3 (dynamics 额外贡献) |
+| **E3.4** Full Stack | E1.5 LoRA | E2.3 frozen | Soft Prompt + Action Head Emb | B + A weighted | 终态最强 (Soft+ActionHead 组合) |
 
 **训练设置**:
 - 16 H20 × 50k step ≈ 35h/exp
@@ -812,6 +901,13 @@ Week 9   │   │  │  │  ┌──[Phase 4] 真机 + Paper
 - Shanghai: 2 × 8 GPU job 或 1 × 16 GPU job (20 A100 free)
 - uc01: 1 × 8 GPU job (8 A800 idle)
 
+**三轨资源分配建议** (2026-05-22):
+| Track | 当前阶段 | 资源 | ETA |
+|---|---|---|---|
+| Track A (SSL) | Phase 0 | uc02 8 A800 → Phase 1 用 Beijing 48 H20 (3 并发 each 16) | Phase 0 ~6h, Phase 1 ~35h |
+| Track B (X-VLA Soft Prompt) | Stage 1 → 2 | Beijing 16 H20 | Stage 2 ~1h, Stage 3 ~12h |
+| Track C (Action Head Cond) ⭐ 新 | 编码 → Phase 1.5 → Stage 1 | Shanghai 16 A100 (并发于 Track B 不抢 Beijing) | 编码 ~1d, Stage 1 ~12-15h |
+
 > 控制平面: 所有 volc + uc 任务通过 **gf0** 统一管理 (见 [training_servers_knowledge_base.md §5.6.c-d](./training_servers_knowledge_base.md))。
 
 ### 9.2 XVLA-Soft-Fold 多地副本
@@ -852,10 +948,10 @@ KAI0 原始数据从 sim01 上传 TOS, 各训练服务器从 TOS 拉到本地 mi
 | E0.1 vis_v2_merged (895 ep) | 待启动 | — | — | 同上 |
 | E0.1 XVLA-Soft-Fold (1729 ep) | 待启动 | — | — | hdf5 格式, 需不同 dataset adapter |
 | E0.2 RAFT optical flow | 待启动 | — | — | 待 E0.1 完成, 复用 uc02 GPU |
-| E0.3 SAM2 cloth mask | 待启动 | — | — | Robot-North-H20 1 节点跑 |
+| E0.3 SAM2 cloth mask | ✅ **done** | 2026-05-21 17:40 UTC | 2026-05-22 01:13 UTC | Robot-North-H20 1 节点 (t-20260521174041-8nhps), 6512 ep × 3 view, 19534/19536 npz, 输出 `/vePFS-North-E/.../ssl_phase0/masks/` |
 | ~~E0.4 FOV alignment~~ | ❌ **取消** | — | — | 不可持续 (见 §8.2 + §11 #3), 由 view-cond token + RandomResizedCrop 替代 |
-| E0.5 EE-relative action | 待启动 | — | — | CPU + PiperFK, 脚本 `/tmp/e0_5_ee_pose.py` 已就位 |
-| **Phase 0 整体** | 🔄 in_progress | 2026-05-21 | — | 修正 ETA: ~5-7 day (E0.4 取消后减少 ~5h) |
+| ~~E0.5 EE-relative action~~ | ❌ **取消 (2026-05-22)** | — | — | EE-relative 路线整体 deprioritize, 由 Soft Prompt (Track B) + Action Head Cond (Track C) 替代 |
+| **Phase 0 整体** | 🔄 in_progress | 2026-05-21 | — | 修正 ETA: ~3-5 day (E0.4 + E0.5 取消后减少 ~8h) |
 
 ### 10.2 Phase 1 — SSL Pretrain ⏳ pending Phase 0
 
@@ -876,14 +972,18 @@ KAI0 原始数据从 sim01 上传 TOS, 各训练服务器从 TOS 拉到本地 mi
 
 ### 10.4 Phase 3 — Policy + Final Ablation Table ⏳ pending Phase 2
 
-| Variant | Visual | Dynamics | Soft Prompt | Motion-residual | Inverse Dyn | Val MAE | 真机平滑度 | 真机成功率 |
+| Variant | Visual | Dynamics | Soft Prompt | Action Head Cond | Motion-residual | Val MAE | 真机平滑度 | 真机成功率 |
 |---|---|---|---|---|---|---:|---:|---:|
 | **E3.0** baseline (π0.5 default) | — | — | — | — | — | TBD | TBD | TBD |
 | **E3.1** + Visual SSL | E1.5 frozen | — | — | — | — | ? | ? | ? |
 | **E3.2** + LoRA tune | E1.5 LoRA | — | — | — | — | ? | ? | ? |
-| **E3.3** + Dynamics | E1.5 LoRA | E2.3 | — | ✓ | — | ? | ? | ? |
-| **B3.0** Track B (xvla stage 3 alone) | π0.5 default | — | ✓ (xvla) | — | — | ? | ? | ? |
-| **E3.4** Full Stack (Track A + B merge) | E1.5 LoRA | E2.3 | ✓ (xvla) | ✓ | ✓ | ? | ? | ? |
+| **E3.3** + Dynamics | E1.5 LoRA | E2.3 | — | — | ✓ | ? | ? | ? |
+| **B3.0** Track B (Soft Prompt only) | π0.5 default | — | ✓ | — | — | ? | ? | ? |
+| **C3.0** Track C (Action Head Cond only) ⭐ 新 | π0.5 default | — | — | ✓ | — | ? | ? | ? |
+| **E3.7** Soft Prompt+SSL | E1.5 LoRA | — | ✓ | — | — | ? | ? | ? |
+| **E3.8** ⭐ 新 Action Head Cond only + SSL | E1.5 LoRA | — | — | ✓ | — | ? | ? | ? |
+| **E3.9** ⭐ 新 Dual Cond (Soft + Action Head) + SSL | E1.5 LoRA | — | ✓ | ✓ | — | ? | ? | ? |
+| **E3.4** Full Stack (终态) | E1.5 LoRA | E2.3 | ✓ | ✓ | ✓ | ? | ? | ? |
 
 (待填)
 
@@ -897,6 +997,19 @@ KAI0 原始数据从 sim01 上传 TOS, 各训练服务器从 TOS 拉到本地 mi
 | **Track B 整体** | 🔄 stage 1 running | — | 2026-05-21 | — | — | — | 3 stages 总 ETA ~22-26h (Stage 1 mu PASS 后流程已 unblock) |
 
 > **2026-05-21 重大 bug 修复**: 之前 Stage 2 grad_norm=0 + 旧 Stage 1 soft_prompt_hub 不训练的根因, 是 `RepackTransform` 和 `AgilexInputs` 两处都重建 data dict 时丢掉了 `dataset_id`, 导致 obs.dataset_id=None → embed_prefix soft prompt 分支被 dead-code-eliminate。修复 commits: `9d2184a` (RepackTransform) + `df23d5a` (AgilexInputs)。
+
+### 10.6 Track C — Action Head Conditioning Embedding ⏳ 待启动 (新增 2026-05-22)
+
+| Stage | 状态 | Job ID | Start | End | Step | Best Val | 备注 |
+|---|---|---|---|---|---|---|---|
+| Phase 1.5 代码实现 | ⏳ pending | — | — | — | — | — | `action_head_cond_hub: nnx.Embed` + FiLM modulation in action expert. 见 §6.3.2 |
+| Smoke test (kai+vis mixed) | ⏳ pending | — | — | — | — | — | uc01 1-2 GPU, 验证 `mu(action_head_cond_hub)` non-zero (与 Soft Prompt PASS 测试同 pattern) |
+| Stage 1 kai warmup | ⏳ pending | — | — | — | — / 50k | — | Shanghai 16 A100 或 Beijing 16 H20 |
+| Stage 2 vis cond only | 待 Stage 1 | — | — | — | — / 5k | — | freeze backbone, only `action_head_cond_hub` |
+| Stage 3 joint finetune | 待 Stage 2 | — | — | — | — | — | Joint train all |
+| **Track C 整体** | 待启动 | — | — | — | — | — | 编码 ~1 day, training 3 stages 总 ETA ~22-26h |
+
+> Track C 与 Track B 同节奏并行执行 (Soft Prompt LLM 端 vs Action Head expert 端) → Phase 3 E3.7 vs E3.8 vs E3.9 三角对比验证 conditioning 注入点。
 
 ---
 
@@ -924,15 +1037,22 @@ KAI0 原始数据从 sim01 上传 TOS, 各训练服务器从 TOS 拉到本地 mi
 - L2 (policy): ❌ 不引入 (抖动 +62%, 污染 action prior)
 - L3 (aux): ⚠️ 可选 (作为 inverse dynamics 目标)
 
-### 决策点 2: Embodiment conditioning 实现方式? ✅ **已决策 (2026-05-21)**
+### 决策点 2: Embodiment conditioning 实现方式? ✅ **重新决策 (2026-05-22)**
 - ~~Hard prompt only~~ (信号沿 LLM attention 隐式传播, 不显式 gate)
-- ✅ **Soft prompt (X-VLA style)** — 代码已实现 (`pi0.py:soft_prompt_hub`), config 已就绪 (`xvla_stage1/2/3`), 已启动 (Track B Stage 1 in_progress)
-- ⏭️ Track A Phase 2 (dynamics) 同时用 soft embedding 作为 conditioning input
-- 终态 (E3.4): SSL backbone + xvla soft_prompt_hub + dynamics motion-residual
+- ✅ **Soft Prompt (X-VLA style)** — Track B, 在 LLM input 端 (`pi0.py:soft_prompt_hub`) 已实现并验证 PASS (76d44)
+- ⭐ **Action Head Cond Emb** (新) — Track C, 在 action expert 端 FiLM modulation (待加, 见 §6.3)
+- 终态 (E3.9 / E3.4): SSL backbone + **Soft Prompt + Action Head Cond 双端 condition** + dynamics motion-residual
+- E3.7 (Soft only) vs E3.8 (Action Head only) vs E3.9 (双端) 量化注入点选择
 
-### 决策点 3: 是否回看 M1 短期方案?
-- 触发条件: Phase 1 (SSL) 完成首轮 ablation, 如果 E3.1 / E3.2 已经超过 baseline → M1 不需要做
-- 否则: 回看 EE-relative action + B oversample 修复抖动
+### 决策点 3: EE-relative action 是否启用? ❌ **已 deprioritize (2026-05-22)**
+- ~~Phase 0 E0.5 EE-relative preprocessing~~ 取消
+- ~~Phase 3 E3.4 / E3.8 delta EE~~ 取消
+- 理由: R 腕 21° paired shift (§3.3) 由 Soft Prompt + Action Head Cond 处理, 工程量更低 + 无 IK 不连续风险
+- 保留作为远期 backup, 如 conditioning 路线效果不佳再启用 (§5 内容保留作参考)
+
+### 决策点 4: 是否回看 M1 短期方案?
+- 触发条件: Phase 1 (SSL) + Track B Stage 3 / Track C Stage 3 完成首轮 ablation, 如果 E3.1 / E3.7 / E3.8 已经超过 baseline → M1 不需要做
+- 否则: 回看 B oversample 修复抖动 (EE-relative 已 deprioritize, 不再回看)
 
 ---
 
@@ -940,6 +1060,7 @@ KAI0 原始数据从 sim01 上传 TOS, 各训练服务器从 TOS 拉到本地 mi
 
 | 日期 | 内容 |
 |---|---|
+| 2026-05-22 | **Tri-track + Action Head Cond 启用 + EE-relative deprioritize**: §6.3 新增 Track C Action Head Conditioning Embedding (FiLM modulation in action expert) 与 Track B Soft Prompt (LLM input) 互补; §10.6 Track C 状态跟踪表; §3.5.7 Phase 3 ablation 新增 E3.8 (Action Head only) / E3.9 (Soft + Action Head 双端); §10.4 ablation 表新增 C3.0/E3.7/E3.8/E3.9 列; §10.1 E0.5 + Phase 3 E3.8 delta EE 全部取消; §5 整节标 deprioritized 保留作参考; 决策点 2/3 重新决策 (Soft + Action Head 双端, EE deprioritize); §7 三轨架构图. SAM2 (E0.3) 状态 ✅ done. 资源更新: robot-task 20 A100 free 已可用 |
 | 2026-05-21 (深夜) | **§3.5 vis operator + 时间漂移分析**: 澄清 ztm+lym 同一人 (G1=872 ep, G2=gsy=23 ep); G1 内时间漂移 0.47 ≈ cross-robot drift; gsy 对 norm 影响微弱 (0.08 rad). **§3.6 混训策略 6 方案 + 实证一致性**: per-dataset norm 实测 MMD 降低 90.7% (0.06→0.006), **修正方案 B 评级 ⭐⭐→⭐⭐⭐ (实际可行!)**; 识别残余 10% 来自 higher moments + joint correlation; 推荐 layered (E + C + D); §3.6.7 加 E3.5-E3.8 ablation 验证 naive joint vs per-DS norm |
 | 2026-05-21 (晚) | **Dual-track 化 + 放弃 FOV crop**: 加 §6.2.1 本地 soft_prompt_hub 代码 + ckpt 现状 (代码已实现但未训过); §6.2.2 X-VLA 3-stage 流程; §7 dual-track 架构图 (Track A SSL + Track B X-VLA 并行); §8.7 Track B 完整 X-VLA stage 1/2/3 计划 (Stage 1 t-20260521154828-76d44 已提交); §10.5 Track B 状态跟踪表; §10.4 加入 B3.0 + 改 E3.4 为 dual-track merge; 决策点 2 已决策为 soft prompt. **取消 E0.4 Wrist FOV crop** — 不可持续, 替换为 view-cond token + RandomResizedCrop (§8.2 + §11 #3) |
 | 2026-05-21 (早) | **Consolidated**: 合并 `ssl_pretraining_experiment_plan.md` 到本文档 §8; 删除 X1/X2/X3 详细配置 (deprioritize M1); 加 §6 与 π0.5/X-VLA 默认对照 + 实证调研; 加 §4 假说矩阵 H1-H4; 加 §10 状态跟踪 |
