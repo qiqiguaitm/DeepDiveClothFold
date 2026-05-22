@@ -795,14 +795,22 @@ Week 9   │   │  │  │  ┌──[Phase 4] 真机 + Paper
 
 ## 9. 资源 + 数据 + 网络
 
-### 9.1 GPU 资源 (2026-05-21 实测可用)
+### 9.1 GPU 资源 (2026-05-22 实测可用)
 
 | 资源 | GPU | 状态 | M2 分配 |
 |---|---:|---|---|
-| **Robot-North-H20** (cn-beijing) | 39 H20 free / 56 total | active | SSL 主战场 (单 exp 16 GPU, 可 2-3 并发) |
-| **uc02** | 8 A800 | free | 数据预处理 (Phase 0) + dev / smoke |
-| **gf3** | 1 H20 | active (smoke) | 单卡 smoke / debug |
-| uc01, uc03 | busy | 其他 exp 占用 | 不动 |
+| **Robot-North-H20** (cn-beijing) | 32-40 H20 free / 56 total | active | SSL/X-VLA 主战场 (单 exp 16 GPU, 可 2-3 并发) |
+| **robot-task** (cn-shanghai) ⭐ | **20 A100-80G free / 28 total** | active | Phase 1 SSL 副战场 / 备用 (单 exp 8 GPU 起) |
+| **uc02** | 8 A800 | busy (Phase 0 E0.1 CoTracker3) | 数据预处理 |
+| **uc01** | 8 A800 | free (exp1 已完成) | E0.5 + offline eval 等小作业 |
+| **gf3** | 1 H20 | active (smoke/dev) | 单卡 smoke / debug |
+| **gf0** | 控制平面 | active | volc + uc 任务统一管理 |
+| uc03 | 8 A800 | busy (task_a_new_100) | 不动 |
+
+**当前可启动的并发上限** (2026-05-22):
+- Beijing: 2 × 16 GPU job 或 1 × 32 GPU job (32 H20 free)
+- Shanghai: 2 × 8 GPU job 或 1 × 16 GPU job (20 A100 free)
+- uc01: 1 × 8 GPU job (8 A800 idle)
 
 > 控制平面: 所有 volc + uc 任务通过 **gf0** 统一管理 (见 [training_servers_knowledge_base.md §5.6.c-d](./training_servers_knowledge_base.md))。
 
@@ -839,8 +847,8 @@ KAI0 原始数据从 sim01 上传 TOS, 各训练服务器从 TOS 拉到本地 mi
 |---|---|---|---|---|
 | **环境安装** (uc02 kai0 venv) | ✅ done | 2026-05-21 06:05 | 2026-05-21 06:14 | cotracker3 (local git clone + uv pip -e), decord 0.6.0, einops 0.8.1, opencv 4.11, pyarrow 20.0. CoTracker3 ckpt 从 hf-mirror 下载 (96MB) |
 | **真实视频 timing 实测** | ✅ done | 2026-05-21 06:19 | 2 ep 123s = **60s/ep × 3 view** | 8 GPU 并行预估总 ~17h |
-| **E0.1 Kai0_base** (3055 ep) | 🔄 running | 2026-05-21 06:20 | — | uc02 8 GPU 并行, 每 GPU 382 ep, ETA ~6.4h |
-| E0.1 Kai0_dagger (3457 ep) | 待启动 | — | — | 等 Kai0_base 完成 |
+| **E0.1 Kai0_base** (3055 ep) | ✅ done | 2026-05-21 06:20 | 2026-05-21 12:22 | uc02 8 GPU 并行, 实际 6h02. 输出 3055 ep / **2.0G** tracks |
+| **E0.1 Kai0_dagger** (3457 ep) | 🔄 running | 2026-05-21 12:23 | — | uc02 8 GPU, 每 GPU 433 ep, ETA ~4.6h (avg 699 frames/ep, 比 base 短) |
 | E0.1 vis_v2_merged (895 ep) | 待启动 | — | — | 同上 |
 | E0.1 XVLA-Soft-Fold (1729 ep) | 待启动 | — | — | hdf5 格式, 需不同 dataset adapter |
 | E0.2 RAFT optical flow | 待启动 | — | — | 待 E0.1 完成, 复用 uc02 GPU |

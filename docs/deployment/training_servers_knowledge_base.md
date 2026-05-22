@@ -654,18 +654,24 @@ ssh gf0 "python3 -c 'import volcengine, volcenginesdkcore; print(\"OK\")'"
 ssh gf0 "pip install --user volcengine volcengine-python-sdk"
 ```
 
-#### 5.6.c.2 可用队列 (2026-05-21 实测)
+#### 5.6.c.2 可用队列 (2026-05-22 实测)
 
 > 通过 `ListResourceQueues` 跨 region 查询 + 个人 quota 验证, 当前账号可用 **2 个队列**:
 
 | Region | Queue Name | Queue ID | 节点 × 类型 | Total GPU | Allocated | Free | 单节点 GPU/CPU/MEM | RDMA |
 |---|---|---|---|---:|---:|---:|---|---|
-| **cn-beijing** | **Robot-North-H20** ⭐ | `q-20260516104642-khch9` | **7 × ml.hpcpni3ln.45xlarge** | **56 H20** | 17 | **39** | 8 × H20-SXM5-96GB / 180 vCPU / 1960 GiB | 4× |
-| **cn-shanghai** | **robot-task** | `q-20251204185107-fvnpx` | 1 × ml.pni2.14xlarge + 3 × ml.hpcpni2.28xlarge | **28 A100** | 24 | 4 | 8 × Tesla-A100-80G / 112 vCPU / 1715 GiB | varies |
+| **cn-beijing** | **Robot-North-H20** ⭐ | `q-20260516104642-khch9` | **7 × ml.hpcpni3ln.45xlarge** | **56 H20** | 25 | **31** | 8 × H20-SXM5-96GB / 180 vCPU / 1960 GiB | 4× |
+| **cn-shanghai** | **robot-task** ⭐ | `q-20251204185107-fvnpx` | 1 × ml.pni2.14xlarge + 3 × ml.hpcpni2.28xlarge | **28 A100-80G** | 8 | **20** | 8 × Tesla-A100-80G / 112 vCPU / 1715 GiB | varies |
 
 **核心区别**:
-- **Robot-North-H20** (cn-beijing): 新, 大 (56 H20), **多机集群训练首选**, 走 `vepfs-cnbj875793a96d6b` (与 gf3 共享 FS)
-- **robot-task** (cn-shanghai): 旧, 小 (28 A100), 已被其他实验占 86%, 走 `vepfs-cnsh075262e1f815` (与 gf0 共享 FS)
+- **Robot-North-H20** (cn-beijing): 新, 大 (56 H20), **多机集群训练首选**, 走 `vepfs-cnbj875793a96d6b` (与 gf3 共享 FS), zone `cn-beijing-e`
+- **robot-task** (cn-shanghai): 旧, 中 (28 A100-80G), 2026-05-22 起**已大幅空闲** (20/28 free), 走 `vepfs-cnsh075262e1f815` (与 gf0 共享 FS), zone `cn-shanghai-a`
+
+**当前可启动并发**:
+- Beijing: 2 × 16 GPU job 或 1 × 32 GPU job
+- Shanghai: 2 × 8 GPU job 或 1 × 16 GPU job ⭐ 新增可用空间
+
+**跨 region 共享性**: 数据需双地各放一份。kai0 base+dagger 已就位 gf0 (cnsh) + gf3 (cnbj); vis_v2_merged 已就位 uc01 NFS + gf0 (cnsh), gf3 (cnbj) 2026-05-22 后补; XVLA-Soft-Fold 详见 cross_embodiment_data_reuse_plan.md §9.2。
 
 #### 5.6.c.3 经 gf0 操作 mlp CLI 速查
 
