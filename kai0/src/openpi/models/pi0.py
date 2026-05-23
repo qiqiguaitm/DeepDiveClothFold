@@ -259,7 +259,13 @@ class Pi0(_model.BaseModel):
 
         action_tokens = self.action_in_proj(noisy_actions)
         # embed timestep using sine-cosine positional encoding with sensitivity in the range [0, 1]
-        time_emb = posemb_sincos(timestep, self.action_in_proj.out_features, min_period=4e-3, max_period=4.0)
+        # TAC support: timestep may be (b,) (standard, per-sample) or (b, ah) (per-token).
+        # posemb_sincos requires 1D, so flatten and reshape back.
+        time_in_ndim = timestep.ndim
+        time_flat = timestep.reshape(-1) if time_in_ndim > 1 else timestep
+        time_emb = posemb_sincos(time_flat, self.action_in_proj.out_features, min_period=4e-3, max_period=4.0)
+        if time_in_ndim > 1:
+            time_emb = time_emb.reshape(*timestep.shape, -1)  # (b, ah, emb)
         if self.pi05:
             # time MLP (for adaRMS)
             time_emb = self.time_mlp_in(time_emb)
@@ -299,22 +305,42 @@ class Pi0(_model.BaseModel):
               'dct_loss'  : scalar          DCT-MSE
               'dct_weight': scalar          weight for summing
         """
-        preprocess_rng, noise_rng, time_rng = jax.random.split(rng, 3)
+        preprocess_rng, noise_rng, time_rng, delay_rng = jax.random.split(rng, 4)
         observation = _model.preprocess_observation(
             preprocess_rng, observation, train=train,
             augment_level=self.augment_level,
         )
 
         batch_shape = actions.shape[:-2]
+        ah = actions.shape[-2]
         noise = jax.random.normal(noise_rng, actions.shape)
         time = jax.random.beta(time_rng, 1.5, 1, batch_shape) * 0.999 + 0.001
-        time_expanded = time[..., None, None]
+
+        # TAC (Training-time Action Conditioning, paper 2512.05964 Algorithm 1).
+        # Default tac_enabled=False → original per-sample flow matching (back-compat).
+        if self.tac_enabled:
+            # Sample delay per sample ∈ [0, tac_max_delay+1) inclusive of 0.
+            delay = jax.random.randint(delay_rng, batch_shape, 0, self.tac_max_delay + 1)
+            # Per-token mask: True where idx < delay (prefix region, gets clean GT action).
+            token_idx = jnp.arange(ah)
+            for _ in range(len(batch_shape)):
+                token_idx = token_idx[None, ...]
+            prefix_mask_tac = token_idx < delay[..., None]  # (*batch_shape, ah)
+            postfix_mask_tac = jnp.logical_not(prefix_mask_tac)
+            # Per-token time: prefix=1.0 (clean), postfix=sampled time (broadcast).
+            time_per_token = jnp.where(prefix_mask_tac, 1.0, time[..., None])  # (*b, ah)
+            time_expanded = time_per_token[..., None]  # (*b, ah, 1)
+            time_for_emb = time_per_token  # passed to embed_suffix as (b, ah)
+        else:
+            time_expanded = time[..., None, None]
+            time_for_emb = time
+
         x_t = time_expanded * noise + (1 - time_expanded) * actions
         u_t = noise - actions
 
         # one big forward pass of prefix + suffix at once
         prefix_tokens, prefix_mask, prefix_ar_mask = self.embed_prefix(observation)
-        suffix_tokens, suffix_mask, suffix_ar_mask, adarms_cond = self.embed_suffix(observation, x_t, time)
+        suffix_tokens, suffix_mask, suffix_ar_mask, adarms_cond = self.embed_suffix(observation, x_t, time_for_emb)
         input_mask = jnp.concatenate([prefix_mask, suffix_mask], axis=1)
         ar_mask = jnp.concatenate([prefix_ar_mask, suffix_ar_mask], axis=0)
         attn_mask = make_attn_mask(input_mask, ar_mask)
@@ -324,7 +350,16 @@ class Pi0(_model.BaseModel):
         )
         v_t = self.action_out_proj(suffix_out[:, -self.action_horizon :])
 
-        main_loss = jnp.mean(jnp.square(v_t - u_t), axis=-1)
+        per_token_loss = jnp.mean(jnp.square(v_t - u_t), axis=-1)  # (*b, ah)
+        if self.tac_enabled:
+            # Mask: only postfix tokens contribute. Per-sample mean over kept tokens.
+            mask_f = postfix_mask_tac.astype(per_token_loss.dtype)
+            denom = jnp.maximum(jnp.sum(mask_f, axis=-1, keepdims=True), 1.0)
+            main_loss = (per_token_loss * mask_f).sum(axis=-1, keepdims=True) / denom
+            # Return same shape (*b, ah) by broadcasting (with zeros for prefix tokens).
+            main_loss = jnp.broadcast_to(main_loss, per_token_loss.shape) * mask_f
+        else:
+            main_loss = per_token_loss
 
         if not self.use_dct_loss:
             return main_loss

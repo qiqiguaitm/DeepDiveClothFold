@@ -1260,6 +1260,39 @@ _CONFIGS = [
         inline_eval_dataset_id=1,
     ),
 
+    # pi05 + TAC (Training-time Action Conditioning, paper 2512.05964) on vis_v2_full.
+    # Same data/hparams as pi05_flatten_fold_vis_v2_full but with tac_enabled=True.
+    # Compare paper-RTC2 (TAC fine-tune) trained from pi05_base for 50k step.
+    TrainConfig(
+        name="pi05_flatten_fold_vis_v2_full_tac",
+        model=pi0_config.Pi0Config(
+            pi05=True,
+            tac_enabled=True,
+            tac_max_delay=6,  # 30Hz × 200ms latency
+        ),
+        data=LerobotAgilexDataConfig(
+            repo_id="/vePFS/tim/workspace/deepdive_kai0/kai0/data/Task_A/vis_v2_full",
+            default_prompt="Flatten and fold the cloth.",
+            use_delta_joint_actions=False,
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader(
+            "/vePFS/tim/workspace/openpi_cache/openpi-assets/checkpoints/pi05_base/params"
+        ),
+        lr_schedule=_optimizer.CosineDecaySchedule(
+            warmup_steps=1_000, peak_lr=1.5e-5, decay_steps=50_000, decay_lr=1.5e-6,
+        ),
+        ema_decay=0.9999,
+        num_train_steps=50_000,
+        keep_period=10_000,
+        save_interval=2_000,
+        num_workers=8,
+        batch_size=128,
+        fsdp_devices=8,
+        inline_eval_val_root="/vePFS/tim/workspace/deepdive_kai0/kai0/data/Task_A/vis_v2_merged_val",
+        inline_eval_n_frames=200,
+        inline_eval_every=4,
+    ),
+
     # pi05 vis-only training on vis_v2_full (16 v2 dates 04-23 → 05-22, 1409 ep / 1.93M frames).
     # User request 2026-05-23: train pure vis baseline (no kai mix) from pi05_base.
     # 8 GPU, batch 128, 50k step, lr 1.5e-5 → 1.5e-6. Volc Beijing/Shanghai.

@@ -126,7 +126,11 @@ class RMSNorm(nn.Module):
 
         # adaptive RMSNorm
         modulation = nn.Dense(x.shape[-1] * 3, kernel_init=nn.initializers.zeros, dtype=dtype)(cond)
-        scale, shift, gate = jnp.split(modulation[:, None, :], 3, axis=-1)
+        # Support per-token cond (TAC): cond shape (b, emb) → broadcast across seq;
+        # cond shape (b, s, emb) → per-token modulation (no broadcast).
+        if cond.ndim == 2:
+            modulation = modulation[:, None, :]
+        scale, shift, gate = jnp.split(modulation, 3, axis=-1)
         normed_inputs = normed_inputs * (1 + scale) + shift  # scale and shift in float32
         return normed_inputs.astype(dtype), gate
 

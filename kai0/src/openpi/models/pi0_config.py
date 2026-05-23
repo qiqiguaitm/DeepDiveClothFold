@@ -68,6 +68,14 @@ class Pi0Config(_model.BaseModelConfig):
     # not instantiated. See cross_embodiment_data_reuse_plan.md §6.3.1 for design.
     action_head_cond_num_domains: int = 0
 
+    # TAC (Training-time Action Conditioning) — paper 2512.05964 Algorithm 1.
+    # When tac_enabled=True, compute_loss samples per-sample delay ∈ [0, tac_max_delay],
+    # tokens in [0, delay) get time=1.0 (clean ground-truth action), postfix tokens get
+    # sampled time. Loss is computed only on postfix tokens. adaRMS conditioning becomes
+    # per-token (time emb shape (b, ah, emb)). tac_max_delay=6 for 30Hz × 200ms latency.
+    tac_enabled: bool = False
+    tac_max_delay: int = 6
+
     # Freeze policy. "none" = train all (default, LoRA still respected).
     # "only_soft_prompt" = freeze everything except `soft_prompt_hub` (Stage 2 of
     # the X-VLA 3-stage curriculum: align soft prompt for new domain before
