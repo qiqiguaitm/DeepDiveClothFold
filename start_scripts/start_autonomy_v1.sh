@@ -30,6 +30,10 @@ ENABLE_PROFILE=true
 PORT=8002
 RTC_FLAGS=()   # enable_rtc:=false 时把 RTC 关掉 (A/B 测试用)
 EXTRA_AUTONOMY=()
+# Custom ckpt / norm / delta — start_autonomy_from_ckpt_v1.sh 会传, 默认空 → start_serve_v1.sh 用 defaults
+SERVE_PKL=""
+SERVE_NORM=""
+SERVE_DELTA=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -39,6 +43,11 @@ while [[ $# -gt 0 ]]; do
     --no-profile)    ENABLE_PROFILE=false; shift ;;
     --no-rtc)        RTC_FLAGS+=("enable_rtc:=false"); shift ;;
     --port)          PORT="$2"; shift 2 ;;
+    # Custom ckpt: 用别的 v1 pickle (跟 start_serve_v1.sh 默认不同)
+    --pkl)           SERVE_PKL="$2"; shift 2 ;;
+    --norm|--norm-stats) SERVE_NORM="$2"; shift 2 ;;
+    # Delta-joint-actions (kai0 task_a_base_delta etc): server 端 post-apply AbsoluteActions
+    --delta|--delta-joint-actions) SERVE_DELTA="--delta-joint-actions"; shift ;;
     -h|--help)
       grep '^#' "$0" | head -22
       exit 0
@@ -81,7 +90,11 @@ trap cleanup INT TERM EXIT
 # ── Step 1: V1 serve ──────────────────────────────────────────────────
 echo ""
 echo "[1/2] === Launching V1 Triton serve on :${PORT} (log: $SERVE_LOG) ==="
-nohup "$REPO/start_scripts/start_serve_v1.sh" --port "$PORT" > "$SERVE_LOG" 2>&1 &
+SERVE_EXTRA_ARGS=()
+[ -n "$SERVE_PKL" ]   && SERVE_EXTRA_ARGS+=(--pkl "$SERVE_PKL")
+[ -n "$SERVE_NORM" ]  && SERVE_EXTRA_ARGS+=(--norm "$SERVE_NORM")
+[ -n "$SERVE_DELTA" ] && SERVE_EXTRA_ARGS+=("$SERVE_DELTA")
+nohup "$REPO/start_scripts/start_serve_v1.sh" --port "$PORT" "${SERVE_EXTRA_ARGS[@]}" > "$SERVE_LOG" 2>&1 &
 PID_SERVE=$!
 PIDS+=($PID_SERVE)
 echo "[1/2] PID=$PID_SERVE, 等待 build + CUDA Graph capture + warmup (~30s) ..."
@@ -118,8 +131,10 @@ PROFILE_ENV=""
 
 # start_autonomy.sh --ws-port 把 preflight check + autonomy_launch port 一起切到 V1 (:8002)
 #
-# V1 RTC overrides (M2-C, validated 2026-05-22, docs/deployment/rtc_implementation.md §7):
-#   inference_rate=10.0  latency_k=3  min_smooth_steps=3  rtc_execute_horizon=6
+# V1 RTC overrides (2026-05-23 升级到 20Hz, M2-C 比例缩放, 见 §7.8 v0.21):
+#   inference_rate=20.0  latency_k=2  min_smooth_steps=3  rtc_execute_horizon=4
+#   (历史 10Hz M2-C: inference_rate=10  latency_k=3  exec_h=6, 性能数据 cycle 62ms)
+# 20Hz 启用前提: P2 fast_obs_pipeline + A.2 pipelined_obs + C.4 SHM transport, cycle 44ms P95.
 # 通过 autonomy_launch.py 的 launch args 显式覆盖 (launch 默认仍是 JAX 3Hz/k=8/exec_h=16),
 # 不影响 start_autonomy.sh / start_autonomy_from_ckpt.sh / mode=ros2 路径.
 env $PROFILE_ENV nohup "$REPO/start_scripts/start_autonomy.sh" \
@@ -128,14 +143,15 @@ env $PROFILE_ENV nohup "$REPO/start_scripts/start_autonomy.sh" \
     --execution-mode joint \
     $EXECUTE_FLAG \
     $RERUN_FLAG \
-    "inference_rate:=10.0" \
-    "latency_k:=3" \
+    "inference_rate:=20.0" \
+    "latency_k:=2" \
     "min_smooth_steps:=3" \
-    "rtc_execute_horizon:=6" \
+    "rtc_execute_horizon:=4" \
     "cam_fps:=30" \
     "enable_head_depth:=false" \
     "fast_obs_pipeline:=true" \
     "pipelined_obs:=true" \
+    "transport:=shm" \
     "${RTC_FLAGS[@]}" \
     "${EXTRA_AUTONOMY[@]}" \
     > "$AUTO_LOG" 2>&1 &

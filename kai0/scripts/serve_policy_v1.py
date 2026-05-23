@@ -344,7 +344,13 @@ class V1Policy:
         default_prompt: str = "Flatten and fold the cloth",
         image_keys: tuple[str, ...] = ("base_0_rgb", "left_wrist_0_rgb", "right_wrist_0_rgb"),
         metadata: dict[str, Any] | None = None,
+        delta_action_mask: np.ndarray | None = None,
     ):
+        """delta_action_mask: 1-D bool array of len action_dim. If set, model output
+        is treated as delta-actions; for each masked dim, server post-applies
+        `chunk[t, dim] += state[dim]` to convert back to absolute joints
+        (matches openpi AbsoluteActions transform). None = absolute mode (default,
+        backward-compat with task_a_new_pure_200 etc)."""
         """action_norm comes from load_norm_stats()['actions'], a dict with
         {mean, std, q01, q99}. q01/q99 trigger quantile denorm (matches
         transforms.py:240-246), else fall back to z-score (a*std+mean)."""
@@ -369,6 +375,22 @@ class V1Policy:
             self._a_std = torch.from_numpy(std[:action_dim].astype(np.float32)).cuda()
             self._a_std = torch.where(self._a_std < 1e-6, torch.ones_like(self._a_std), self._a_std)
             logger.info(f"  Action denorm: Z-SCORE (mean/std) — fallback (no q01/q99)")
+        # Delta action mask (None = absolute action mode; else apply AbsoluteActions
+        # transform: chunk[..., masked_dims] += state[masked_dims] before returning).
+        if delta_action_mask is not None:
+            mask_arr = np.asarray(delta_action_mask, dtype=bool)
+            if mask_arr.shape != (action_dim,):
+                raise ValueError(
+                    f"delta_action_mask shape {mask_arr.shape} != action_dim ({action_dim},)")
+            # Pre-multiply mask onto a (action_dim,) float tensor so we can do
+            # chunk += mask_state_tensor (broadcasted) in one op.
+            self._delta_mask_float = torch.from_numpy(
+                mask_arr.astype(np.float32)).cuda()  # (action_dim,)
+            logger.info(
+                f"  Delta action mode: AbsoluteActions postprocess with mask "
+                f"{mask_arr.tolist()} (chunk[..., mask] += state[..., mask])")
+        else:
+            self._delta_mask_float = None
         self._image_keys = image_keys
         self._metadata = metadata or {"backend": "v1_triton", "version": 2}
         self._chunk_size = v1_infer.chunk_size
@@ -469,6 +491,21 @@ class V1Policy:
             a = (a + 1.0) / 2.0 * (self._a_q99[None, :] - self._a_q01[None, :] + 1e-6) + self._a_q01[None, :]
         else:
             a = a * self._a_std[None, :] + self._a_mean[None, :]
+        # Delta → Absolute (config-driven; equivalent to openpi AbsoluteActions output transform).
+        # When delta_action_mask is set, model output is interpreted as joint deltas
+        # relative to current state. We add state[..., masked_dims] back so the client
+        # sees absolute joint targets — no client change required (action_kind stays "joint").
+        if self._delta_mask_float is not None:
+            # state_raw was extracted in step 3 if state_encoder; otherwise need it now.
+            state_for_delta = obs.get("state")
+            if state_for_delta is None:
+                raise ValueError(
+                    "delta_action_mask is set but obs['state'] missing — delta mode requires state.")
+            s_t = torch.from_numpy(
+                np.asarray(state_for_delta, dtype=np.float32).reshape(-1)[: self._action_dim]
+            ).cuda()  # (action_dim,)
+            # a (chunk_size, action_dim) += (action_dim,) * (action_dim,)  broadcast
+            a = a + (s_t * self._delta_mask_float)[None, :]
         actions_np = a.detach().cpu().numpy()  # (chunk_size, action_dim) float32
         postproc_ms = (time.monotonic() - t_post) * 1000
 
@@ -614,6 +651,26 @@ def main() -> None:
                              "Use ['base_0_rgb','left_wrist_0_rgb','right_wrist_0_rgb'] only for openpi "
                              "official agilex client format.")
     parser.add_argument("--warmup-iters", type=int, default=3)
+    # C.4 2026-05-23 (§7.8): SHM transport. 默认 ws (旧行为). shm 启用 POSIX shm
+    # 替 msgpack+TCP loopback, P95 cycle 估 -5-7ms. both = 并行跑 (用 client 选).
+    parser.add_argument("--transport", choices=("ws", "shm", "both"), default="ws",
+        help="Transport: ws (default, backward compat) | shm (POSIX shm, low-latency) | both")
+    parser.add_argument("--shm-req-name", default="kai0_v1_obs",
+        help="POSIX shm name for client→server request region (when transport in {shm, both})")
+    parser.add_argument("--shm-resp-name", default="kai0_v1_chunk",
+        help="POSIX shm name for server→client response region")
+    # Delta-mode 2026-05-23: if model trained with delta_joint_actions=True,
+    # server applies AbsoluteActions transform (chunk[..., :14] += state for
+    # masked dims) before returning. Default mask matches kai0 Task_A delta:
+    # left_joint(6)+left_grip(abs)+right_joint(6)+right_grip(abs) = [T*6,F,T*6,F].
+    parser.add_argument("--delta-joint-actions", action="store_true",
+        help="Treat model output as delta-joint. Server post-applies AbsoluteActions "
+             "(chunk[..., joint_dims] += state[joint_dims]). Required for ckpts "
+             "trained with use_delta_joint_actions=True (e.g. task_a_base_delta).")
+    parser.add_argument("--delta-action-mask-csv",
+        default="1,1,1,1,1,1,0,1,1,1,1,1,1,0",
+        help="Delta mask (length=action_dim, 1=joint delta, 0=absolute e.g. gripper). "
+             "Default matches kai0 dual-Piper: 6 joints + 1 gripper × 2 arms.")
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="[%(asctime)s] %(levelname)s %(message)s")
@@ -675,6 +732,20 @@ def main() -> None:
 
     # 4. Build V1Policy
     phase = 2 if state_encoder is not None else 1
+    # Parse delta-action-mask (default: kai0 dual-piper [T*6,F,T*6,F]; only used
+    # when --delta-joint-actions is set).
+    delta_mask = None
+    if args.delta_joint_actions:
+        try:
+            delta_mask = np.asarray(
+                [bool(int(x)) for x in args.delta_action_mask_csv.split(",")],
+                dtype=bool,
+            )
+        except Exception as e:
+            raise SystemExit(f"invalid --delta-action-mask-csv: {e}")
+        if delta_mask.shape != (args.action_dim,):
+            raise SystemExit(
+                f"--delta-action-mask-csv length {len(delta_mask)} != action_dim {args.action_dim}")
     policy = V1Policy(
         v1_infer,
         action_norm=a_stats,
@@ -682,6 +753,7 @@ def main() -> None:
         state_encoder=state_encoder,
         default_prompt=args.default_prompt,
         image_keys=tuple(args.image_keys),
+        delta_action_mask=delta_mask,
         metadata={
             "backend": "v1_triton",
             "version": 2,
@@ -694,26 +766,62 @@ def main() -> None:
             "state_dim": args.state_dim,
             "default_prompt": args.default_prompt,
             "phase": phase,
+            "delta_joint_actions": bool(args.delta_joint_actions),
         },
     )
 
     # 5. Warm-up
     warmup(policy, n=args.warmup_iters, state_dim=args.state_dim)
 
-    # 5. Start WebSocket server
+    # 5. Start server(s). transport=ws (default) / shm / both.
     hostname = socket.gethostname()
     try:
         local_ip = socket.gethostbyname(hostname)
     except Exception:
         local_ip = "?"
-    logger.info(f"Serving V1 Triton policy on {args.host}:{args.port} (hostname: {hostname}, ip: {local_ip})")
-    server = websocket_policy_server.WebsocketPolicyServer(
-        policy=policy,
-        host=args.host,
-        port=args.port,
-        metadata=policy.metadata,
-    )
-    server.serve_forever()
+
+    shm_server = None
+    if args.transport in ("shm", "both"):
+        # POSIX shm transport (P95 cycle -5-7ms 估 vs WS+msgpack TCP loopback)
+        import sys as _sys
+        _sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        from shm_transport import ShmServer
+        shm_server = ShmServer(
+            infer_callback=policy.infer,
+            req_name=args.shm_req_name,
+            resp_name=args.shm_resp_name,
+            logger=logger,
+        )
+        shm_server.start()
+        logger.info(f"SHM transport: /dev/shm/{args.shm_req_name} (req) + /dev/shm/{args.shm_resp_name} (resp)")
+
+    if args.transport in ("ws", "both"):
+        logger.info(f"Serving V1 Triton policy on {args.host}:{args.port} (hostname: {hostname}, ip: {local_ip})")
+        server = websocket_policy_server.WebsocketPolicyServer(
+            policy=policy,
+            host=args.host,
+            port=args.port,
+            metadata=policy.metadata,
+        )
+        try:
+            server.serve_forever()
+        except KeyboardInterrupt:
+            pass
+        finally:
+            if shm_server is not None:
+                shm_server.stop()
+    else:
+        # SHM-only mode: keep main thread alive while ShmServer's daemon thread polls.
+        logger.info("SHM-only mode (--transport shm). Ctrl-C to stop.")
+        try:
+            while True:
+                import time as _time
+                _time.sleep(60)
+        except KeyboardInterrupt:
+            pass
+        finally:
+            if shm_server is not None:
+                shm_server.stop()
 
 
 if __name__ == "__main__":

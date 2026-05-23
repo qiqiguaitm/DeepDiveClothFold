@@ -196,6 +196,11 @@ def generate_launch_description():
     pipelined_obs_arg = DeclareLaunchArgument('pipelined_obs',
         default_value='false',
         description='V1 path: ObsPrefetchWorker pre-fetches obs in background, hiding obs_construct behind forward (A.2 §7.9). JAX path keeps false.')
+    # C.4 2026-05-23 (§7.8): SHM transport. 'ws' (default, JAX legacy) = TCP loopback +
+    # msgpack. 'shm' = POSIX shm + zero-copy image (-5-7ms cycle P95). V1 path opt-in.
+    transport_arg = DeclareLaunchArgument('transport',
+        default_value='ws',
+        description='V1 path: ws (default, backward compat) | shm (POSIX shm, low-latency)')
 
     # ── Piper 左臂 (mode=1 控制从臂, auto_enable 上电) ──
     # mode=1: subscribe to /master/joint_left and drive the slave arm hardware
@@ -277,6 +282,8 @@ def generate_launch_description():
             'fast_obs_pipeline': ParameterValue(LaunchConfiguration('fast_obs_pipeline'), value_type=bool),
             # A.2 异步 obs prefetch worker (bool-typed)
             'pipelined_obs': ParameterValue(LaunchConfiguration('pipelined_obs'), value_type=bool),
+            # C.4 SHM transport: str-typed (ws|shm)
+            'transport': ParameterValue(LaunchConfiguration('transport'), value_type=str),
         }],
     )
 
@@ -363,7 +370,7 @@ def generate_launch_description():
         rtc_max_guidance_weight_arg,
         inference_rate_arg, latency_k_arg, min_smooth_steps_arg,
         cam_fps_arg, enable_head_depth_arg, enable_left_depth_arg, enable_right_depth_arg,
-        fast_obs_pipeline_arg, pipelined_obs_arg,
+        fast_obs_pipeline_arg, pipelined_obs_arg, transport_arg,
         cleanup,
         piper_left_delayed, piper_right_delayed,
         multi_cam_delayed,

@@ -230,12 +230,14 @@ class StreamActionBuffer:
                 w_old = np.linspace(1.0, 0.0, overlap_len, dtype=float)
             w_new = 1.0 - w_old
 
-            # Smooth the overlap region
-            smoothed = [
-                (w_old[i] * np.asarray(old_list[i], dtype=float) +
-                 w_new[i] * np.asarray(new_list[i], dtype=float))
-                for i in range(overlap_len)
-            ]
+            # C.3 2026-05-23: 矢量化 smooth (替 Python list comprehension).
+            # 旧 for-loop 实测 25% cycle 出 P95 spike 2-8ms; vectorize 数学等价.
+            # 真因后定为 Linux CFS 抢占 inference thread, vectorize 边际 -0.4ms;
+            # 但保留 — 代码更简洁, 真修 P95 需 SCHED_FIFO (CAP_SYS_NICE).
+            old_arr = np.asarray(old_list[:overlap_len], dtype=float)  # (overlap_len, 14)
+            new_arr = np.asarray(new_list[:overlap_len], dtype=float)
+            smoothed_arr = w_old[:, None] * old_arr + w_new[:, None] * new_arr
+            smoothed = [smoothed_arr[i] for i in range(overlap_len)]
             # Append the extra tail from the new sequence
             combined = smoothed + new_list[overlap_len:]
             self.cur_chunk = deque([a.copy() for a in combined], maxlen=None)
@@ -375,6 +377,11 @@ class PolicyInferenceNode(Node):
         self.declare_parameter('host', 'localhost')
         self.declare_parameter('port', 8000)
         self.declare_parameter('ws_port', 8000)
+        # C.4 2026-05-23 (§7.8): transport 选择. default 'ws' = JAX legacy 行为
+        # (TCP loopback + msgpack). 'shm' = POSIX shm (V1 path opt-in, -5-7ms cycle P95).
+        self.declare_parameter('transport', 'ws')
+        self.declare_parameter('shm_req_name', 'kai0_v1_obs')
+        self.declare_parameter('shm_resp_name', 'kai0_v1_chunk')
         self.declare_parameter('prompt', 'Flatten and fold the cloth.')
         self.declare_parameter('publish_rate', 30)
         self.declare_parameter('inference_rate', 3.0)
@@ -1154,14 +1161,46 @@ class PolicyInferenceNode(Node):
             self.get_logger().warn(f'norm_stats load failed: {e}; RTC prev_chunk will be sent raw')
 
     def _load_ws_policy(self):
-        """Connect to external serve_policy.py via WebSocket."""
-        host = self.get_parameter('host').value
-        port = self.get_parameter('port').value
-        self.get_logger().info(f'Connecting to WebSocket policy at {host}:{port}')
+        """Connect to external serve_policy.py via WebSocket OR SHM (per transport param).
 
-        from openpi_client import websocket_client_policy
-        self.policy = websocket_client_policy.WebsocketClientPolicy(host, port)
-        self.get_logger().info('WebSocket policy connected')
+        transport=ws (default, JAX legacy): WebsocketClientPolicy → TCP loopback + msgpack
+        transport=shm (V1 path, opt-in):    ShmClient → POSIX shm + zero-copy image
+                                            (-5-7ms cycle P95 vs WS, §7.8 C.4)
+        """
+        transport = str(self.get_parameter('transport').value).lower()
+        if transport == 'shm':
+            self._connect_shm_policy()
+        else:
+            host = self.get_parameter('host').value
+            port = self.get_parameter('port').value
+            self.get_logger().info(f'Connecting to WebSocket policy at {host}:{port}')
+            from openpi_client import websocket_client_policy
+            self.policy = websocket_client_policy.WebsocketClientPolicy(host, port)
+            self.get_logger().info('WebSocket policy connected')
+
+    def _connect_shm_policy(self):
+        """Attach to POSIX shm regions (server side serve_policy_v1.py --transport shm)."""
+        req_name = str(self.get_parameter('shm_req_name').value)
+        resp_name = str(self.get_parameter('shm_resp_name').value)
+        self.get_logger().info(f'Attaching to SHM policy: req=/dev/shm/{req_name}, resp=/dev/shm/{resp_name}')
+
+        # 加 kai0/scripts 到 sys.path 才能 import shm_transport
+        import sys as _sys
+        kai0_scripts = os.path.join(_KAI0_ROOT, 'scripts')
+        if kai0_scripts not in _sys.path:
+            _sys.path.insert(0, kai0_scripts)
+        from shm_transport import ShmClient
+
+        class _RosLogger:
+            def __init__(self, node): self._n = node
+            def info(self, m): self._n.get_logger().info(m)
+            def warn(self, m): self._n.get_logger().warn(m)
+            def error(self, m): self._n.get_logger().error(m)
+
+        self.policy = ShmClient(
+            req_name=req_name, resp_name=resp_name,
+            attach_timeout_sec=60.0, logger=_RosLogger(self))
+        self.get_logger().info('SHM policy attached')
 
     def _start_ws_server(self):
         """In 'both' mode, also serve the loaded policy via WebSocket."""

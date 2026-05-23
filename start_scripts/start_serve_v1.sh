@@ -28,6 +28,7 @@ TOK=$TOK_DEFAULT
 PORT=$PORT_DEFAULT
 PROMPT=$PROMPT_DEFAULT
 PHASE=2
+DELTA_FLAG=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -39,6 +40,8 @@ while [[ $# -gt 0 ]]; do
     --prompt|--default-prompt) PROMPT="$2"; shift 2 ;;
     --phase)   PHASE="$2"; shift 2 ;;
     --phase=*) PHASE="${1#*=}"; shift ;;
+    # Delta-mode (kai0 task_a_base_delta ckpts): server post-applies AbsoluteActions
+    --delta-joint-actions) DELTA_FLAG="--delta-joint-actions"; shift ;;
     -h|--help)
       grep '^#' "$0" | head -16
       exit 0
@@ -85,4 +88,6 @@ exec $VENV/bin/python $REPO/kai0/scripts/serve_policy_v1.py \
   --num-views 3 \
   --chunk-size 50 \
   --action-dim 14 \
-  --state-dim 14
+  --state-dim 14 \
+  --transport both \
+  $DELTA_FLAG
