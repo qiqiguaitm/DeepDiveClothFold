@@ -154,6 +154,9 @@ class Pi0(_model.BaseModel):
         # Backward compatible: when num_domains=0 (default), no module created;
         # old ckpts load unchanged.
         self.action_head_cond_num_domains = int(getattr(config, "action_head_cond_num_domains", 0) or 0)
+        # TAC (Training-time Action Conditioning) — see Pi0Config docstring.
+        self.tac_enabled = bool(getattr(config, "tac_enabled", False))
+        self.tac_max_delay = int(getattr(config, "tac_max_delay", 6) or 6)
         if self.action_head_cond_num_domains > 0:
             self.action_head_cond_hub = nnx.Embed(
                 num_embeddings=self.action_head_cond_num_domains,
