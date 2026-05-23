@@ -117,6 +117,7 @@ import yaml
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, DurabilityPolicy
+from rclpy.callback_groups import ReentrantCallbackGroup
 from cv_bridge import CvBridge
 from sensor_msgs.msg import Image, JointState
 from std_msgs.msg import Bool, Header
@@ -286,6 +287,16 @@ class PolicyInferenceNode(Node):
         self.declare_parameter('latency_k', 8)
         self.declare_parameter('min_smooth_steps', 8)
         self.declare_parameter('decay_alpha', 0.25)
+        # P2 Step 1+2 (2026-05-23, §7.8): client obs_construct fast path.
+        # When True: skip JPEG mapping (#2, ~10-25ms) + CvBridge (#1, ~3-8ms) +
+        #            BGR↔RGB cvtColor (~0.2ms). 用 np.frombuffer 直接 view msg.data;
+        #            multi_camera_node 已 publish rgb8, 模型也要 rgb8, 全程零格式转换.
+        # 默认 False = JAX legacy 行为 (bridge.imgmsg_to_cv2('bgr8') → _jpeg_mapping
+        #                             → cv2.cvtColor(BGR2RGB) → resize_with_pad).
+        # V1 路径通过 start_autonomy_v1.sh 传 'true' 启用.
+        # 训练数据 loader 不做 JPEG (MP4 codec 是 AV1/h264, _jpeg_mapping 本来就没匹配
+        # 训练 artifact), 跳过后模型输入实际更接近 "训练时 mp4-decode 输出".
+        self.declare_parameter('fast_obs_pipeline', False)
         # ── RTC (Real-Time Chunking) parameters ──
         # enable_rtc=True + Pi0Config → auto-upgraded to Pi0RTCConfig at load time
         # (same weights, model class swap only; see _load_jax_policy). Guidance is
@@ -336,6 +347,12 @@ class PolicyInferenceNode(Node):
         self._rtc_execute_horizon = int(self.get_parameter('rtc_execute_horizon').value)
         self._rtc_max_guidance_weight = float(self.get_parameter('rtc_max_guidance_weight').value)
         self.gripper_offset = self.get_parameter('gripper_offset').value
+        # P2 Step 1+2: fast obs pipeline (skip JPEG + CvBridge + cvtColor)
+        self._fast_obs_pipeline = _to_bool(self.get_parameter('fast_obs_pipeline').value)
+        if self._fast_obs_pipeline:
+            self.get_logger().info(
+                'fast_obs_pipeline=True → bypass JPEG mapping + CvBridge + BGR↔RGB '
+                '(rgb8 直传, np.frombuffer view msg.data; P2 §7.8)')
 
         # ── Replay state ──
         self._replay_mode = str(self.get_parameter('replay_mode').value)
@@ -426,25 +443,33 @@ class PolicyInferenceNode(Node):
             reliability=ReliabilityPolicy.RELIABLE,
             durability=DurabilityPolicy.VOLATILE,
             history=HistoryPolicy.KEEP_LAST, depth=10)
+        # P1.a 2026-05-23: 当 Rerun 关闭 (V1 路径默认 --no-rerun) 时, sensor subs 用同一个
+        # ReentrantCallbackGroup → 配合 main() 的 MultiThreadedExecutor (留作未来), callback
+        # 可在推理 cycle 中并发 fire, deque 保持 fresh, image_age 预期 -20-30ms (§7.7).
+        # 当前 main() 仍用 SingleThreadedExecutor (MultiThreaded 实测 hang, 见 §7.8 表 B.2/B.3),
+        # 所以这个 Reentrant 组在 SingleThreaded 下退化 = MutuallyExclusive = bit-identical baseline.
+        # Rerun 开时 fallback 到默认 group — Rerun set_time+log 非原子, 多线程会破坏 timeline.
+        _use_rerun_early = _to_bool(self.get_parameter('enable_rerun').value)
+        self._sensor_cb_group = ReentrantCallbackGroup() if not _use_rerun_early else self.default_callback_group
         self.create_subscription(Image,
             self.get_parameter('img_front_topic').value,
-            self._cb_img_front, img_qos)
+            self._cb_img_front, img_qos, callback_group=self._sensor_cb_group)
         self.create_subscription(Image,
             self.get_parameter('img_left_topic').value,
-            self._cb_img_left, img_qos)
+            self._cb_img_left, img_qos, callback_group=self._sensor_cb_group)
         self.create_subscription(Image,
             self.get_parameter('img_right_topic').value,
-            self._cb_img_right, img_qos)
+            self._cb_img_right, img_qos, callback_group=self._sensor_cb_group)
         # Depth image for Rerun point cloud (head camera only, aligned to color)
         self.create_subscription(Image,
             self.get_parameter('depth_front_topic').value,
-            self._cb_depth_front, img_qos)
+            self._cb_depth_front, img_qos, callback_group=self._sensor_cb_group)
         self.create_subscription(JointState,
             self.get_parameter('puppet_left_topic').value,
-            self._cb_joint_left, 1000)
+            self._cb_joint_left, 1000, callback_group=self._sensor_cb_group)
         self.create_subscription(JointState,
             self.get_parameter('puppet_right_topic').value,
-            self._cb_joint_right, 1000)
+            self._cb_joint_right, 1000, callback_group=self._sensor_cb_group)
 
         # ── Publishers ──
         self.pub_action = self.create_publisher(JointState, '/policy/actions', 10)
@@ -1778,9 +1803,20 @@ class PolicyInferenceNode(Node):
 
         # 强制输出 BGR: RealSense ROS2 默认 rgb8, cv_bridge 会自动转换
         # 后续管线 jpeg_mapping + COLOR_BGR2RGB 假设输入为 BGR
-        img_front = self.bridge.imgmsg_to_cv2(img_front_msg, 'bgr8')
-        img_left = self.bridge.imgmsg_to_cv2(img_left_msg, 'bgr8')
-        img_right = self.bridge.imgmsg_to_cv2(img_right_msg, 'bgr8')
+        if self._fast_obs_pipeline:
+            # P2 Step 2: 跳 CvBridge, 直接 np.frombuffer view msg.data.
+            # multi_camera_node publish 时 encoding='rgb8' (line 318) — 这里得到的 numpy
+            # 直接就是 RGB8 (跟模型期望一致, 不需要后续 cvtColor).
+            img_front = np.frombuffer(img_front_msg.data, dtype=np.uint8).reshape(
+                img_front_msg.height, img_front_msg.width, 3)
+            img_left = np.frombuffer(img_left_msg.data, dtype=np.uint8).reshape(
+                img_left_msg.height, img_left_msg.width, 3)
+            img_right = np.frombuffer(img_right_msg.data, dtype=np.uint8).reshape(
+                img_right_msg.height, img_right_msg.width, 3)
+        else:
+            img_front = self.bridge.imgmsg_to_cv2(img_front_msg, 'bgr8')
+            img_left = self.bridge.imgmsg_to_cv2(img_left_msg, 'bgr8')
+            img_right = self.bridge.imgmsg_to_cv2(img_right_msg, 'bgr8')
 
         return img_front, img_left, img_right, joint_left_msg, joint_right_msg
 
@@ -1816,12 +1852,17 @@ class PolicyInferenceNode(Node):
         from openpi_client import image_tools
 
         # 原版顺序: front, right, left (camera_names = [front, right, left])
-        imgs = [
-            self._jpeg_mapping(img_front),
-            self._jpeg_mapping(img_right),
-            self._jpeg_mapping(img_left),
-        ]
-        imgs = [cv2.cvtColor(im, cv2.COLOR_BGR2RGB) for im in imgs]
+        if self._fast_obs_pipeline:
+            # P2 Step 1: 跳 JPEG mapping + cvtColor. img_* 已是 RGB8 numpy view from
+            # _get_synced_frame 的 np.frombuffer path. 直接进 resize.
+            imgs = [img_front, img_right, img_left]
+        else:
+            imgs = [
+                self._jpeg_mapping(img_front),
+                self._jpeg_mapping(img_right),
+                self._jpeg_mapping(img_left),
+            ]
+            imgs = [cv2.cvtColor(im, cv2.COLOR_BGR2RGB) for im in imgs]
         # 与原版一致: 相同分辨率时走 batch resize, 否则逐张
         if imgs[0].shape == imgs[1].shape == imgs[2].shape:
             imgs = list(image_tools.resize_with_pad(np.array(imgs), 224, 224))

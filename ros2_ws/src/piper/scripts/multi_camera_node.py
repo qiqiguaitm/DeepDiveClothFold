@@ -82,17 +82,33 @@ class MultiCameraNode(Node):
         self.declare_parameter('fps', 30)
         self.declare_parameter('width', 640)
         self.declare_parameter('height', 480)
+        # P1.b 2026-05-23: per-camera depth override (V1 20Hz 攻关).
+        # 'auto' (默认) = 用 camera_depth_flags.py 的 macro (JAX legacy 行为);
+        # 'true' / 'false' = 显式覆盖 (V1 路径 start_autonomy_v1.sh 用 'false' 关 D435 depth
+        # 腾 USB 带宽给 60fps RGB). 不影响 JAX / mode=ros2 路径.
+        self.declare_parameter('enable_head_depth_override', 'auto')
+        self.declare_parameter('enable_left_depth_override', 'auto')
+        self.declare_parameter('enable_right_depth_override', 'auto')
 
         fps = self.get_parameter('fps').value
         w = self.get_parameter('width').value
         h = self.get_parameter('height').value
 
-        # Per-camera depth on/off comes from config/camera_depth_flags.py;
-        # role-name in this file ('head'/'left'/'right') maps to the
-        # cameras.yml canonical name ('top_head'/'hand_left'/'hand_right').
-        enable_head_depth = _DEPTH_ENABLED_MAP.get('top_head', False)
-        enable_wrist_depth_l = _DEPTH_ENABLED_MAP.get('hand_left', False)
-        enable_wrist_depth_r = _DEPTH_ENABLED_MAP.get('hand_right', False)
+        # Per-camera depth on/off comes from config/camera_depth_flags.py macros,
+        # but can be overridden via launch param (P1.b). Role-name in this file
+        # ('head'/'left'/'right') maps to cameras.yml canonical name
+        # ('top_head'/'hand_left'/'hand_right').
+        def _resolve_depth(override_param_name, macro_key):
+            override = str(self.get_parameter(override_param_name).value).strip().lower()
+            if override in ('true', '1', 'yes', 'on'):
+                return True
+            if override in ('false', '0', 'no', 'off'):
+                return False
+            # 'auto' / 任何其他值 → fallback 到 macro (JAX legacy)
+            return _DEPTH_ENABLED_MAP.get(macro_key, False)
+        enable_head_depth = _resolve_depth('enable_head_depth_override', 'top_head')
+        enable_wrist_depth_l = _resolve_depth('enable_left_depth_override', 'hand_left')
+        enable_wrist_depth_r = _resolve_depth('enable_right_depth_override', 'hand_right')
 
         cam_f_serial = self.get_parameter('cam_f_serial').value
         cam_l_serial = self.get_parameter('cam_l_serial').value

@@ -23,6 +23,7 @@ from launch.actions import (DeclareLaunchArgument, ExecuteProcess,
 from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
+from launch_ros.descriptions import ParameterValue
 
 # ── Project paths ──
 # Resolve from the *source* tree (not the install tree) so paths work after colcon install.
@@ -167,6 +168,29 @@ def generate_launch_description():
     min_smooth_steps_arg = DeclareLaunchArgument('min_smooth_steps',
         default_value='8',
         description='Min blend window for chunk overlap smoothing (JAX legacy 8, V1 overrides to 3)')
+    # ── Camera knobs (P1.b 2026-05-23, V1 20Hz 攻关) ───────────────────
+    # JAX legacy 默认 30 fps + 用 camera_depth_flags.py 的 macro 决定 depth.
+    # V1 路径通过 start_autonomy_v1.sh 把 cam_fps:=60 / enable_head_depth:=false
+    # 显式传入, 走低 image_age + 腾 USB 带宽路线 (§7.8). 'auto' 表示走 macro.
+    cam_fps_arg = DeclareLaunchArgument('cam_fps',
+        default_value='30',
+        description='Camera fps (JAX legacy 30, V1 path overrides to 60)')
+    enable_head_depth_arg = DeclareLaunchArgument('enable_head_depth',
+        default_value='auto',
+        description="D435 top_head depth: 'auto' = use macro from camera_depth_flags.py, 'true'/'false' to override")
+    enable_left_depth_arg = DeclareLaunchArgument('enable_left_depth',
+        default_value='auto',
+        description="D405 hand_left depth: 'auto'/'true'/'false'")
+    enable_right_depth_arg = DeclareLaunchArgument('enable_right_depth',
+        default_value='auto',
+        description="D405 hand_right depth: 'auto'/'true'/'false'")
+    # P2 Step 1+2 (2026-05-23, §7.8): client obs_construct 优化, 砍 ~15-30ms.
+    # true 时跳过 3 件事 — JPEG mapping (cv2 encode+decode roundtrip), CvBridge
+    # (用 np.frombuffer 直接 view msg.data), BGR↔RGB 转换 (multi_camera_node 已
+    # publish rgb8). JAX legacy 路径默认 false, 保持 _jpeg_mapping + CvBridge 完整管线.
+    fast_obs_pipeline_arg = DeclareLaunchArgument('fast_obs_pipeline',
+        default_value='false',
+        description='V1 path: bypass JPEG mapping + CvBridge + BGR↔RGB. JAX path keeps false.')
 
     # ── Piper 左臂 (mode=1 控制从臂, auto_enable 上电) ──
     # mode=1: subscribe to /master/joint_left and drive the slave arm hardware
@@ -210,9 +234,13 @@ def generate_launch_description():
             'cam_f_serial': _CAM_F_SERIAL,
             'cam_l_serial': _CAM_L_SERIAL,
             'cam_r_serial': _CAM_R_SERIAL,
-            'fps': 30,
+            'fps': ParameterValue(LaunchConfiguration('cam_fps'), value_type=int),
             'width': 640,
             'height': 480,
+            # P1.b 2026-05-23: per-camera depth override (STRING typed to allow 'auto').
+            'enable_head_depth_override': ParameterValue(LaunchConfiguration('enable_head_depth'), value_type=str),
+            'enable_left_depth_override': ParameterValue(LaunchConfiguration('enable_left_depth'), value_type=str),
+            'enable_right_depth_override': ParameterValue(LaunchConfiguration('enable_right_depth'), value_type=str),
         }],
     )
 
@@ -240,6 +268,8 @@ def generate_launch_description():
             'inference_rate': LaunchConfiguration('inference_rate'),
             'latency_k': LaunchConfiguration('latency_k'),
             'min_smooth_steps': LaunchConfiguration('min_smooth_steps'),
+            # P2 Step 1+2 fast obs pipeline (bool-typed to preserve 'true'/'false')
+            'fast_obs_pipeline': ParameterValue(LaunchConfiguration('fast_obs_pipeline'), value_type=bool),
         }],
     )
 
@@ -325,6 +355,8 @@ def generate_launch_description():
         enable_rtc_arg, rtc_execute_horizon_arg,
         rtc_max_guidance_weight_arg,
         inference_rate_arg, latency_k_arg, min_smooth_steps_arg,
+        cam_fps_arg, enable_head_depth_arg, enable_left_depth_arg, enable_right_depth_arg,
+        fast_obs_pipeline_arg,
         cleanup,
         piper_left_delayed, piper_right_delayed,
         multi_cam_delayed,

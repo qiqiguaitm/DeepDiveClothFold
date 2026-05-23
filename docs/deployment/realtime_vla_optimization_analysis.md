@@ -54,6 +54,10 @@
   - [7.3 B1 全链路 latency profiling](#73-b1-全链路-latency-profiling-2-3-天)
   - [7.4 B2 Preprocess 全 GPU 化](#74-b2-preprocess-全-gpu-化-1-3-天-数据驱动)
   - [7.5 时序 + 风险](#75-时序--风险)
+  - [7.6 Step 0 实测 latency profile (baseline)](#76-step-0-实测-latency-profile-2026-05-23-baseline)
+  - [7.7 P1 image_age root cause](#77-p1-image_age-root-cause-singlethreadedexecutor-阻塞-callback-drain)
+  - [7.8 20Hz cycle 攻关执行优先级 + 跟踪表](#78-20hz-cycle-攻关执行优先级--跟踪表-2026-05-23-)
+  - [7.9 异步流水线设计 (A.2 obs prefetch)](#79-异步流水线设计-a2-obs-prefetch-worker-2026-05-23)
 - [8. 修订历史](#8-修订历史)
 
 ---
@@ -1248,6 +1252,372 @@ t10 motor 响应           → t_motion (~50-150ms 估, §4.2 测试)
 - B3 WebSocket payload trim — 用户排除
 - 任何破坏 §6 数值对齐 (rel error 1.42%) 的改动
 
+### 7.6 Step 0 实测 latency profile (2026-05-23, baseline)
+
+V1 真机部署完成后 (5-fix commit `0320aa2`, V1 vs JAX 行为已对齐), 首次跑通 30s observe-mode 真机 stack, 收 `/tmp/kai0_latency_43037.csv` → snapshot `/tmp/step0_latency_snapshot.csv` (477 samples → 跳前 30 warmup → 447 steady).
+
+#### 11 段实测 (P50 / P95 / P99 / max / mean, 单位 ms)
+
+| 段 | P50 | P95 | P99 | max | mean |
+|---|---:|---:|---:|---:|---:|
+| t_image_age (cam → client lag) | **55.6** | **70.5** | 79.3 | 79.9 | 55.5 |
+| t_obs_construct (3× CPU resize_with_pad) | **35.7** | **42.5** | 45.5 | 56.3 | 35.0 |
+| t_ws_full_rtt (含 server_total 38) | 43.4 | 47.7 | 49.8 | 51.5 | 43.6 |
+| t_ws_overhead (msgpack + loopback) | 6.5 | 10.5 | 11.9 | 12.5 | 6.8 |
+| server_preproc (msgpack decode + H2D) | 1.6 | 2.3 | 2.9 | 7.5 | 1.6 |
+| server_state_encode | 0.5 | 0.8 | 1.1 | 3.4 | 0.5 |
+| **server_infer (V1 forward, Pi05InferenceTuned)** | **34.0** | **35.6** | 36.3 | 40.5 | 34.4 |
+| server_postproc (denorm + .cpu()) | 0.2 | 0.4 | 0.7 | 0.9 | 0.2 |
+| server_total | 36.7 | 38.4 | 39.7 | 43.7 | 36.9 |
+| t_buffer_integrate (RTC merge) | 0.6 | 4.4 | 6.2 | 6.7 | 1.3 |
+| **t_loop_total (cycle work)** | **80.5** | **89.1** | 94.1 | 102.3 | 80.0 |
+
+#### Cam → action emit 完整链 (P50 累计 wall-clock)
+
+| # | 段 | side | P50 (ms) | 累计 P50 (ms) |
+|:-:|---|---|---:|---:|
+| 0 | 传感器曝光 + USB + ROS2 transport + executor lag (image_age) | hardware/ROS | 55.6 | 55.6 |
+| 1 | client obs_construct (3× resize_with_pad CPU) | client CPU | 35.7 | 91.3 |
+| 2 | client → server msgpack + WS (~半 RTT) | net + CPU | 3.3 | 94.6 |
+| 3 | server msgpack decode + H2D | server CPU+PCIe | 1.6 | 96.2 |
+| 4 | server state_encode (sentencepiece + embed) | server CPU+GPU | 0.5 | 96.7 |
+| 5 | server V1 forward (Pi05InferenceTuned) | server GPU | 34.0 | 130.7 |
+| 6 | server postproc + D2H | GPU+PCIe | 0.2 | 130.9 |
+| 7 | server → client WS + decode | net + CPU | 3.3 | 134.2 |
+| 8 | client RTC buffer_integrate + publish | client CPU | 0.6 | **134.8** |
+
+**真实控制延迟 (cam → emit) P50 = 134.8 ms, P95 ≈ 159 ms.** 当前真机跑 ~11Hz cycle (t_loop_total 80ms vs 10Hz timer 100ms — cycle 撑得很满, idle 仅 20ms).
+
+#### 关键观察
+
+1. **server_infer 已触顶** (32-34ms, §6.5 32.05ms benchmark 与 live 34ms 一致, +2ms inference_mode/sync overhead). 想再快需 Step 11/13 (3-10 天工程换 1-3.5ms).
+2. **真正大头不在 forward**: client 端 obs_construct (35.7ms) + image_age (55.6ms 不在 cycle 但决定感知延迟).
+3. **cycle 80ms = obs 36 + forward 34 + ws 7 + RTC 1 + 其他 2** — 两个 30+ms 大头, 其他都已经很小.
+
+#### 复跑命令
+
+```bash
+# observe-mode (不动机械臂, profile 数据一致)
+./start_scripts/start_autonomy_v1.sh > /tmp/v1_step0.log 2>&1 &
+LAUNCH_PID=$!
+# 等到 /tmp/kai0_latency_<pid>.csv 出现, 累积 ≥400 行 (~40s)
+# 然后 kill -INT $LAUNCH_PID
+```
+
+### 7.7 P1 image_age root cause: SingleThreadedExecutor 阻塞 callback drain
+
+> 实测 image_age P50=55.6ms / P95=70.5ms, **远超 30fps 相机物理 floor**: sensor exposure (~16ms) + USB readout (~10ms) + ROS2 transport (~5ms) 物理上限 ~31ms — 必有非物理来源.
+
+#### 元凶
+
+`ros2_ws/src/piper/scripts/policy_inference_node.py:2629`:
+
+```python
+# Use SingleThreadedExecutor unconditionally (Rerun thread-safety).
+executor = rclpy.executors.SingleThreadedExecutor()
+```
+
+#### 链路时序
+
+```
+T_0          timer fire → inference_loop() 进入 (单线程 executor 阻塞所有 callback)
+T_0..T_0+80  80ms inference (image_*_callback 队列 blocked, _img_*_deque 不更新)
+T_0+80..T_0+100  20ms idle, callbacks 消费 (最多消化 0-1 帧因 33ms 相机间隔)
+T_0+100      下个 cycle 开始
+        ...
+T_0+180      _record_latency_sample 读 deque[-1].header.stamp
+```
+
+`_record_latency_sample` (line 2138-2146) 读 `self._img_front_deque[-1].header.stamp` 即 "最新到达过 client 的帧". 但 callbacks 在 80ms cycle 中**完全不 fire**, deque 没更新, 最新帧的 stamp 是 cycle 开始之前若干 ms 的, 不是相机实际发的最新帧.
+
+#### image_age 来源拆解 (估算)
+
+| 来源 | P50 估 (ms) | 备注 |
+|---|---:|---|
+| sensor 曝光 (auto-exposure ~16ms) | 8-16 | 物理 floor |
+| RealSense USB readout + driver | 5-10 | 物理 floor |
+| ROS2 transport (realsense → multi_camera → policy_inference) | 2-5 | 小 |
+| **SingleThreadedExecutor cycle 阻塞 callback drain** | **20-30** | **可修 (P1.a)** |
+| `_get_synced_frame` `min(latest)` sync 偏向最慢相机 | 5-10 | 可改 (P1.c) |
+| **合计** | **40-71** | **匹配 P50 55.6 / P95 70.5** |
+
+#### 次要问题: `_get_synced_frame` (line 1899-1952)
+
+```python
+frame_time = min(latest_3_cameras_stamp)  # 等最慢的相机
+# 然后 popleft() 拿"最老的 >= frame_time 的那一帧" — 偏向最老
+```
+
+= 等最慢相机 + 用其他相机较老帧. 应改 `max(latest)` 或直接 `[-1]` 取最新 (相机间偏移目测对任务无影响).
+
+#### 修复方案
+
+| 方案 | 节省 image_age | 工程量 | 风险 | 备注 |
+|---|---|---|---|---|
+| **A1. MultiThreadedExecutor + ReentrantCallbackGroup for image subs** | **-20-30ms** | 0.5 天 | 中 | Rerun 注释说需加锁, 实施时验证 |
+| A2. image callbacks 单跑 `rclpy.spin` 子线程 (绕过 executor) | -20-30ms | 0.5 天 | 低 | 备选 (Rerun 锁难加时) |
+| A3. `_get_synced_frame` 改 max(latest) 或直接 deque[-1] | -5-10ms | 0.3 天 | 低 | 锦上添花 |
+
+---
+
+### 7.8 20Hz cycle 攻关执行优先级 + 跟踪表 (2026-05-23-)
+
+> **目标**: cam → action emit < 50 ms (≥ 20Hz cycle + image_age 砍合理), 真实控制延迟 → 100ms 以下.
+
+#### 优先级表 (按 ROI 排序, 排除 GPU forward 优化 — 见 §6.6/§7.2 现状)
+
+| Pri | 项目 | 预期省 P50 (ms) | 工程量 | 风险 | 备注 |
+|:---:|---|---:|---|---|---|
+| **P1.a** | MultiThreadedExecutor + ReentrantCallbackGroup | -20-30 (image_age) | 0.5 天 | 中 (Rerun 锁) | image_age 第一锤 |
+| **P1.b** | 相机配置 C2+C5+C7+C4 (60fps + 关 D435 depth + raw API 无 sync) | -15-25 (image_age) | 0.5-1 天 | 低 | **本次执行**, 与 P1.a 收益可叠加 |
+| P1.c | `_get_synced_frame` 改 max(latest) 或不 sync | -5-10 (image_age) | 0.3 天 | 低 | 锦上添花 |
+| **P2** | obs_construct GPU 化 (B2, .venv_5090_trt) | -30-32 (cycle) | 1-3 天 | 中 (preprocess parity 需对齐) | cycle 主攻 |
+| **P3** | B2 POSIX SHM transport (替 msgpack+WS) | -4-7 (ws_overhead) | 2-3 天 | 中 | cycle 补刀, 仅 V1 路径, 不影响 JAX |
+| P3-alt | B1 Unix Domain Socket 替 TCP localhost | -1-2 | 0.3 天 | 低 | 顺手做 |
+| P5 | RTC jitter (P95 4.4ms → 1ms) | -1-3 (jitter only) | 1-2 天 | 中 | 收尾 |
+
+#### 不做 (本阶段)
+
+| 项 | 排除原因 |
+|---|---|
+| B5 In-process V1 (取消 WS) | `.venv_5090_trt` (cu128) vs `.venv` (cu126) PyTorch 版本隔离, 不能合 |
+| B4 CUDA IPC tensor 共享 | 必须 client 先 GPU 化 (P2 完成后才有意义), 独立 5-7 天 ROI 一般 |
+| C1 输入分辨率改 424×240 / C8 hardware crop | 训练数据 letterbox 224×224, 改输入 → OOD |
+| C3 固定曝光 (8ms) | 训练用 auto-exposure, 数据分布不一致 |
+| Layer A (kernel fusion / wgmma / FA3) | 见 §6.6, 3-10 天工程换 1-3.5ms, ROI 极低 |
+
+#### 决策树
+
+```
+P1.b 执行 (本次) → 量 → 记
+  ├─ image_age 降到 物理 floor (~30ms)         → 跳 P1.a, 直接进 P2
+  └─ image_age 还在 45ms+                      → 做 P1.a (executor 改) → 量 → 记
+
+P2 (B2 GPU preprocess)
+  ├─ cycle ~48-55ms (P95) → 18-20Hz 达成        → 收工或再补 P3
+  └─ cycle ~55ms+ → 进 P3 (SHM transport)       → cycle ~45-50ms = 20Hz
+
+cam → emit 目标
+  100 ms (~10Hz) → 验收
+  75 ms (~13Hz)  → 优秀
+  50 ms          → 超额 (理论可能, 需 P1+P2+P3 全做且 image_age < 25ms)
+```
+
+#### 跟踪表 — 实施记录 (A 已落地 / B 失败归档 / C 待实施)
+
+每步实施后跑 ≥30s observe-mode profile, 收 `/tmp/kai0_latency_*.csv`. 时间 ms.
+
+##### A. 已落地的有效改动 (改前 → 改后)
+
+| Step | 改前 (P50 ms) | 改后 (P50 ms) | Δ P50 | 改了什么 | 验证 snapshot |
+|---|---|---|---|---|---|
+| **0 baseline** | — | cycle **80.5** / image_age **55.6** / cam→emit **134.8** | — | V1 5-fix commit `0320aa2`. fps=30, D435 head depth on, SingleThreadedExecutor | `/tmp/step0_latency_snapshot.csv` (447 samples) |
+| **P1.b-partial** (C5+C7 only) | cycle 80.5 / image_age 55.6 / cam→emit 134.8 | cycle 79.8 / image_age 55.9 / cam→emit 134.3 | cycle -0.7, image_age +0.3 (噪声内) | `config/camera_depth_flags.py` `ENABLE_DEPTH_TOP_HEAD` 通过 launch arg `enable_head_depth:=false` 关掉. fps 保留 30 (因 C2 失败). | `/tmp/p1b_30fps_depthoff.csv` (448 samples). 结论: depth pipeline 不在 image_age critical path |
+| **P1.a 回退到无影响态** | — | (= baseline) | 0 | 撤销 MultiThreadedExecutor 改动 (见 B.2/B.3 失败原因). 保留 `_sensor_cb_group = ReentrantCallbackGroup()` 代码 (SingleThreaded 下 Reentrant 退化为 MutuallyExclusive, bit-identical). JAX 路径完全不动 | — |
+| **P2 Step 1+2** ⭐ | cycle 80.5 / image_age 55.6 / cam→emit 134.8 / obs_construct **35.7** | cycle **62.2** / image_age 58.2 / cam→emit **120.4** / obs_construct **14.9** | **cycle -18.3**, obs_construct **-20.7**, image_age +2.6, cam→emit -14.4 | launch arg `fast_obs_pipeline:=true` 启用 3 项跳过: (1) `_jpeg_mapping` cv2 encode+decode roundtrip; (2) `bridge.imgmsg_to_cv2(bgr8)` → `np.frombuffer(msg.data).reshape(H,W,3)` 直 view; (3) `cvtColor(BGR2RGB)` — multi_camera_node publish 已 rgb8, 全程零格式转换. JAX 路径默认 false, bit-identical | `/tmp/p2_step12_snapshot.csv` (414 samples). cycle ~16Hz, 距 20Hz 还差 12ms |
+
+##### B. 失败尝试归档 (现象 + 根因 + 处置)
+
+| # | 尝试 | 失败现象 | 根因 (调查后定位) | 处置 |
+|:-:|---|---|---|---|
+| **B.1** | **P1.b-C2**: `cam_fps:=60` (所有相机 30→60fps) | 启动时 D405 hand_left 报 `Couldn't resolve requests`, 3/3 attempts fail. 仅 D435 head + D405 hand_right 起来 | `rs-enumerate-devices` 实测**硬件层 mode list 限制**: hand_left S/N 409122273074 在 640×480 Color 只 expose 30/15/5fps (vs hand_right 同型号同 fw 5.17.0.10 expose 90/60/30/15/5; D435 expose 60/30/15/6). 60fps 在 424×240 OK. 物理原因: hand_left 当前接到 **USB 2.0 root hub (Bus 003, 480M)**, librealsense 按协商速率拒了高带宽 mode; 重插拔 + 切端口仍落 USB 2.0 bus, 主板/线材层面 | 接受 30fps 跑 V1 (本质 image_age 物理 floor 限制 ~25-40ms, 60fps 只省 10-15ms 收益小). 未来若需 60fps: 换 USB 3.0 端口/线 或换 hand_left 相机 |
+| **B.2** | **P1.a attempt 1**: `MultiThreadedExecutor()` (default `num_threads = os.cpu_count()` ≈ 32) + image+joint subs 入 `ReentrantCallbackGroup` | 第 1 次 infer 跑出 1753ms (cold start), 第 2 次起 ~3s/iter, CSV 几乎不增. 推理 loop alive 但 throughput 崩 | 推理 loop 是独立 `threading.Thread` (line 648). 32 个 executor worker thread 同时跑 Reentrant cb, 在 CPython GIL 下与 inference 线程的 numpy/msgpack/WS pack 工作争 GIL, inference 被打成碎片. cb 工作量虽小但发起非常频繁 (30fps × 3 image + 200Hz × 2 joint), GIL 切换开销淹没 inference | revert. 未尝试 `num_threads` 中间值 (4/8) — 先跳到 attempt 2 试极端 num_threads=2 |
+| **B.3** | **P1.a attempt 2**: 同 B.2 但 `MultiThreadedExecutor(num_threads=2)` | 永远卡在 "Waiting for sensor data" log, deque 始终空, inference loop 一次都没进 | num_threads=2 + 6 个 sensor sub 在同一 Reentrant 组 — executor 只有 2 worker, 看似够但实际 ROS2 内部某处 (DDS callback dispatch / msg 反序列化) 在 multi-thread context 下行为变化, 6 cb 之间调度不均. 具体卡在哪未定位 (无 py-spy / gdb-py-bt 权限) | revert 到 SingleThreaded. P1.a 真正解锁需更深 root cause: 选项 = (a) py-spy/gdb attach 量 hang 点; (b) 改设计 (sensor subs 单独跑二级 Node + `rclpy.spin()` 子线程, 物理隔离 ROS2 调度). 标 P1.a-v3 留后续 |
+
+##### C. 待实施 (按优先级)
+
+| 优先级 | Step | 预期 Δ cycle (ms) | 工程量 | 风险 | 触发条件 |
+|:-:|---|---|---|---|---|
+| **C.1** | **真机 execute 模式验证 P2 Step 1+2 模型对齐** (chunk MAE vs baseline + 任务完成率) | 0 (validation) | 30 min | 0 (read-only 测试) | **下一步立即做**, 没验证就累积优化是风险 |
+| C.2 | Path D: cv2.resize 替 PIL resize_with_pad | -3-5 | 30 min | 中 (数值偏移叠加 P2 跳 JPEG) | C.1 通过后 |
+| C.3 | Path B1: Unix Domain Socket 替 TCP loopback (WS overhead) | -1-2 | 30 min | 低 | 顺手做 |
+| C.4 | Path Z2: POSIX SHM (`/dev/shm` ring buffer) 替 msgpack+WS | -5-12 | 0.5-1 天 | 中 (lifecycle 处理) | C.2+C.3 后仍 > 50ms |
+| C.5 | P1.a-v3: sensor subs 在二级 Node + 独立 spin 线程 | -20-30 (image_age) | 1-2 天 | 中 | image_age 真要砍时 (当前 cycle 已 16Hz, 主要痛点解 80%) |
+| C.6 | P1.c: `_get_synced_frame` 改 `max(latest)` 或不 sync | -5-10 (image_age) | 0.3 天 | 低 | C.5 配合 |
+| C.7 | server_infer P95=67ms jitter 调查 (V1 forward 偶发) | P95 收紧 | 0.5-1 天 | 低 | P95 cycle 100ms 影响 RTC 稳定性时 |
+
+#### P1.a 实测发现 (2026-05-23) — MultiThreaded executor hang
+
+两轮 attempt 后 V1 路径都跑不通 (见跟踪表 attempt 1/2 行). 现象:
+- attempt 1 (`MultiThreadedExecutor()` 默认线程数): first inference 1.7s, 第 2 cycle 起 ~3s/iter, CSV 一行后停滞
+- attempt 2 (`MultiThreadedExecutor(num_threads=2)`): 永远卡在 "Waiting for sensor data", deque 没填
+
+未深入定位前已 revert (兼容性优先). 假设走向 (待验证):
+1. **GIL 抖动**: image cb 在 multi-thread reentrant 下争抢 GIL, inference 线程 (独立 `threading.Thread`) 被持续打断
+2. **`_get_synced_frame` 内部锁顺序问题**: image cb 高频更新 deque 时 inference 线程读 deque[-1] 出现 stale view (虽然 CPython deque.append 原子)
+3. **rclpy 内部某个 lock** 在 MultiThreaded 下行为不一致
+
+需要 py-spy / gdb-py-bt 实测 hang 点才能定下根因. 替代设计 (P1.a-v3): 不动主 executor, 把 sensor subs 移到二级 Node + 独立 `rclpy.spin()` 线程, 物理隔离 ROS2 调度.
+
+#### P1.b 实测发现 (2026-05-23)
+
+**C5+C7 (D435 depth off) 在 fps=30 隔离测试下 image_age 无改善** (P50 +0.3ms, 噪声内). 验证了 §7.7 root cause: image_age 主导项是 `SingleThreadedExecutor` 在 cycle 中阻塞 callback drain (20-30ms), 与 depth pipeline 无关.
+
+**C2 (fps 30→60) 被 D405 hand_left 阻挡**: 该设备 (S/N 409122273074, fw 5.17.0.10) 在 BGR8 640×480 @ 60fps 配置 `Couldn't resolve requests`. D435 head 和 D405 hand_right (fw 5.15.1.55) 60fps OK. 怀疑 firmware-specific 限制 (5.17 vs 5.15 行为差) 或 USB hub 仲裁失败. 修复路径:
+- 选项 1: `rs-enumerate-devices` 查 hand_left 实际支持的 fps 列表
+- 选项 2: 升级/降级 firmware (有副作用风险)
+- 选项 3: 让 multi_camera_node 在请求 fps 失败时自动 fallback (mixed fps: head 60 + wrists 30)
+- 选项 4: 接受 30fps 物理 floor, 把节省时间投到 P1.a + P2
+
+**结论**: 单独 P1.b 收益不显著 — **下一步主攻 P1.a (executor 改)** 才是真正能砍 image_age 的关键. 跟踪表 baseline 与 P1.b-partial 行差异在噪声内, 视为 "depth-off 无显著代价/收益".
+
+**修改代码留存** (兼容 JAX 路径, 默认 `auto` 走 macros):
+- `ros2_ws/src/piper/launch/autonomy_launch.py`: 加 `cam_fps` (默认 '30') + `enable_head_depth` / `enable_left_depth` / `enable_right_depth` (默认 'auto') launch args, `ParameterValue(value_type=...)` 强制类型避免 ROS2 string→bool 自动转
+- `ros2_ws/src/piper/scripts/multi_camera_node.py`: 加 3 个 `enable_*_depth_override` param ('auto'/'true'/'false'), `_resolve_depth()` helper 优先 override, fallback macro
+- `start_scripts/start_autonomy_v1.sh`: V1 路径加 `cam_fps:=30 enable_head_depth:=false` (临时回退到 30fps, 直到 D405 60fps 问题解决)
+- `config/camera_depth_flags.py`: 不动 (JAX legacy 默认 D435 head depth=True)
+
+#### 本次 P1.b 实施清单
+
+1. `ros2_ws/src/piper/launch/autonomy_launch.py` (`multi_cam` Node `fps` 参数 30 → 60)
+2. `config/camera_depth_flags.py`: `ENABLE_DEPTH_TOP_HEAD = False` (C7 关 D435 depth)
+3. `multi_camera_node.py`: 不改 (depth 开关已由 `_DEPTH_ENABLED_MAP` 门控; aligned_depth 在 depth 关后自动 no-op)
+4. C4 (`enable_sync=false`): N/A — 当前用 `pyrealsense2` 原生 pipeline API 而不是 `realsense2_camera_node`, 无 `enable_sync` 参数; 当 depth 关后, `rs.align(rs.stream.color)` 也跳过, 自然没有 cross-stream sync 开销
+5. 副作用: rerun_viz_node 订阅的 D435 depth topic 不再有消息 → 仅影响背景 mesh 可视化 (前景仍是 RGB), 不影响 inference
+6. 验证: colcon build piper → 重启 stack → 收 30s+ profile → 与 baseline 比
+
+### 7.9 异步流水线设计 (A.2 obs prefetch worker, 2026-05-23-)
+
+> **背景**: P2 后 cycle P50=62ms. 拆解 = obs_construct (15ms) + forward (35ms) + ws_overhead (5ms) + RTC (1ms) + 协调 (~6ms). obs_construct 串行在 forward 前, 占 cycle 24%. 流水线可以**把 obs_construct 藏到 forward 背后**, cycle 砍 ~14ms 直达 20Hz.
+
+#### A. 异步的 3 种含义 (避免概念混淆)
+
+| 形式 | 当前状态 | 砍什么 |
+|---|---|---|
+| **A.1 帧捕获异步** (相机持续 publish, 主线随时读 deque[-1]) | 已是设计意图, 但被 `SingleThreadedExecutor` 阻塞 callback 破坏 | image_age 20-30ms (P1.a-v3 子 Node 隔离) |
+| **A.2 obs_construct 与 forward 流水线** (用 background worker 提前准备 obs) | **未实施 ← 本节设计目标** | cycle 14-15ms (obs_construct 时长) |
+| **A.3 action 播放与下一 cycle forward 并行** (chunk buffer + RTC merge) | **已实施** (StreamActionBuffer + Pi0RTC) | (不在 cycle 内, 但让 chunk 边界平滑) |
+
+A.1 和 A.2 互相**正交独立**, 可分别上, 也可叠加.
+
+#### B. 当前同步 vs A.2 流水线 — 时序对比
+
+**当前 (cycle N 同步)**:
+```
+T=0    pop obs from deque (deque[-1])
+T=0    obs_construct (15ms, CPU)         ── 阻塞 forward 起步
+T=15   WS send + server_total (38ms)
+T=53   WS recv + RTC merge + publish (~1ms)
+T=54   cycle work done. sleep until next period.
+       cycle = 62ms (含 buffer overhead)
+```
+
+**A.2 流水线 (cycle N+1, 假设 worker 在 cycle N 末尾已 prefetch)**:
+```
+背景 worker (常驻):
+  loop:
+    obs_N+1 = self._get_observation()    # 15ms
+    self._prefetch_queue.put(obs_N+1, block=True)   # 等 main 取走才继续
+
+主线 (cycle):
+  T=0     prefetched_obs = self._prefetch_queue.get(timeout=0.1)  # 0-1ms 等
+          # worker 立刻开始准备 obs_N+2
+  T=0     WS send + server_total (38ms)  ← worker 平行做 obs_N+2 (15ms)
+  T=38    WS recv + RTC merge + publish (~1ms)
+  T=39    cycle work done. obs_N+2 已在 queue (T=15 完成).
+          → next cycle pop 几乎 0 等待
+          
+  cycle = 39-40ms ≈ 25Hz max throughput
+  加 jitter buffer / period 控制 → 实际 ~48-50ms = 20-21Hz
+```
+
+#### C. 实施清单 (~2 小时)
+
+##### C.1 新增 `ObsPrefetchWorker` (~50 行)
+
+挂在 policy_inference_node 上的内部类, 持有:
+- `_request_event = threading.Event()` — main 取走后置位, worker 启动新一轮
+- `_prefetch_queue = queue.Queue(maxsize=1)` — worker put, main get
+- `_running = True` flag — destroy_node 时清掉
+- `_thread = threading.Thread(target=self._loop, daemon=True)` — daemon 自动随主进程退
+
+worker loop:
+```python
+def _loop(self):
+    while self._running:
+        try:
+            obs = self._owner._get_observation()  # 共用 _get_observation 路径
+            if obs is None:
+                time.sleep(0.005)
+                continue
+            self._prefetch_queue.put(obs, timeout=1.0)  # main 长时间不取就丢弃 retry
+        except queue.Full:
+            continue  # main 卡了, 丢这帧, 下轮再生
+        except Exception as e:
+            self._owner.get_logger().warn(f'ObsPrefetchWorker error: {e}')
+            time.sleep(0.05)
+```
+
+##### C.2 改 `_inference_loop` (~20 行)
+
+```python
+# 旧:
+obs = self._get_observation()
+if obs is None:
+    time.sleep(0.01); continue
+
+# 新 (gated by self._pipelined_obs):
+if self._pipelined_obs:
+    try:
+        obs = self._obs_prefetch.get_obs(timeout=0.1)
+    except queue.Empty:
+        # Fallback: 同步取一次 (worker 卡了, 不阻塞 inference)
+        obs = self._get_observation()
+        if obs is None:
+            time.sleep(0.01); continue
+else:
+    obs = self._get_observation()
+    if obs is None:
+        time.sleep(0.01); continue
+```
+
+##### C.3 Launch arg + 启动
+
+- `autonomy_launch.py`: `pipelined_obs_arg = DeclareLaunchArgument('pipelined_obs', default_value='false', ...)`, `ParameterValue(value_type=bool)`
+- `policy_inference_node.py`: `declare_parameter('pipelined_obs', False)` + init worker
+- `start_autonomy_v1.sh`: 传 `pipelined_obs:=true`
+
+##### C.4 启动 / 停止
+
+- `__init__` 尾部 (在 inference_loop 之前): 若 `_pipelined_obs=True` 起 worker
+- worker 第一次 put 需要 sensor data ready — 跟 inference_loop 一样会自然等
+- `destroy_node()` 添加 worker stop logic
+
+##### C.5 验证
+
+- 同 P2 路径: 跟 baseline 对 chunk 数值 (相同输入序列, chunk diff < 1%)
+- cycle 时长应从 62ms → 45-50ms (P50)
+- 真机 execute 跑任务一遍, 看动作是否流畅
+
+#### D. 风险分析
+
+| 风险 | 来源 | 缓解 |
+|---|---|---|
+| **obs 时间漂移 + RTC 不一致** | worker 准备 obs 的时间点比 main 用的时间点早 ~35ms; RTC `prev_chunk` 跟当前 obs 的时序不对齐 | obs 的 `state` 用 worker prep 时的; RTC 用的 `prev_chunk` 用 main 上轮的 — 二者跨 cycle 时间错位最多 ~35ms, RTC inference_delay 已经按 last_infer_ms (35ms) 注入, 误差吸收 |
+| **GIL 抖动** | worker 跟 main 都跑 Python | obs_construct 主要在 numpy/cv2/np.frombuffer (释放 GIL), main 同期主要等 WS 网络 (也释放 GIL). GIL 冲突期 < 1ms |
+| **Queue full / empty edge case** | worker 比 main 慢 (e.g. sync_frame 偶发 None) → queue empty → main fallback 同步 | fallback 路径就是当前 baseline 行为, 不变 bit-identical |
+| **worker 永远 None** (cameras 挂了) | main 仍可同步 fallback, log warn | log 心跳 + 超 N 次 warning |
+| **数据不一致** (worker 用旧 obs, main 期望 newer) | worker 永远 put newest available | queue maxsize=1, main 用 timeout=0.1, 自动取 newest |
+
+#### E. 预期收益
+
+| 指标 | 现状 P2 | + A.2 pipeline | + A.2 + A.1 (P1.a-v3) |
+|---|---|---|---|
+| cycle P50 | 62 ms | **48 ms** (-14) | 48 ms |
+| cycle Hz | 16 | **21** | 21 |
+| image_age | 58 ms | 58 ms (不影响) | **28 ms** (-30) |
+| cam→emit | 120 ms | 106 ms | **76 ms** |
+| 感知 Hz | 8.3 | 9.4 | **13** |
+
+A.2 (2h 工程) + A.1/P1.a-v3 (1-2 天工程) 是当前架构能拿到的接近极限. 再之上需要 SHM transport (A.5) 或 V1 kernel fusion (§6.6) 才能突破.
+
+#### F. 兼容性
+
+- launch arg `pipelined_obs` default 'false' — JAX 路径不变
+- V1 路径 `start_autonomy_v1.sh` 显式 `pipelined_obs:=true`
+- Worker 失败时 fallback 到同步 `_get_observation()` = 当前 P2 路径
+- 不破坏向后兼容
+
 ---
 
 ## 8. 修订历史
@@ -1271,3 +1641,5 @@ t10 motor 响应           → t_motion (~50-150ms 估, §4.2 测试)
 | **v0.15** | **2026-05-20** | **§4.1 扩为正式实验报告 (8 子节)**: 4.1.1 测量方法 (含 policy_inference_node.py:2085-2148 timer 源码片段); 4.1.2 实验配置 (config / ckpt / asset_id / 硬件 / timer 等 9 项 metadata); 4.1.3 原始 log 样本 (前 5 条 + JIT outlier 标注); 4.1.4 分位数表; 4.1.5 **ASCII 分布直方图 9 bucket** (180-220 ms 集中 91%, 单峰窄分布 CV=6.6%, 无长尾); 4.1.6 V1 对比加 jitter / Std/Mean 行 + WebSocket overhead 补偿估算; 4.1.7 决策映射 4 行结论 (V1 路径✅ / AOT❌ / inference_rate 提升潜力⏳ / #6 价值低); 4.1.8 复跑命令. TOC 加 4.1 子节链接 |
 | **v0.16** | **2026-05-20** | **新增 §3.4.5 TensorRT 路径回顾**: 沉淀 TRT 攻关失败记录, 防止重复趟坑. 6 子节 A-F: A 已就绪资产 (`.venv_5090_trt` Python 3.10 + PyTorch 2.7.1+cu128 + TRT 10.14, `pi05_trt_pipeline.py` 367 行 5-stage 流水线, AOTI 6.3GB 产物); B **5 个阻塞点** (sm_120 / torch_tensorrt CUDA 13 / pypi hang / Python ABI / **未解 ONNX flow loop**); C AOTInductor Backend H 同期阻塞 (compile OK 但 load fail); D V1 §4.2.2 **8/8 优化已被 Inductor 自动捕获** (PyTorch 工具链 41ms 极限); E **4 条重启路径** (选 1 等 PyTorch 2.13 stable; 选 4 当前接受 V1 32ms); F 相关链接 6 个文件. TOC 加 3.4.5 子节链接 |
 | **v0.17** | **2026-05-20** | **B4 Phase 2 + B1 server-side profile 完成**: 实现 `SentencepieceStateEncoder` (kai0 同款 prefix `"Task: {p}, State: {s};\n"` + 256-bin 离散化 + PaliGemma embed lookup + scale√2048), 绕开 V1 prebaked language_embeds via `v1_forward_with_state()` 直写 encoder_x. 新增 `expand_v1_pkl_for_phase2.py` (扩 pkl `language_embeds` 7→200 行, 为 prompt+state 留位). V1Policy.infer() 加 5 段 timing (preproc / state_encode / infer / postproc / total). 本机 smoke test (5 iter): **total ~40.5 ms** (preproc 6 + state 0.3 + infer 34 + post 0.2), state 切换→action max diff 0.286 (验证 state 流入). vs Q2 JAX 196ms = **4.9× server-side speedup**. §7.2 加实测表 |
+| **v0.18** | **2026-05-23** | **§7.6/7.7/7.8 新增 — 20Hz cycle 攻关启动**: §7.6 Step 0 baseline 全链路 11 段实测 (cycle P50=80.5ms / P95=89.1, cam→emit P50=134.8ms, server_infer 34ms = V1 floor 已触顶); §7.7 P1 image_age root cause 定位 = `SingleThreadedExecutor` 在 80ms cycle 期间阻塞所有 image callbacks → deque[-1] 不更新 → 测得 age 含 20-30ms executor lag; §7.8 排除 forward 优化后按 ROI 重排执行优先级 (P1.a executor 改 / P1.b 相机配置 / P2 GPU preprocess / P3 SHM transport) + 跟踪表 (baseline + 每步 cycle/image_age/cam→emit Δ). 本次执行 P1.b (C2 fps 30→60 + C7 关 D435 depth) |
+| **v0.19** | **2026-05-23** | **P1.b/P1.a/P2 全部实测落地 + §7.9 异步流水线设计**: 跟踪表重构为 A 已落地 / B 失败归档 / C 待实施 三段. **A 段**: P1.b-partial (head depth off, 隔离测试无效, image_age 噪声内 +0.3); P1.a 两轮 MultiThreaded attempt 都 hang (B.2 GIL 抖动 / B.3 num_threads=2 sensor cb starve), 回退 SingleThreaded 保持兼容; **P2 Step 1+2** ✅ fast_obs_pipeline=true 跳 JPEG+CvBridge+cvtColor (验证训练 collect 路径无 JPEG, MP4 codec 是 AV1/h264 跟 JPEG 不对齐), **cycle 80→62ms (-18.3) = 16Hz, obs_construct 35.7→14.9 (-20.7)**, 真机 execute 验证通过. **B 段**: P1.b-C2 60fps 被 D405 hand_left USB 2.0 bus 限制 (rs-enumerate 确认 hand_left 640×480 仅 30/15/5fps, 主板/线材层物理限制); P1.a 两轮 multi-thread hang 归档. **§7.9 异步流水线 (A.2)**: obs prefetch worker 把 obs_construct 15ms 藏到 forward 35ms 背后, 预期 cycle 62→48ms (=20-21Hz). worker + queue 设计 + 实施清单 + 风险 + 兼容性. 下一步实施: A.2 流水线 (~2h) |
