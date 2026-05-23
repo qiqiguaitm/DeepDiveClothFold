@@ -1,9 +1,24 @@
 # 跨本体数据复用 — 战略与执行计划 (Consolidated)
 
-> **更新时间**: 2026-05-21
+> **更新时间**: 2026-05-22 (晚 — 3-robot heterogeneous 架构明确)
 > **作者**: Tim + 综合外部研究员讨论 + 项目实测数据
-> **背景**: A=官方 KAI0 双臂 piper (D435 wrist), B=自有双臂 piper (D405 wrist), 共享同一型号机械臂但 wrist 相机+机械装配有差异。当前实测发现 naive 混合训练 (A+B) 在 B 真机上抖动**反而**超过纯 B 训练 → 需要系统化复用方案。
-> **目标**: 把 A 的 **6,512 ep** + XVLA-Soft-Fold **1,729 ep** 数据价值榨干, 同时不污染 B 真机部署性能, 并为 CoRL/NeurIPS paper 铺路。
+>
+> **战略核心** (2026-05-22 晚 修订):
+>
+> ```
+> 3 个异构机器人数据集 (heterogeneous robots):
+>   • A = KAI0 (官方 piper, D435 wrist, 6,512 ep)              — 训练用, 不部署
+>   • B = vis  (自有 piper, D405 wrist, 895 ep)   ⭐ 部署目标   — 训练用 + 真机评估
+>   • C = XVLA-Soft-Fold (第三方 piper, 1,729 ep)              — 训练用, 不部署
+>
+> 部署目标: 仅 B (vis 真机) — 所有真机评估在 vis 上做
+> 训练目标: 充分利用 3 个异构机器人 (~9,136 ep) 的 cross-embodiment 价值,
+>           不污染 B 部署性能, 并为 CoRL/NeurIPS paper 铺路。
+> ```
+>
+> **方法学**: 用 **X-VLA 官方架构** (ICLR 2026) — 天然 multi-domain (3 domain), Florence2 + SoftPromptedTransformer + EE6D 20D action, 论文证明在 SoftFold-Agilex 同款 Piper 上 100%。每个机器人一个 domain_id, 推理时 force `domain_id=vis(1)`。
+>
+> **历史路线 (已废弃)**: pi0.5 + 移植 Soft Prompt (Track B) — 训练不稳定, 弃用; 改走 X-VLA 官方原生 (Track X)。
 
 ---
 
@@ -19,7 +34,7 @@
   - [6. 与 π0.5 / X-VLA 默认对照](#6-与-π05--x-vla-默认对照)
 - [Part III — 执行计划](#part-iii--执行计划)
   - [7. Milestone 总览 (M1-M4) — Dual-Track Parallel](#7-milestone-总览-m1-m4--dual-track-parallel)
-  - [8. M2 Dual-Track 详细计划 (Track A SSL Phase 0-4 + Track B X-VLA Stage 1-3)](#8-m2-ssl-pretraining-详细-phase-0-4)
+  - [8. M2 详细计划 (Track A SSL + Track C Action Cond + Track X X-VLA 官方)](#8-m2-ssl-pretraining-详细-phase-0-4)
   - [9. 资源 + 数据 + 网络](#9-资源--数据--网络)
 - [Part IV — 跟踪 + 风险](#part-iv--跟踪--风险)
   - [10. 状态跟踪 (持续更新)](#10-状态跟踪-持续更新)
@@ -31,28 +46,35 @@
 
 # Part I — 战略评估
 
-## 1. Embodiment Gap 定量
+## 1. Embodiment Gap 定量 — **3 异构机器人**
 
-### 1.1 共享 (跨本体的"同"部分)
+> 2026-05-22 修订: 明确为 3 个异构机器人 (A = KAI0 / B = vis ⭐部署/ C = XVLA), 而不是 A+B 二分。
 
-| 维度 | A (官方 KAI0) | B (自有) |
-|---|---|---|
-| 机械臂型号 | piper 双臂 (6 DOF + gripper) | 同 |
-| Joint DOF | 14 (7×2 含 gripper) | 同 |
-| 控制频率 | 30 Hz | 同 |
-| Top 头部相机 | RealSense D435 | 同 |
-| Top 高度 | ~76 cm | 同 (略差) |
-| Top 俯视角度 | ~30° | 同 (略差) |
-| Action 语义 | "Flatten and fold the cloth." | 同 |
+### 1.1 三机器人对比表
 
-### 1.2 差异 (按影响从大到小)
+| 维度 | A: KAI0 (官方) | **B: vis (⭐ 部署目标)** | C: XVLA-Soft-Fold (第三方) |
+|---|---|---|---|
+| 机械臂型号 | piper 双臂 | piper 双臂 (同型) | piper 双臂 (待确认型号) |
+| Joint DOF | 14 (7×2) | 同 | 同 (假设) |
+| 控制频率 | 30 Hz | 同 | 待确认 |
+| **Wrist 相机** | D435 (FOV 69°×42°, rolling, min depth 28cm) | **D405** (FOV 87°×58°, global, min depth 7cm) ⭐ | 待确认 hdf5 元数据 |
+| **Wrist 安装** | 一致设计 (旧 flange) | 一致设计 (新 flange, 高度/角度略差) | 第三方采集, 不同 setup |
+| **双臂间距** | 标准 | 略差 (毫米级) | 待确认 |
+| **Top 头部相机** | D435 (76cm 高, 30° 角) | 同 (略差 <5cm/5°) | 待确认 |
+| Action 语义 | "Flatten and fold the cloth." | 同 | 同 (cloth fold) |
+| **Episodes** | 6,512 | **895** (B 数据量少 → 关键瓶颈) | 1,729 |
+| **数据格式** | LeRobot v2.1 (14D joint) | LeRobot v2.1 (14D joint) | hdf5 (EE6D? 待确认) |
+| **部署?** | ❌ 不部署 | ✅ **唯一部署目标** | ❌ 不部署 |
+| domain_id (Track X) | 0 | **1** | 2 |
 
-| Gap 类型 | A | B | 量化差异 | 严重度 |
-|---|---|---|---|---|
-| **Wrist 相机** | RealSense **D435** (RGB FOV 69°×42°, rolling, min depth 28cm) | RealSense **D405** (RGB FOV 87°×58°, global shutter, min depth 7cm, RGB-IR 共光路) | brightness ↓12%, sharpness ↓31%, 近距 RGB-D 行为完全不同 | 🔴 **最严重** |
-| **Wrist 安装** | 一致设计 | 一致设计但高度/角度略差 (毫米级) | 待精确测量 | 🟠 第二严重 — wrist view 物体 pos/scale 受影响 |
-| **双臂间距** | 标准 | 略差 (毫米级未测) | state joint3 std +61%, joint5 std +83% | 🟡 absolute EE 时 systematic bias |
-| **Top 相机** | 标准 | 略差 (<5cm, <5°) | mean brightness 接近 | 🟢 < 5cm/5° 时 augmentation cover |
+### 1.2 与 B 部署目标的 gap 量化
+
+A vs B 关键 wrist gap (从 §3.3 实测):
+- **R 腕 yaw+roll paired shift ~19°** (SE3 复合旋转) — 部署 B 时 wrist 视野 OOD
+- L2 mean diff 0.47 rad (跨 robot effect, 剔除 operator confound 后)
+- 13/14 dim 在 ±1σ 内 (大部分 PI per-dataset norm 可吸收)
+
+C (XVLA-Soft-Fold) vs B gap **待量化** (等 E0.7 格式适配后做 norm_stats 对比, 预期 wrist 相机差异最大)。
 
 ### 1.3 实测真机症状回顾
 
@@ -192,7 +214,7 @@ Per-arm:
 | 策略 | 能处理 R 腕 21° 旋转? | 能处理 motion range 1.1× scale-up? | 综合 |
 |---|:-:|:-:|:-:|
 | **PI per-dataset norm** | ⚠️ 部分 (mean 对齐, 但 chunk 内仍有 wrist OOD) | ✅ std 缩放自动 | ⭐⭐ |
-| **Soft Prompt** (X-VLA, Track B) | ✅ 显式 condition, 学到 domain shift | ⚠️ 隐式 | ⭐⭐⭐ |
+| **Soft Prompt** (X-VLA 官方, Track X) | ✅ 显式 condition, 学到 domain shift | ⚠️ 隐式 | ⭐⭐⭐⭐ |
 | **EE-based** (Delta EE) | ✅ **天然消除** | ⚠️ 不直接 | ⭐⭐⭐ |
 | **Soft Prompt + EE 结合** | ✅✅ | ✅ | ⭐⭐⭐⭐ |
 
@@ -332,7 +354,7 @@ Layer 1 (Visual, Phase 1 Track A SSL):
   E. SSL decoupled — A + B + XVLA all in, no action loss
   → 学到 cross-embodiment invariant visual repr
 
-Layer 2 (Policy, Phase 3 / Track B):
+Layer 2 (Policy, Phase 3 / Track X):
   C. Soft Prompt + Per-DS norm — 显式 routing
   + D. Curriculum (二阶段 A→B finetune)
   → 显式 routing + lock 到 B
@@ -349,7 +371,7 @@ Layer 3 (Phase 3 ablation):
 | **E3.0** baseline | × | per-dataset (single ds smooth_800) | 当前 SOTA |
 | **E3.5** | × | **Naive joint norm** (A) | 故意复现失败假说 |
 | **E3.6** | × | **Per-dataset norm + Single model** (B) | **验证 §3.5.5 insight** |
-| **E3.7** | **Soft Prompt** (VLM input 端) | Per-DS norm + Soft Prompt (C) | Track B 路线 |
+| **E3.7** | **Soft Prompt** (X-VLA 官方原生, VLM input 端) | Per-DS norm + Soft Prompt | Track X 路线 (§8.8) |
 | **E3.8** ⭐ 主线 | **Action Head Cond Token** (方案 A, action expert input 端) | Per-DS norm | Track C 路线 — 与 E3.7 1:1 对照, 验证 "VLM 端 vs Action expert 端" 注入点选择 |
 | ~~**E3.9**~~ Dual Cond | ~~Soft Prompt + Action Head Cond~~ | — | **2026-05-22 搁置** — 双端组合, 待 E3.7/E3.8 单端结果出来再决定是否启用 |
 
@@ -473,54 +495,8 @@ for delta in predicted_chunk:
 | 方式 | 实现复杂度 | 本地代码状态 | 推荐度 |
 |---|---|---|---|
 | **Hard prompt** (`"[D405 wrist] ..."`) — 改 prompt 字符串 | 极低 (0 改 model) | ✅ 任意 config 都可用 | ⭐⭐ 弱版本 (信号沿 LLM attention 自然传播, 不显式 gate) |
-| **Soft prompt** (X-VLA style, 每 domain 32×2048 learnable vec) | 0 (代码已实现) | ✅ **`pi0.py:136-181` 已有 `soft_prompt_hub` 实现** + `xvla_stage1/2/3` config 模板就绪 | ⭐⭐⭐ **正确路径** — 显式 inject 到 LLM input, 推理时可 hard-force domain |
-| **Action head embedding** ⭐ Track C 主线 (方案 A 选定 2026-05-22) | 极低 (action expert input concat 1 domain token) | ❌ 待加 (Phase 1.5 实现) | ⭐⭐⭐ — 注入 action expert input 端 (paligemma 不知 domain), 与 soft prompt 1:1 sparse-prefix 对照, 验证"VLM 端 vs Action expert 端"注入点选择 |
-| ~~Soft prompt + Action head emb 结合~~ | ~~中-高~~ | 部分 | **2026-05-22 暂搁置** — 双端组合 (E3.9), 待 E3.7/E3.8 单端结果出来再决定 |
-
-#### 6.2.1 本地代码与 ckpt 现状 (2026-05-21 实测)
-
-```python
-# kai0/src/openpi/models/pi0.py:136-181 (已实现, 默认禁用)
-if config.soft_prompt_num_domains > 0 and config.soft_prompt_len > 0:
-    self.soft_prompt_hub = nnx.Embed(
-        num_embeddings=config.soft_prompt_num_domains,       # A=0, B=1, [XVLA=2]
-        features=config.soft_prompt_len * paligemma_width,   # 32 × 2048 = 65536 per domain
-    )
-# forward 时:
-soft = self.soft_prompt_hub(obs.dataset_id)
-soft = soft.reshape(B, soft_prompt_len, llm_width)            # (B, 32, 2048)
-# Prepend 到 LLM input → 与 X-VLA 论文 1:1 一致
-```
-
-| Ckpt | soft_prompt_hub weights? | 说明 |
-|---|---|---|
-| pi05_base, mixed_1, smooth_800, pure_200 | ❌ 无 | 全部 `soft_prompt_num_domains=0` 默认禁用 |
-| xvla_stage1/2/3 config 模板 (line 1059-1146) | ✅ 已配置 `num_domains=2, len=32` | **从未实际执行训练**, 直到 2026-05-21 t-20260521154828-76d44 |
-
-#### 6.2.2 X-VLA 3-stage 训练流程 (config.py 已就绪)
-
-```
-Stage 1: xvla_stage1_kai_warmup
-   Init: pi05_base (干净起点) + soft_prompt_hub initialized N(0, 0.02)
-   Data: kai0_base + kai0_dagger (全部 domain_id=0)
-   全模型 + soft_prompt 联合训练, 50k step
-   → 学到 domain[0] (kai) 的 soft_prompt 表示
-
-Stage 2: xvla_stage2_soft_prompt_only_vis
-   Init: Stage 1 final ckpt
-   Frozen backbone + LLM, ONLY train soft_prompt_hub
-   Data: vis_v2_merged (domain_id=1, vis)
-   5k step, lr 5e-4
-   → 仅对齐 domain[1] (vis) 的 soft_prompt slot, 不动 backbone
-
-Stage 3: xvla_stage3_joint_finetune
-   Init: Stage 2 ckpt
-   Unfreeze 全模型, joint finetune soft_prompt + backbone
-   Data: kai + vis 混训
-   → 终态最强模型
-```
-
-> X-VLA Soft Prompt 已在 290K episodes 跨 7 个 platforms × 5 个 arm types 验证可行 (ICLR 2026)。每域仅 65K 参数 (32×2048), 整体 0.04% 非共享参数。
+| **Soft prompt** (X-VLA 官方原生) | 低 (Track X 走官方 `SoftPromptedTransformer`, 见 §8.8) | ✅ `lerobot/xvla-base` ckpt + repo `/home/tim/workspace/X-VLA/` | ⭐⭐⭐⭐ **主线 (Track X)** — 显式 inject 到 24 层 SoftPromptedTransformer, 推理时 force `domain_id=vis` |
+| **Action head embedding** (Track C 方案 A — paper ablation) | 极低 (action expert input concat 1 domain token) | ✅ 已实现 (`pi0.py:action_head_cond_hub`) | ⭐⭐⭐ — paligemma 不知 domain, 信号仅在 action expert. 提供 "action expert 端 cond" 对照 |
 
 ### 6.3 Action Head Conditioning Embedding (2026-05-22 新主线 — **方案 A 选定**)
 
@@ -533,12 +509,11 @@ Stage 3: xvla_stage3_joint_finetune
 **信号路径对比 (Soft Prompt vs 方案 A)**:
 
 ```
-Soft Prompt (Track B):
-  d → soft_prompt_hub[d] (B,32,2048)
-      → 拼到 PaliGemma input
-      → 24 层 LLM attention 处理
-      → KV cache (含 domain 信号)
-      → action expert cross-attn 读 → action
+Soft Prompt (Track X 官方原生, X-VLA-0.9B):
+  d → SoftPromptedTransformer.soft_prompts[d] (B,32,1024)
+      → 拼到 Florence2-VLM input
+      → 24 层 SoftPromptedTransformer attention
+      → action heads (DomainAwareLinear) → action
 
 方案 A (Track C):
   d → action_head_cond_hub[d] (B,1,1024)
@@ -599,7 +574,7 @@ if self.action_head_cond_hub is not None:
 
 经讨论方案 A 的实际信号路径:
 
-| 维度 | Soft Prompt (Track B) | Action Cond (Track C 方案 A) |
+| 维度 | Soft Prompt (Track X X-VLA 官方) | Action Cond (Track C 方案 A) |
 |---|---|---|
 | 信号传播路径 | 24 层 PaliGemma + 4-8 层 action expert | **仅 4-8 层 action expert** |
 | 影响 image/text representation? | ✅ 是 (domain 信息改变 VLM attention) | ❌ 否 (paligemma 完全不知 domain) |
@@ -610,7 +585,7 @@ if self.action_head_cond_hub is not None:
 
 **数据不平衡 (kai 6512 ep vs vis 895 ep, 7.27×) 用 ConcatDataset over-sampling 处理** (vis × 7 在 datasets_yaml 重复路径, 49/51 split)。这比 stage 2 frozen-backbone 更直接、更轻量。
 
-**最终方案**: 单阶段 joint kai+vis 50k step, balanced sampling (vis ×7), 12h 完成。Track B 同时保留 Stage 1 不推进, paper 对照 E3.7 (Soft Prompt kai-only) vs E3.8 (Action Cond joint balanced)。
+**最终方案**: 单阶段 joint kai+vis 50k step, balanced sampling (vis ×7), 12h 完成。paper 对照 E3.7 (X-VLA 官方 Soft Prompt) vs E3.8 (Action Cond joint balanced)。
 
 #### 6.3.4 真机评估目标
 
@@ -731,8 +706,8 @@ def compute_loss(rng, obs, actions, *, max_delay=10):
 ```
                       ┌─────────────────────────────────────────┐
                       │   Track A:  SSL Visual Pretrain          │
-                      │   Track B:  X-VLA Soft Prompt (LLM)      │
                       │   Track C:  Action Head Conditioning     │
+                      │   Track X:  X-VLA 官方 (Soft Prompt LLM) │
                       │   (+) TAC training (compute_loss 改动)   │ ← Phase 3 加
                       └────────────────┬────────────────────────┘
                                        │ 推理时
@@ -791,7 +766,7 @@ def compute_loss(rng, obs, actions, *, max_delay=10):
 
 ## 7. Milestone 总览 (M1-M4) — Tri-Track Parallel
 
-### 📐 三轨并行架构 (2026-05-22 起)
+### 📐 三轨并行架构 (2026-05-22 晚 修订, Track B 已废弃)
 
 ```
                      ┌─────────────────────────────────────┐
@@ -802,53 +777,46 @@ def compute_loss(rng, obs, actions, *, max_delay=10):
                      │   ├── Phase 2 Dynamics + Embodiment │
                      │   └── Phase 3 Policy + Ablation     │
                      ├─────────────────────────────────────┤
-                     │   Track B: X-VLA Soft Prompt        │
-                     │   (LLM input 端 cond, 16 H20)       │
-                     │   ├── Stage 1 kai warmup ✅ PASS    │
-                     │   ├── Stage 2 vis soft_prompt only  │
-                     │   └── Stage 3 joint finetune        │
+                     │   Track C: Action Head Cond Emb     │
+                     │   (Action expert 端 cond, paper     │
+                     │    ablation 对照, 16 GPU)           │
+                     │   └── 单阶段 balanced joint training│
                      ├─────────────────────────────────────┤
-                     │   Track C: Action Head Cond Emb ⭐  │
-                     │   (Action expert 端 cond, 16 GPU)   │
-                     │   ├── Phase 1.5 code (~1 day)       │
-                     │   ├── Stage 1 kai warmup            │
-                     │   ├── Stage 2 vis cond only         │
-                     │   └── Stage 3 joint finetune        │
+                     │   Track X: X-VLA 官方架构 ⭐ 主线    │
+                     │   (Florence2 + SoftPromptedXformer, │
+                     │    EE6D/joint 20D action, 16 GPU)   │
+                     │   ├── X3.A: 3-domain (A+B+C)        │
+                     │   └── X3.B: 2-domain (A+B, no XVLA) │
                      └─────────────────┬───────────────────┘
                                        ↓
                           ┌──────── Final Merge ────────┐
                           │ SSL Visual Backbone +       │
-                          │ X-VLA Soft Prompt Hub +     │
-                          │ Action Head Cond Emb +      │  ← 新
-                          │ Dynamics-conditioned policy │
+                          │ X-VLA 官方 ckpt (X3.A/B 终态)│
+                          │ + Dynamics-conditioned head │
                           └─────────────────────────────┘
 ```
 
-**三条 track 互不冲突 (2026-05-22 资源分配)**:
-- Track A 主要用 uc02 (Phase 0) + Robot-North-H20 (Phase 1-3)
-- Track B 用 Robot-North-H20 16 GPU (Stage 1 已完成, Stage 2/3 链)
-- Track C 用 robot-task 20 A100 (cn-shanghai) 或 Robot-North-H20 余 16 GPU
-- Beijing 32-40 H20 + Shanghai 20 A100 完全够 3 track 并发
+**资源分配 (2026-05-22 晚)**:
+- Track A: uc02 (Phase 0) + Robot-North-H20 (Phase 1-3)
+- Track C: 已在 cn-shanghai / cn-beijing 跑 paper ablation 对照 (4 个 job 中)
+- Track X (主线): uc01+uc02 16 A800 — X3.A / X3.B 顺序执行
 
 ### 🚀 M1 (1-2 周): 短期真机修复 — **已 deprioritize**
 
-> 用户决策 (2026-05-21): 先专注 L1 SSL + X-VLA 路线 (M2-M3), 暂不展开 X1/X2/X3 系列。M1 计划保留但不立即执行, 待 M2/M3 完成首轮 ablation 后回看。
+> 用户决策 (2026-05-21): 先专注 L1 SSL + X-VLA 路线 (M2-M3), M1 暂不展开。
 
-简要内容: EE-relative action + embodiment prompt + B oversample 修复真机抖动 (详细方案见 git 历史)。
+### 🔬 M2 (~9 周): Multi-track 训练 ⭐ **主线**
 
-### 🔬 M2 (~9 周): Dual-track 训练 ⭐ **主线**
+**Track A — SSL Pretraining + Dynamics + Policy**: 详见 §8.1-8.5。
+- **当前进度**: Phase 0 E0.1 完成 (kai0_base + dagger CoTracker3 已跑完)
 
-**Track A — SSL Pretraining + Dynamics + Policy**: 完整 4 个 Phase 详见 §8.1-8.5。
-- **当前进度**: Phase 0 in_progress (E0.1 Kai0_base CoTracker3 跑在 uc02)
+**Track X — X-VLA 官方架构 Native 训练**: 详见 §8.8。
+- **当前进度**: prep (HF ckpt 拉取 + env setup + dataset adapter)
 
-**Track B — X-VLA Soft Prompt Curriculum (3-stage)**: 详见 §8.6。
-- **当前进度**: Stage 1 in_progress (t-20260521154828-76d44, Robot-North-H20 16 H20, 2026-05-21 07:48 启动)
+### 🌍 M3 (M2 之后): Track A + Track X Merge + 真机 + Paper
 
-### 🌍 M3 (M2 之后): Dual-track Merge + 真机 + Paper
-
-- **Merge 策略**: SSL visual backbone (E1.5) + X-VLA Soft Prompt (xvla_stage3) + Dynamics-conditioned action head
-- **真机大规模测试** (60-100 ep per ablation, 含 X-VLA stage 1/2/3 各自 baseline)
-- **Paper figures + writing** (中心 claim: cloth_residual MMD + ablation 表)
+- **Merge 策略**: SSL visual backbone (E1.5) + X-VLA 官方 Soft Prompt (X3.A/B 终态) + Dynamics-conditioned head
+- **真机大规模测试** (60-100 ep per ablation)
 - CoRL / NeurIPS submission
 
 ### 📝 M4 (long-tail): ATOM Policy 扩展
@@ -994,71 +962,382 @@ weights:      固定 (w_vjepa=1.0, w_track=0.5, w_flow=0.3, w_xview=0.2)
 - Failure case analysis
 - Paper figures (architecture diagram, latent t-SNE, ablation curve)
 
-### 8.7 Track B — X-VLA Soft Prompt Curriculum (并行执行)
+### 8.8 Track X — X-VLA **官方架构** Native 训练 (2026-05-22 晚 新主线) ⭐
 
-> 与 Track A (SSL) 完全并行。Track B 是 GR00T N1.5 / X-VLA 风格的直接 policy + soft prompt 路线, 输出可作为 Track A Phase 3 的对照 baseline + 后期 merge 提供 soft_prompt_hub 权重。
+> 战略转向: 放弃 pi0.5 + X-VLA-style soft prompt 移植 (Track B 已废弃), **改用 X-VLA 官方完整架构**, 与论文 1:1 一致, 仅适配数据。
+>
+> **3 robot 异构设计** (per §1.1):
+> - domain_id=0: A (KAI0, 训练用, 不部署)
+> - **domain_id=1: B (vis, 训练用 + 唯一真机部署)** ⭐
+> - domain_id=2: C (XVLA-Soft-Fold, 训练用, 不部署)
+>
+> X-VLA 论文用 30 个 domain × 290K ep 训过, 我们 3 个 domain × 9136 ep 完全适用其 multi-domain 范式。推理时 `force domain_id=1` 走 vis 路径。
 
-#### 8.7.1 配置就绪 (config.py 已有, 见 §6.2.1)
+#### 8.8.1 战略动机
 
-| Stage | Config name | Init | Data | Freeze | Steps | LR |
-|---|---|---|---|---|---|---|
-| **1** | `xvla_stage1_kai_warmup` | pi05_base + N(0,0.02) soft_prompt | kai0_base + dagger (domain_id=0) | None (joint train) | 50k | 1.5e-5 → 1.5e-6 |
-| **2** | `xvla_stage2_soft_prompt_only_vis` | Stage 1 ckpt | vis_v2_merged (domain_id=1) | Backbone frozen, **only soft_prompt** | 5k | 5e-4 |
-| **3** | `xvla_stage3_joint_finetune` | Stage 2 ckpt | kai + vis 混训 | Unfreeze all | 待定 | 待定 |
+| 维度 | Track B (pi0.5 + 移植 soft prompt) | **Track X (X-VLA 官方)** ⭐ |
+|---|---|---|
+| Backbone | π0.5 SigLIP/PaliGemma + Gemma 300M action expert | **Florence2-Large + 24-layer SoftPromptedTransformer** |
+| Action 表示 | Joint 14D (与 PI 派一致) | **EE6D 20D** (xyz + Rot6D + grip, 每臂 10D) |
+| Soft Prompt | 嫁接 (`pi0.py:soft_prompt_hub`, 32×2048) | **原生** (`SoftPromptedTransformer` 内置, 32×1024) |
+| Init ckpt | pi05_base | **X-VLA-0.9B 官方 ckpt** (HF `2toINF/X-VLA`) |
+| 训练 pipeline | 自创 3-stage 移植 | **论文 2-step adaptation** (Prompt Warmup + Joint Optim) |
+| 实证 | 失败 (3× stage 2 全 fail) | ICLR 2026, IROS 2025 Champion, SoftFold (Piper) **100%** |
 
-#### 8.7.2 资源 + ETA
+→ **从"嫁接式"改"原生式"**, 收益: 论文实证 + 同硬件已 100% (SoftFold-Agilex = 同款 Piper) + 跨 embodiment 是 X-VLA 论文核心 contribution。
 
-| Stage | GPU | ETA | 总 GPU-h |
-|---|---:|---:|---:|
-| 1 | 16 H20 (Robot-North-H20) | ~12h | ~200 |
-| 2 | 8-16 H20 | ~2h | ~30 |
-| 3 | 16 H20 | ~12h | ~200 |
-| **合计** | — | ~26h | ~430 GPU-h |
+#### 8.8.2 X-VLA 官方架构关键事实 (paper + 本地 repo)
 
-#### 8.7.3 当前 Stage 1 实际任务 (2026-05-21)
+**官方 repo**: `/home/tim/workspace/X-VLA/` (已 clone)
+```
+X-VLA/
+├── models/
+│   ├── modeling_xvla.py        ← 主类 (295 行)
+│   ├── configuration_xvla.py   ← 24 层, 1024D, 30 domain
+│   ├── modeling_florence2.py   ← Florence2 视觉 backbone
+│   ├── transformer.py          ← SoftPromptedTransformer (403 行)
+│   ├── action_hub.py           ← EE6D / Joint / Auto action space 注册
+│   └── processing_xvla.py      ← 多模态处理器
+├── datasets/                   ← 数据加载 + domain_handler/
+├── evaluation/
+│   └── SoftFold-Agilex/        ← 我们同款 Piper 评估 (100% 验证!)
+├── train.py                    ← 全参数训练 (282 行)
+├── peft_train.py               ← LoRA 微调
+└── deploy.py                   ← FastAPI 推理服务
+```
+
+**模型架构** (来自论文):
+```
+High-Dimensional Stream:
+  主视角图像 → Florence2-Large → VLM Features
+  辅助视角 → 独立视觉编码 → Aux Visual Features
+
+Low-Dimensional Stream:
+  Proprio + Action + Time embedding → 轻量 Linear
+
+SoftPromptedTransformer (24 层, 1024D, 16 头):
+  输入 = [Action_tokens | VLM_proj | Aux_proj | Soft_Prompts(domain_id)]
+  → DomainAwareLinear → action 预测
+
+输出: 30 步动作序列 [30 × 20D EE6D]
+```
+
+**EE6D 20D action 编码** (每臂 10D):
+```
+左臂: xyz(3) + Rot6D(6) + gripper(1) = 10D
+右臂: xyz(3) + Rot6D(6) + gripper(1) = 10D
+合: 20D × 30 step chunk
+```
+
+**两步法 adaptation** (论文 §3.3):
+- **Step 1 (Prompt Warmup)**: 冻 backbone (Florence2 + Transformer), 仅训新加的 soft_prompt[domain_id] + action heads. LR base × 0.1 for soft prompts, base for action heads.
+- **Step 2 (Joint Optim)**: 解冻 backbone, joint finetune all (soft prompt LR × 0.1)。
+
+#### 8.8.3 训练数据 — 2 个对照实验 (X3.A vs X3.B, 量化 XVLA 贡献)
+
+**数据池** (无需重新采集, 3 个异构 robot 都可用):
+
+| 机器人 | domain_id | Episodes | 当前 action 格式 | 转 EE6D 需要 | 部署? |
+|---|:-:|---:|---|---|:-:|
+| **A: KAI0 base + dagger** (官方 D435 wrist) | 0 | 6,512 | 14D joint | ✅ 转 EE6D (PiperFK + Rot6D) | ❌ 不部署 |
+| **B: vis_v2_merged** (自有 D405 wrist) ⭐ | **1** | 895 | 14D joint | ✅ 同上 | ✅ **唯一部署** |
+| **C: XVLA-Soft-Fold** (第三方) | 2 | 1,729 | 待确认 (可能 EE6D) | 检查 hdf5 元数据 | ❌ 不部署 |
+| **合计** | — | **9,136 ep** | — | — | — |
+
+#### 8.8.3.1 两组对照实验 (Curriculum: Continual Pretrain → vis Adaptation)
+
+> **战略**: "**X-VLA Phase I extension + Phase II adaptation**" curriculum。先把我们 3 个 (X3.A) / 2 个 (X3.B) domain 知识注入官方 base, 得到 extended-base; 再用 vis 数据单独 finetune lock 到部署 robot。
+>
+> **核心目的**: 量化 **C (XVLA) 对 B (vis) 部署是否有增益**。X3.A 与 X3.B 仅在 Stage A 数据池上不同 (含/不含 XVLA), 其他设置完全一致 → 单变量 ablation。
+>
+> **2026-05-22 用户决策**: 只跑 curriculum 版本 (X3.A + X3.B), 不做 single-training 对照 (节省资源)。
+
+##### Exp X3.A — 3-domain Curriculum (A + B + C)
 
 ```yaml
-Job:     xvla-stage1-cnbj-kai-warmup-16gpu (t-20260521154828-76d44)
-Status:  Queueing → Running (2026-05-21 07:48 启动)
-Workers: 2 × ml.hpcpni3ln.45xlarge = 16 H20
-Storage: vepfs-cnbj /vePFS-North-E/vis_robot/
-Verify:  ✅ 路径全部 ok (data + ckpt + yaml + venv 实测)
-Config 关键:
-  - soft_prompt_num_domains=2 (A=0, B=1) — ⚠️ 未给 XVLA 留槽位
-  - soft_prompt_len=32
-  - use_delta_joint_actions=False (与 pi05_base + mixed_1 一致)
-  - inline_eval_every=99999 (实际禁用, 训完手动 eval)
-  - inline_eval_val_root: kai0/dagger (in-domain, 不用 vis)
+=== Stage A: Continual Pretrain on multi-domain ===
+Init:           lerobot/xvla-base (官方 Phase I ckpt, 290K ep × 30 domain)
+                                  ← 我们 "extend" 这个 base
+Data:           A (KAI0) + B (vis) + C (XVLA-Soft-Fold), mixed
+Sampling:       balanced 1×:7×:2× (per_domain_weights = {0:1.0, 1:7.0, 2:2.0})
+effective ep:   6512 + 6265 + 3458 = 16,235
+有效比例:        ~40% A + ~39% B + ~21% C
+domain_id 槽:    用 base 中未占用的 3 个 (e.g., 19=A, 20=B, 21=C)
+Goal:           把 A/B/C 3 个 domain 知识写入扩展 base
+Schedule:       freeze_steps=1000, steps=20000, LR base=1e-4, VLM × 0.1
+Output:         X3.A_extended_base.ckpt
+
+=== Stage B: vis-only Adaptation (Phase II 标准) ===
+Init:           X3.A_extended_base.ckpt (Stage A 输出)
+Data:           B (vis) only, 895 ep
+domain_id:      固定 = 20 (vis)
+Goal:           target-specific lock, 强化部署 prior
+Schedule:       freeze_steps=500, steps=10000, LR base=5e-5 (更低防 overfit), VLM × 0.1
+EMA:            0.9999, 监控 val loss 选 best step
+Output:         X3.A_deploy.ckpt (vis 部署用)
 ```
 
-#### 8.7.4 Track A + B 最终 Merge (M3 Week 9-)
+##### Exp X3.B — 2-domain Curriculum (A + B, **不含 XVLA**, 对照)
+
+```yaml
+=== Stage A: Continual Pretrain on 2 domains ===
+Init:           lerobot/xvla-base (同 X3.A)
+Data:           A (KAI0) + B (vis), 不含 C
+Sampling:       balanced 1×:7× (per_domain_weights = {0:1.0, 1:7.0})
+effective ep:   6512 + 6265 = 12,777
+有效比例:        ~51% A + ~49% B
+domain_id 槽:    用 2 个 (e.g., 19=A, 20=B)
+Goal:           2 domain (无 XVLA) 注入扩展 base
+Schedule:       同 X3.A Stage A (freeze_steps=1000, steps=20000)
+Output:         X3.B_extended_base.ckpt
+
+=== Stage B: vis-only Adaptation (同 X3.A) ===
+Init:           X3.B_extended_base.ckpt
+Data:           B (vis) only, 895 ep
+domain_id:      固定 = 20 (vis)
+Schedule:       同 X3.A Stage B
+Output:         X3.B_deploy.ckpt
+```
+
+#### 8.8.3.2 两组实验对比 — XVLA 数据贡献 Ablation
+
+| 指标 | X3.A (3-domain) | X3.B (2-domain) | 解读 |
+|---|---|---|---|
+| Stage A 数据 | A+B+C | A+B (不含 C) | 唯一变量 |
+| Stage A effective ep | 16,235 | 12,777 | X3.A 多 27% |
+| Stage A 训练时长 | ~15h on 16 H20 | ~12h on 16 H20 | X3.A 略长 |
+| Stage B 数据 | vis only | vis only | 完全一致 |
+| Stage B 训练时长 | ~8h on 16 H20 | ~8h on 16 H20 | 完全一致 |
+| 总训练时长 | **~23h** | **~20h** | — |
+| Soft prompt 数 | 3 个 (A/B/C) | 2 个 (A/B) | — |
+| 真机评估 | vis | vis | 都一样 |
+
+**期望结论 (3 种可能)**:
+| X3.A vs X3.B (真机 vis 评估) | 推断 |
+|---|---|
+| **X3.A > X3.B** | ✅ XVLA 提供有用 cross-platform 多样性 → 终态用 X3.A |
+| **X3.A ≈ X3.B** | ⚠️ XVLA neutral, 简化为 X3.B 即可 (降低复杂度) |
+| **X3.A < X3.B** | ❌ XVLA 过于不同, dilute vis prior → 弃 XVLA, X3.B 为终态 |
+
+#### 8.8.3.3 Sampling 实现细节 (Stage A 用)
 
 ```python
-# 最强 final model 设想 (paper E3.5 / E4.0):
-TrainConfig(
-    name="final_ssl_xvla_dynamics",
-    model=pi0_config.Pi0Config(
-        pi05=True,
-        soft_prompt_num_domains=2,      # 或 3 (如果引入 XVLA)
-        soft_prompt_len=32,
-        # 加: motion_residual_dynamics=True (Phase 2 E2.3 学到的)
-    ),
-    weight_loader=CheckpointWeightLoader(
-        path_to_xvla_stage3_ckpt,        # X-VLA soft_prompt_hub weights
-        # + 替换 vision tower with SSL E1.5 backbone
-    ),
-    data=...vis_only finetune,
-    use_delta_joint_actions=...,         # 决策点 (待 X1 验证)
-)
+# X-VLA datasets/domain_config.py 风格 (per_domain_weights)
+# Stage A (continual pretrain) 用 balanced sampling
+DOMAIN_WEIGHTS_X3A = {19: 1.0, 20: 7.0, 21: 2.0}   # A:B:C = 1:7:2 (domain_id 19/20/21 用 base 未占)
+DOMAIN_WEIGHTS_X3B = {19: 1.0, 20: 7.0}             # A:B   = 1:7  (无 C)
+
+# InfiniteDataReader 内部按 weight 采样
+# 每个 batch (假设 batch_size=256):
+#   X3.A Stage A:  ~102 A samples + ~100 B samples + ~54 C samples
+#   X3.B Stage A:  ~129 A samples + ~127 B samples
+
+# Stage B 不用 sampling weight, 单一 domain (B = vis)
 ```
 
-#### 8.7.5 已知 caveats (Track B)
+#### 8.8.3.4 部署设置 (两组共用)
 
-1. **soft_prompt_num_domains=2 没给 XVLA 留槽** — 如果将来想引入 XVLA 进 X-VLA route, 必须扩 num_domains 重训; 当前 Track B 设计是 A + B 二分类, 不含 XVLA
-2. **absolute joint** — 与 §6.1 实证调研一致 (π0.5 默认 absolute + KAI0 数据 absolute + mixed_1 norm_stats 验证), 但与 "尝试 delta" 假设线不重叠 (delta 假设线只能在 Track A 内验证)
-3. **inline_eval 禁用** — 训完后需要手动 eval pipeline (一次性 forward + 算 MAE)
+```python
+# 推理 vis 真机时 (X3.A_deploy 和 X3.B_deploy 都一样)
+domain_id = 20                                       # 固定 vis domain (Stage A 时分配的 ID)
+output = model(obs, action_history, domain_id=20)    # 走 vis-specific soft_prompt
+action = output.actions  # 30 step × 20D EE6D
+# 反变换 EE6D → joint (per-arm IK)
+joint_action = ee6d_to_joint_per_arm(action, current_joints)
+```
 
-### 8.7 时间线 (Gantt)
+→ X-VLA 推理代码 `evaluation/SoftFold-Agilex/deploy/client_eef6d_xvla.py` 已实现 EE6D → euler → PosCmd 反变换 (见 analysis_kai0_xvla.md §8)。
+
+#### 8.8.3.5 Stage B Overfit 防护 (vis only 895 ep)
+
+895 ep × 10k step 训练有 overfit 风险, 需:
+1. **Lower LR** (5e-5 vs Stage A 的 1e-4)
+2. **Shorter steps** (10k vs Stage A 20k), 加 early stop
+3. **EMA = 0.9999** (X-VLA 默认)
+4. **每 1k step val MAE 检查**, 选 best step ckpt (不一定是最终 step)
+5. **Inline eval val set**: vis val split (e.g., vis_v2_merged_val) — 不在 train set 中
+
+#### 8.8.4 训练 Pipeline — 2-stage Curriculum (X3.A 和 X3.B 都用)
+
+> **2026-05-22 晚 用户决策**: 采用 "**continual pretrain + single-domain adaptation**" curriculum, 不用单 stage training。
+>
+> 这是 **X-VLA Phase I' (我们做的 continual pretrain) + Phase II (vis only adaptation)** 路线, 与论文 Phase I → Phase II 框架对齐, 只是 Phase I 我们做的是 continual extension (不是 from scratch)。
+
+##### Phase I/II 三种区分 (官方 + 我们)
+
+| | Phase I 官方 | **Phase I' (continual pretrain)** ⭐ 我们 Stage A | **Phase II (adaptation)** ⭐ 我们 Stage B |
+|---|---|---|---|
+| 数据 | 290K ep × 7 platforms | 我们 3 (或 2) domain mixed | vis only |
+| 用途 | 训 X-VLA-0.9B base | 把我们 domain 注入 base | target lock-in 部署 |
+| 我们 | ❌ 不做 (用官方 ckpt) | ✅ Stage A | ✅ Stage B |
+| Init | from scratch | lerobot/xvla-base | Stage A 输出 |
+| Sampling | uniform | **balanced 1:7:2 (A) / 1:7 (B)** | single domain |
+
+##### Stage A 训练配置 — Continual Pretrain on multi-domain ⭐
+
+```bash
+lerobot-train \
+  --policy.path="lerobot/xvla-base"            # 官方 X-VLA-0.9B Phase I ckpt
+  --policy.dtype=bfloat16
+  --policy.action_mode=auto                     # 自动检测 dim, max=20
+  --policy.max_action_dim=20                    # EE6D 兼容
+  --steps=20000                                 # Stage A 用 20k step (论文推荐)
+  --policy.freeze_vision_encoder=false          # 不冻 VLM (LeRobot 现行推荐)
+  --policy.freeze_language_encoder=false        # 不冻 LLM
+  --policy.train_policy_transformer=true        # 训 transformer
+  --policy.train_soft_prompts=true              # 训 soft prompts (新加的 3/2 个 domain)
+  --dataset.repo_id=<mixed_dataset_yaml>        # X3.A: A+B+C balanced 1:7:2; X3.B: A+B 1:7
+  --policy.repo_id=<USER>/xvla-<X3A|X3B>-stageA-extended-base
+  # 内部默认:
+  # --freeze_steps=1000        # 前 1k step backbone freeze (新 soft_prompt 嵌入)
+  # --learning_coef=0.1        # VLM 用 base × 0.1 (关键稳定)
+  # --warmup_steps=2000        # LR warmup
+```
+
+##### Stage B 训练配置 — vis-only Adaptation (target lock)
+
+```bash
+lerobot-train \
+  --policy.path=<Stage A 输出 ckpt>            # ← 关键: 从 Stage A extended-base 继续
+  --policy.dtype=bfloat16
+  --policy.action_mode=auto
+  --steps=10000                                 # Stage B 短 (防 overfit on 895 ep)
+  --policy.freeze_vision_encoder=false
+  --policy.freeze_language_encoder=false
+  --policy.train_policy_transformer=true
+  --policy.train_soft_prompts=true              # 主要更新 vis soft_prompt
+  --dataset.repo_id=<vis_only_yaml>             # 仅 vis (B) 数据
+  --policy.repo_id=<USER>/xvla-<X3A|X3B>-deploy
+  # 关键调整 (防 overfit):
+  # --learning_rate=5e-5      # ← 比 Stage A 低一半 (从 1e-4 → 5e-5)
+  # --freeze_steps=500        # ← 较短 backbone freeze
+  # 监控 inline_eval val MAE, 选 best step 而非最终 step
+```
+
+##### Stage A 内部 freeze schedule (X-VLA 论文 §3.3 标准, 自动)
+
+```
+step 0     ─── 1000:    backbone frozen,  仅训 soft_prompts + action_heads
+                         (相当于 "Prompt Warm-up" — 让新 soft_prompts 嵌入)
+step 1000  ─── 20000:   backbone 解冻,    full joint finetune
+                         (相当于 "Joint Optimization" — 全模型 fine-tune)
+                       
+LR scaling 始终生效:    VLM LR = base × 0.1, 其他 = base LR
+```
+
+##### Stage B 内部 freeze schedule
+
+```
+step 0    ─── 500:     backbone frozen, 短 warmup (vis soft_prompt 重新 stabilize)
+step 500  ─── 10000:   backbone 解冻 (LR 5e-5 vs Stage A 的 1e-4, 防 overfit)
+
+监控:   每 1k step 测 inline_eval val MAE on vis_v2_merged_val
+        早停: 若连续 3 个 eval 点 val MAE 不降, 提前终止取 best step ckpt
+```
+
+##### 资源估算 (X3.A + X3.B, 总时长)
+
+| 项 | X3.A (3-domain) | X3.B (2-domain) |
+|---|---:|---:|
+| Stage A effective ep | 16,235 | 12,777 |
+| **Stage A 时长** | ~15h on 16 H20 | ~12h on 16 H20 |
+| Stage B effective ep | 895 (vis only) | 同 |
+| **Stage B 时长** | ~8h on 16 H20 | ~8h on 16 H20 |
+| **总训练时长** | **~23h** | **~20h** |
+| 真机评估 | +1 day | +1 day |
+| **大颗粒度 ETA** | ~25h training + 1 day eval | ~21h training + 1 day eval |
+
+X-VLA-0.9B vs π0.5 3B 速度对比:
+| 项 | π0.5 (3B, 我们之前) | **X-VLA 0.9B** |
+|---|---:|---:|
+| 模型大小 | ~3B params | **~0.9B** (1/3) |
+| 单 step GPU 占用 | ~32GB on H20 | **~12-16GB** on H20 |
+| Batch size | 128 | **256-512** (可放大) |
+
+#### 8.8.5 数据预处理任务 (Phase 0 新增)
+
+| 任务 | 输入 | 输出 | 工程量 |
+|---|---|---|---|
+| **E0.6** Joint→EE6D action 转换 | KAI0 + vis parquet 的 14D joint action | EE6D 20D action (FK + Rot6D 编码) | 1 day (复用 calib/piper_fk.py) |
+| **E0.7** XVLA-Soft-Fold 格式适配 | hdf5 dataset | LeRobot-style 或 X-VLA 原生格式 | 0.5 day |
+| **E0.8** Mixed dataset YAML 构建 | 3 个 source 的路径 | X-VLA datasets/domain_config.py 风格 | 0.5 day |
+| **E0.9** X-VLA env + ckpt 拉取 | conda env XVLA + HF model | 部署到 vePFS-North-E | 0.5 day |
+
+**总 Phase 0 (Track X) 额外工程量**: ~2.5 day。
+
+#### 8.8.6 真机评估 — **仅 vis (B 真机)**
+
+**3 异构 robot → 1 部署目标**: KAI0/XVLA 不部署, **所有真机评估只在 vis 上做**。
+
+**评估设置**:
+- 推理设置: `domain_id = 1 (vis)` 显式 force
+- 任务: cloth folding (与 X-VLA SoftFold-Agilex 几乎相同)
+- 真机 metric: 抓衣角成功率, 完整折叠成功率, 抖动 p99, 执行时长
+- Episode budget: **30 ep 固定场景 + 3 OOD 场景** (不同布料 / 初始姿态 / 光线)
+
+**Reference baseline** (论文报告):
+- X-VLA 官方 SoftFold-Agilex 任务在同硬件 Piper 上**已 100%** 成功率
+- 我们 cloth task 与 SoftFold 内容几乎相同, 期望接近官方水平
+
+**预期收益** (vs Track B Soft Prompt 失败):
+
+| 指标 | π0.5 + 移植 soft prompt (Track B) ❌ | **X-VLA 官方 (Track X)** ⭐ |
+|---|:-:|:-:|
+| Stage 收敛 | Stage 2 × 3 fail | ✅ 论文 + ICLR 验证 |
+| EE 表示 | 14D joint | 20D EE6D (cloth task 友好) |
+| 跨 embodiment | 嫁接式 (A↔B 二分), 不稳 | 原生 multi-domain (A/B/C 三分类), 290K ep × 7 平台验证 |
+| Multi-domain scale | 2 domain (我们 cap) | 30 domain 容量 (官方默认) |
+| vis 部署 prior | 难以保证 | balanced sampling (B ×7) + soft prompt force 锁定 |
+
+#### 8.8.7 与 Track A (SSL) 的关系
+
+**完全 orthogonal, 仍可叠加**:
+```
+Track A Phase 1 SSL (V-JEPA + track + flow + xview): 
+  → 视觉表征 (Florence2 之外的 backbone, 用于对照/替换)
+
+Track X X-VLA 官方训练:
+  → 主线 policy, 论文复现
+  
+最终 paper ablation (E3.x):
+  E3.0 baseline π0.5 default
+  E3.1 + SSL backbone (Track A)
+  X3.0 X-VLA 官方 (Track X 主线)
+  X3.1 X-VLA + SSL frozen vision (Track A + X 融合)
+  X3.2 X-VLA + Track A SSL LoRA (终极)
+```
+
+#### 8.8.8 Track X 实施时间线 (新插)
+
+| Week | 任务 |
+|---|---|
+| Week 1 (本周) | E0.6-E0.9 数据预处理 + 环境部署 |
+| Week 2 | Phase 1 Prompt Warmup (5-10k step on 16 H20) |
+| Week 3-4 | Phase 2 Joint Optim (50k step, ~15-20h) |
+| Week 5 | 真机评估 + ablation 表 |
+
+**总周期**: ~4-5 周 (X-VLA-0.9B 比 π0.5 3B 快 ~2×)
+
+#### 8.8.9 决策 (2026-05-22 晚)
+
+- ✅ **采纳 X-VLA 官方架构** 作为 Track X 新主线
+- ❌ **放弃 Track B** (pi0.5 + 移植 soft prompt) — 实证 Stage 2 × 3 fail
+- 🔄 **保留 Track A** (SSL pretrain) — 与 Track X 并行 + 可叠加 vision backbone
+- 🔄 **保留 Track C** (Action Head Cond) — 已实现, 可作为 paper ablation 对照
+- ⏸️ **暂停 SSL Phase 0 中的 vis_v2_merged + XVLA tracks 预处理** (等 Track X data 格式确定后再算)
+
+#### 8.8.10 参考文献
+
+- [X-VLA Paper (ICLR 2026, arxiv 2510.10274)](https://arxiv.org/pdf/2510.10274)
+- [Project Page + Demos](https://thu-air-dream.github.io/X-VLA/)
+- [HuggingFace Models](https://huggingface.co/collections/2toINF/x-vla)
+- [LeRobot 集成文档](https://huggingface.co/docs/lerobot/xvla)
+- 本地 repo: `/home/tim/workspace/X-VLA/`
+- 详细架构分析: `analysis_kai0_xvla.md` §3 (X-VLA 深度解读)
+
+---
+
+### 8.9 时间线 (Gantt) (8.7→8.8 更新)
 
 ```
 Week 1   ┌────[Phase 0] 数据预处理 (uc02 + Robot-North-H20 并行)
@@ -1084,28 +1363,35 @@ Week 9   │   │  │  │  ┌──[Phase 4] 真机 + Paper
 | 资源 | GPU | 状态 | 当前任务 |
 |---|---:|---|---|
 | **Robot-North-H20** (cn-beijing) | 47 H20 free / 56 total | active | Stage 2 v2 (6fr6c) running 16 H20 |
-| **robot-task** (cn-shanghai) | 12 A100-80G free / 28 total | active | C-Stage 1 v5 (msstb) running 16 A100 |
-| **uc02** | 8 A800 | **idle** ✅ E0.1 CoTracker base+dagger 完成 (6512 ep tracks) | 待: E0.2 RAFT or 其他 |
-| **uc01** | 8 A800 | **idle** ✅ Track C smoke + exp1 eval 完成 | 待: E3.5/E3.6 norm ablation or 其他 |
-| **gf3** | 1 H20 | active (Stage 1 eval done) | smoke/dev |
+| **robot-task** (cn-shanghai) | 4 A100-80G free / 28 total | active | Track C abs single-stage v5 (sqthr) running 16 A100 |
+| **uc02** | 8 A800 | **idle** ✅ E0.1 CoTracker base+dagger 完成 (6512 ep tracks) | 待: Track X X3.A 训练 (uc01+uc02) |
+| **uc01** | 8 A800 | **idle** ✅ Track C smoke + exp1 eval 完成 | 待: Track X X3.A 训练 |
+| **gf3** | 1 H20 | active | smoke/dev |
 | **gf0** | 控制平面 | active | volc + uc 任务统一管理 |
-| uc03 | 8 A800 | busy (task_a_new_100, ~24k/50k, nw=32) | 不动 |
+| uc03 | 8 A800 | busy (task_a_new_100, nw=32) | 不动 |
 
-**当前可启动的并发上限** (2026-05-22 PM):
-- Beijing: **可再启 1 × 16 GPU job** 或 1 × 32 GPU job (31 H20 free)
-- Shanghai: **可再启 1 × 8 GPU job** 或 1 × 16 GPU job (12 A100 free)
-- **uc01 + uc02: 2 × 8 A800 idle** ← 双倍 idle, 可同时跑 2 个 8-GPU job
+**当前可启动的并发上限** (2026-05-22 晚):
+- Beijing: 5 H20 free (我占 48 / 系统占 51 / 总 56)
+- Shanghai: 4 A100 free (我占 16 / 系统占 24 / 总 28)
+- **uc01+uc02: 2 × 8 A800 = 16 A800 idle** ⭐ Track X 主要训练资源
 
-**三轨资源分配实况** (2026-05-22 PM):
-| Track | 当前阶段 | Job ID | 资源 | 状态 |
+**当前 Running jobs (4 个, 2026-05-22 晚)**:
+| Track / Exp | 当前阶段 | Job ID | 资源 | 备注 |
 |---|---|---|---|---|
-| Track A (SSL Phase 0) | E0.1 ✅ done base+dagger / E0.2 RAFT 待启 | — | uc02 8 A800 idle | E0.1 finished, E0.2 待启 |
-| Track B (Soft Prompt) | Stage 2 running (v2 重试) | t-20260522135514-6fr6c | Beijing 16 H20 | Stage 1 done, Stage 2 第二次提交 (修 JAX_PROCESS_COUNT bug) |
-| Track C (Action Head Cond 方案 A) | C-Stage 1 running (v5 重试) | t-20260522135557-msstb | Shanghai 16 A100 | 容器内 uv install + JAX env vars 修复后第五次提交 |
+| Track A (SSL Phase 0) | E0.1 ✅ done base+dagger / E0.2 待启 | — | uc02 闲 (将让位 Track X) | — |
+| Track C abs single-stage | Running | t-20260522194822-sqthr | Shanghai 16 A100 | xvla_actcond_single_stage_joint, vis × 7 balanced |
+| Track C × delta variant | Running | t-20260522195640-t42hs | Beijing 16 H20 | Action Cond × delta-action 对照 |
+| pi05 delta Task_A/base | Running | t-20260522192932-cldrd | Beijing 16 H20 | kai-only delta baseline (no cond) |
+| E3.6 per-DS norm no cond | Running | t-20260522201522-s72th | Beijing 16 H20 | norm ablation |
+| **Track X X3.A** ⏳ prep | HF ckpt 下载 / env setup | — | **uc01+uc02 16 A800** (next) | X-VLA 官方 0.9B, 3-domain (A+B+C) curriculum |
+| **Track X X3.B** ⏳ pending | 等 X3.A 完成 | — | 同上 (sequential) | X-VLA 官方, 2-domain (A+B, no XVLA) |
 
 **已知踩坑** (2026-05-22):
-- JAX 多机环境变量正确名称是 `JAX_NUM_PROCESSES` + `JAX_PROCESS_ID`, **不是** `JAX_PROCESS_COUNT` + `JAX_PROCESS_INDEX` (Stage 2/C-Stage 1 v1-v4 全因此 failed)
-- cnsh volc 容器看不到新建的 vePFS 文件 (GPFS metadata cache stale, gf3 cnbj 同样)。Workaround: 使用容器内 `curl uv install` + symlink `/home/tim/.local/share/uv → /root/.local/share/uv` pattern (老工作 yaml 模式)
+- JAX 多机 env var: train.py:411 读 **`JAX_PROCESS_INDEX`**, 不是 `JAX_PROCESS_ID` / `JAX_PROCESS_COUNT`
+- cnsh container 不能访问 github/astral.sh → uv install fail; workaround: rsync `/home/tim/.local/share/uv` 到 vePFS-cnsh + symlink
+- cnbj 镜像缺 ffmpeg → vis_v2_merged mp4 解码 fail; entrypoint 加 apt-get install ffmpeg
+- vis_v2_merged 数据 frame index 与 mp4 mismatch (skip ~1.4% samples, training 仍推进)
+- cnbj/cnsh git checkout 易 stale → 推荐 HTTPS remote 避免 SSH key 依赖
 
 > 控制平面: 所有 volc + uc 任务通过 **gf0** 统一管理 (见 [training_servers_knowledge_base.md §5.6.c-d](./training_servers_knowledge_base.md))。
 
@@ -1149,7 +1435,7 @@ KAI0 原始数据从 sim01 上传 TOS, 各训练服务器从 TOS 拉到本地 mi
 | E0.2 RAFT optical flow | 待启动 | — | — | 待 E0.1 完成, 复用 uc02 GPU |
 | E0.3 SAM2 cloth mask | ✅ **done** | 2026-05-21 17:40 UTC | 2026-05-22 01:13 UTC | Robot-North-H20 1 节点 (t-20260521174041-8nhps), 6512 ep × 3 view, 19534/19536 npz, 输出 `/vePFS-North-E/.../ssl_phase0/masks/` |
 | ~~E0.4 FOV alignment~~ | ❌ **取消** | — | — | 不可持续 (见 §8.2 + §11 #3), 由 view-cond token + RandomResizedCrop 替代 |
-| ~~E0.5 EE-relative action~~ | ❌ **取消 (2026-05-22)** | — | — | EE-relative 路线整体 deprioritize, 由 Soft Prompt (Track B) + Action Head Cond (Track C) 替代 |
+| ~~E0.5 EE-relative action~~ | ❌ **取消 (2026-05-22)** | — | — | EE-relative 路线整体 deprioritize, 由 Soft Prompt (Track X 官方) + Action Head Cond (Track C) 替代 |
 | **Phase 0 整体** | 🔄 in_progress | 2026-05-21 | — | 修正 ETA: ~3-5 day (E0.4 + E0.5 取消后减少 ~8h) |
 
 ### 10.2 Phase 1 — SSL Pretrain ⏳ pending Phase 0
@@ -1177,7 +1463,8 @@ KAI0 原始数据从 sim01 上传 TOS, 各训练服务器从 TOS 拉到本地 mi
 | **E3.1** + Visual SSL | E1.5 frozen | — | — | — | — | ? | ? | ? |
 | **E3.2** + LoRA tune | E1.5 LoRA | — | — | — | — | ? | ? | ? |
 | **E3.3** + Dynamics | E1.5 LoRA | E2.3 | — | — | ✓ | ? | ? | ? |
-| **B3.0** Track B (Soft Prompt only) | π0.5 default | — | ✓ | — | — | ? | ? | ? |
+| **X3.A** Track X (X-VLA 官方 3-domain) ⭐ | Florence2 | — | ✓ | — | — | ? | ? | ? |
+| **X3.B** Track X (X-VLA 官方 2-domain) | Florence2 | — | ✓ | — | — | ? | ? | ? |
 | **C3.0** Track C (Action Head Cond only) ⭐ 新 | π0.5 default | — | — | ✓ | — | ? | ? | ? |
 | **E3.7** Soft Prompt+SSL | E1.5 LoRA | — | ✓ | — | — | ? | ? | ? |
 | **E3.8** ⭐ 新 Action Head Cond only + SSL | E1.5 LoRA | — | — | ✓ | — | ? | ? | ? |
@@ -1186,25 +1473,14 @@ KAI0 原始数据从 sim01 上传 TOS, 各训练服务器从 TOS 拉到本地 mi
 
 (待填)
 
-### 10.5 Track B — X-VLA Soft Prompt Curriculum ⏳ in_progress (启动 2026-05-21)
-
-| Stage | 状态 | Job ID | Start | End | Step | Best Val | 备注 |
-|---|---|---|---|---|---|---|---|
-| **Stage 1 kai warmup** | ✅ **完成 + offline eval done** | t-20260521154828-76d44 | 2026-05-21 07:48 UTC | 2026-05-22 03:39 UTC | 49999 / 50k | kai_base **0.0083** / kai_dagger **0.0136** | Offline eval gf3 1 H20 dataset_id=0 + 50 ep × 20 q/ep. 详见 `docs/training/xvla_conditioning_methods_results.md` §2.2.1 |
-| ~~Stage 2 vis soft_prompt only~~ | ❌ **2026-05-22 终止** | 6fr6c stopped | — | — | — | — | **用户决策**: Stage 2/3 推进资源回报低, 终止 Track B 链。Stage 1 ckpt 49999 作为 paper E3.7 (Soft Prompt kai warmup) baseline 保留 |
-| ~~Stage 3 joint finetune~~ | ❌ 不再执行 | — | — | — | — | — | 同上终止 |
-| **Track B 整体** | ✅ **Stage 1 完成 + 后续终止** | — | 2026-05-21 | 2026-05-22 | — | — | Track B 仅保留 Stage 1 结果, 不再推进 Stage 2/3 |
-
-> **2026-05-21 重大 bug 修复**: 之前 Stage 2 grad_norm=0 + 旧 Stage 1 soft_prompt_hub 不训练的根因, 是 `RepackTransform` 和 `AgilexInputs` 两处都重建 data dict 时丢掉了 `dataset_id`, 导致 obs.dataset_id=None → embed_prefix soft prompt 分支被 dead-code-eliminate。修复 commits: `9d2184a` (RepackTransform) + `df23d5a` (AgilexInputs)。
-
-### 10.6 Track C — Action Head Cond Token (方案 A) **修订: 单阶段 balanced** (2026-05-22 PM)
+### 10.5 Track C — Action Head Cond Token (方案 A) **修订: 单阶段 balanced** (2026-05-22 PM)
 
 > **方案选定**: 4 候选 (A/B/C/D) 中选 **A (Concat domain token at action expert input)**, B/C/D 搁置。
 >
 > **架构修订 (2026-05-22 PM)**: 经讨论 (§6.3.6 信号路径分析), **放弃 3-stage curriculum, 改单阶段 joint training**。理由:
 > - Track C 方案 A 信号注入在 action expert input (仅 4-8 层), 信号路径远比 Soft Prompt (24 层 PaliGemma) 短, Stage 2 freeze-backbone 边际价值低
 > - 训练时间减半 (~12h vs ~24h)
-> - 实证验证 "stage 必要性" 也是 paper 加分项 (单 stage 行就 paper 说明 Track C 比 Track B 简单)
+> - 实证验证 "stage 必要性" 也是 paper 加分项 (单 stage 行就 paper 说明 Track C 简单到不需 curriculum)
 >
 > **采样平衡**: kai 6512 ep vs vis 895 ep (7.27× 不平衡) → **datasets_yaml vis × 7** (ConcatDataset 重复路径) → 49/51 sample ratio。详见 stage3_kai_vis_joint_balanced.yaml。
 >
@@ -1220,12 +1496,78 @@ KAI0 原始数据从 sim01 上传 TOS, 各训练服务器从 TOS 拉到本地 mi
 | **Single-stage balanced** | 🔄 running | t-20260522160619-flgmf | 2026-05-22 16:06 UTC | — | — / 50k | — | Shanghai 16 A100. kai_base + kai_dagger + vis × 7 joint (datasets_yaml). pi05_base init. ETA ~12h |
 | **Track C 整体 (C3.0 终态)** | 🔄 single-stage running | — | 2026-05-22 | — | — | — | 训练 ~12h. 终 ckpt → vis 真机评估 |
 
-> Track C (方案 A) 与 Track B 形成 1:1 对照:
-> - Soft Prompt: VLM input 端, 32 tokens, 信号经 24 层 paligemma attention
-> - Action Cond (方案 A): action expert input 端, 1 token, 信号仅在 action expert 4-8 层 self-attn
-> - 不同模块、相同 sparse-prefix 设计 → paper E3.7 vs E3.8 直接量化 "domain conditioning 应放 VLM 还是 action expert"
->
-> 双端组合 (E3.9 Soft Prompt + Action Cond) **暂搁置**, 待 E3.7/E3.8 单端结果出来再决定是否启用。
+> Track C (方案 A) 作为 paper ablation 提供 "action expert 端 domain conditioning" 数据点 (vs Track X 主线的 X-VLA 原生 Soft Prompt 实现)。
+
+### 10.6 Track X — X-VLA 官方架构 Native 训练 ⏳ pending (2026-05-22 晚 启动规划)
+
+#### 10.7.1 Phase 0 数据/环境准备 (X3.A + X3.B 共用)
+
+| 阶段 | 状态 | 备注 |
+|---|---|---|
+| **E0.6** Joint→EE6D action 转换 | ⏳ 待启 | 复用 `calib/piper_fk.py` + Rot6D 编码, 1 day. 输出 KAI0 + vis 的 20D EE6D action |
+| **E0.7** XVLA-Soft-Fold 格式适配 | ⏳ 待启 | hdf5 → LeRobot 或 X-VLA 原生, 0.5 day. **仅 X3.A 需要**, X3.B 跳过 |
+| **E0.8** Mixed dataset YAML | ⏳ 待启 | 0.5 day. 两组各写一份: `mixed_3domain.yaml` (A+B+C) + `mixed_2domain.yaml` (A+B) |
+| **E0.9** X-VLA env + 官方 ckpt | ⏳ 待启 | conda env XVLA + HF `2toINF/X-VLA` 拉到 vePFS-cnbj, 0.5 day |
+| **Phase 0 合计** | — | ~2.5 day (X3.B 可减 0.5 day 因不需 XVLA 适配) |
+
+#### 10.7.2 Exp X3.A — 3-domain Curriculum (A + B + C → vis adaptation)
+
+> 2-stage curriculum: Stage A (continual pretrain on A+B+C balanced 1:7:2) → Stage B (vis-only adaptation)
+
+| 阶段 | 状态 | Job ID | 起 | 终 | Step | Best Val | 备注 |
+|---|---|---|---|---|---|---|---|
+| **X3.A.SA** Stage A Continual Pretrain | ⏳ 待启 | — | — | — | — / 20k | — | Init: lerobot/xvla-base. Data: A+B+C balanced 1:7:2 (eff 16,235 ep). 16 H20, ~15h. 内部 freeze_steps=1000 |
+| **X3.A.SB** Stage B vis-only Adapt | ⏳ 待启 | — | — | — | — / 10k | — | Init: X3.A.SA 输出. Data: B (vis) only. LR 5e-5, freeze_steps=500, 监控 val MAE 选 best. 16 H20, ~8h |
+| **X3.A.eval** vis 真机评估 | ⏳ 待启 | — | — | — | — | — | force domain_id=20 (vis), 30 ep + 3 OOD |
+| **X3.A 整体** | ⏳ pending | — | — | — | — | — | ~23h training + 1 day eval |
+
+#### 10.7.3 Exp X3.B — 2-domain Curriculum (A + B → vis adaptation, **不含 XVLA**)
+
+> 同 X3.A 流程, 仅 Stage A 数据少 C (XVLA), domain 数 2 (vs 3)
+
+| 阶段 | 状态 | Job ID | 起 | 终 | Step | Best Val | 备注 |
+|---|---|---|---|---|---|---|---|
+| **X3.B.SA** Stage A Continual Pretrain | ⏳ 待启 | — | — | — | — / 20k | — | Init: lerobot/xvla-base. Data: A+B balanced 1:7 (eff 12,777 ep). 16 H20, ~12h. 内部 freeze_steps=1000 |
+| **X3.B.SB** Stage B vis-only Adapt | ⏳ 待启 | — | — | — | — / 10k | — | Init: X3.B.SA 输出. Data: B (vis) only. 同 X3.A.SB config. 16 H20, ~8h |
+| **X3.B.eval** vis 真机评估 | ⏳ 待启 | — | — | — | — | — | force domain_id=20 (vis), 30 ep + 3 OOD |
+| **X3.B 整体** | ⏳ pending | — | — | — | — | — | ~20h training + 1 day eval |
+
+#### 10.7.4 Track X 关键决策点 (XVLA 数据贡献 ablation)
+
+| 决策点 | 触发条件 | 行动 |
+|---|---|---|
+| **D1**: X3.A vs X3.B 真机评估对比 | 两实验都完成 | 量化 XVLA (C) 的贡献价值 |
+| D1.结果 X3.A > X3.B | XVLA 增益显著 | 终态采用 X3.A 配置 (3-domain) |
+| D1.结果 X3.A ≈ X3.B | XVLA neutral | 简化为 X3.B (减少复杂度) |
+| D1.结果 X3.A < X3.B | XVLA 反而 dilute | 终态采用 X3.B, XVLA 仅用于 Track A SSL pretrain |
+
+#### 关键路径 (启动顺序)
+
+```
+[E0.6-E0.9 数据预处理] ─── 2.5 day
+        ↓
+[X3.B.SA Stage A: A+B continual] ─── ~12h    ← 优先启 (pipeline 验证, 无 XVLA 依赖)
+        ↓
+[X3.B.SB Stage B: vis adapt]    ─── ~8h
+        ↓
+[X3.B 真机评估]                  ─── 1 day
+                                          ↓
+[X3.A.SA Stage A: A+B+C continual] ─── ~15h
+        ↓
+[X3.A.SB Stage B: vis adapt]    ─── ~8h
+        ↓
+[X3.A 真机评估]                  ─── 1 day
+        ↓
+[D1 决策: XVLA 是否有增益?]
+```
+
+**总周期**: ~5-7 day on Robot-North-H20 16 H20 (含数据预处理 + 真机)
+
+**关键依赖**:
+1. **E0.6 Joint→EE6D** 完成 (用 PiperFK + Rot6D, 1 day)
+2. **E0.7 XVLA-Soft-Fold 格式适配** 完成 (仅 X3.A 需要)
+3. **X-VLA env + 官方 ckpt** 部署到 vePFS-cnbj
+4. **Stage A 完成后** 立即接 Stage B (用 Stage A 输出 ckpt 作为 init)
 
 ---
 
@@ -1255,11 +1597,11 @@ KAI0 原始数据从 sim01 上传 TOS, 各训练服务器从 TOS 拉到本地 mi
 
 ### 决策点 2: Embodiment conditioning 实现方式? ✅ **重新决策 (2026-05-22, 二次更新)**
 - ~~Hard prompt only~~ (信号沿 LLM attention 隐式传播, 不显式 gate)
-- ✅ **Soft Prompt (X-VLA style)** — Track B, 在 VLM input 端 (`pi0.py:soft_prompt_hub`) 已实现并验证 PASS (76d44)
+- ✅ **Soft Prompt (X-VLA 官方原生)** — Track X, 在 VLM input 端 (Florence2 + SoftPromptedTransformer, X-VLA-0.9B 官方 ckpt)
 - ⭐ **Action Head Cond Token (方案 A)** — Track C 选定, 在 action expert input 端 concat 1 domain token (待加, 见 §6.3.1)
 - ~~方案 B (FiLM) / C (adaLN) / D (Cross-attn)~~ **2026-05-22 暂搁置** — 4 选 1 后选定方案 A, 工程最简 + paper 与 Soft Prompt 1:1 sparse-prefix 对照
 - ~~终态 E3.9 双端 Soft + Action Cond~~ **暂搁置** — 待 E3.7 (Soft only) vs E3.8 (Action Cond only) 单端结果出来再决定是否启用双端
-- 真机评估: 全部 Track B/C 终态在 **vis (B 真机)** 测试
+- 真机评估: 全部 Track C/X 终态在 **vis (B 真机)** 测试
 
 ### 决策点 3: EE-relative action 是否启用? ❌ **已 deprioritize (2026-05-22)**
 - ~~Phase 0 E0.5 EE-relative preprocessing~~ 取消
@@ -1268,7 +1610,7 @@ KAI0 原始数据从 sim01 上传 TOS, 各训练服务器从 TOS 拉到本地 mi
 - 保留作为远期 backup, 如 conditioning 路线效果不佳再启用 (§5 内容保留作参考)
 
 ### 决策点 4: 是否回看 M1 短期方案?
-- 触发条件: Phase 1 (SSL) + Track B Stage 3 / Track C Stage 3 完成首轮 ablation, 如果 E3.1 / E3.7 / E3.8 已经超过 baseline → M1 不需要做
+- 触发条件: Phase 1 (SSL) + Track C / Track X 完成首轮 ablation, 如果 E3.1 / E3.7 / E3.8 已经超过 baseline → M1 不需要做
 - 否则: 回看 B oversample 修复抖动 (EE-relative 已 deprioritize, 不再回看)
 
 ---
@@ -1277,6 +1619,10 @@ KAI0 原始数据从 sim01 上传 TOS, 各训练服务器从 TOS 拉到本地 mi
 
 | 日期 | 内容 |
 |---|---|
+| 2026-05-22 (晚 四次修订) | **Track X 切到 2-stage Curriculum (用户决策)**: 改用 "**continual pretrain + single-domain adaptation**" 模式 — Stage A 从 lerobot/xvla-base 续训 (multi-domain mixed, balanced sampling, 20k step) → Stage B 用 vis only 短 adaptation (10k step, LR 5e-5 防 overfit, freeze_steps=500, 监控 val MAE 选 best). 这是 X-VLA "Phase I' continual extension + Phase II adaptation" 路线, 与论文 Phase I/II 框架对齐。**只跑 X3.A + X3.B 两组**, 不做 single-training 对照 (节省资源). domain_id 改用 base 中未占用 slot (19=A, 20=B, 21=C). 更新 §8.8.3 / §8.8.4 / §10.7.2 / §10.7.3 |
+| 2026-05-22 (晚 三次修订) | **Track X 训练 pipeline 改为论文 1:1 + 加 X3.A/X3.B 对照**: 修正之前规划 (取消独立 2-phase + Phase 3 vis-only lock, 取消偏离论文做法). 改用 X-VLA 论文/LeRobot 官方 single training (20k step + `freeze_steps=1000` 内部前 1k step prompt warmup + `learning_coef=0.1` VLM LR scaling). 加 §8.8.3.1 两组对照实验: **X3.A** (3-domain A+B+C balanced 1:7:2, ~15h) vs **X3.B** (2-domain A+B balanced 1:7, ~12h) 量化 XVLA 数据贡献. §8.8.4 改为 single training + Phase II 内部 schedule. §10.7.2/10.7.3 改为单 stage 状态表 + 加 §10.7.4 决策点 D1. LeRobot 集成现行推荐: 不冻 VLM, train transformer + soft prompts + VLM (LR × 0.1), action_mode=auto, dtype=bf16 |
+| 2026-05-22 (晚 二次修订) | **明确 3 异构机器人 + 唯一部署目标 vis**: 头部 banner 重写, 加 "3 robot heterogeneous" 表 (§1.1: A=KAI0 dom_id=0 / B=vis dom_id=1 ⭐部署 / C=XVLA dom_id=2); §8.8.3 数据池表加 domain_id + 部署列, balanced sampling 设计 (A:B:C = 1×:7×:2×, vis ×7 上采样确保部署 prior); §8.8.3.1 推理时 force `domain_id=1`; §8.8.6 真机评估明确 vis-only, X-VLA SoftFold (同硬件) baseline 100% |
+| 2026-05-22 (晚 战略转向) | **❌ Track B 完全终止 + ⭐ Track X 启动 (X-VLA 官方架构 native 训练)**: 经实证 Track B (pi0.5 + 移植 soft prompt) Stage 2 × 3 fail + e3-6 × 2 fail, 嫁接式不稳。改走 X-VLA 官方完整架构 (Florence2 + 24-layer SoftPromptedTransformer + EE6D 20D action + X-VLA-0.9B 官方 ckpt), 与论文 1:1 一致, 仅适配 KAI0+vis 数据。新增 §8.8 Track X 完整计划 + §10.7 状态跟踪表; §8.7 Track B 标注 DEPRECATED + §10.5 标注完全终止。Phase 0 新增 E0.6-E0.9 (joint→EE6D, XVLA 格式, mixed yaml, env+ckpt)。本地已有官方 repo `/home/tim/workspace/X-VLA/`. 任务 #16 删除 + #17 新建 Track X. ICLR 2026 + IROS 2025 Champion + SoftFold-Agilex (同硬件) 100% 验证 |
 | 2026-05-22 (深夜) | **§6.4 RTC / TAC 实时性方案对比与集成计划**: 整理 3 篇 RTC 论文 (Inference RTC 2506.07339, **TAC 2512.05964 ⭐**, A2C2 2509.23224) 维度对比; 确认本地 `pi0_rtc.py` 已 1:1 复刻 Inference RTC, 缺 TAC training path; 移植方案: Algorithm 1 复刻 (~6 行 compute_loss 改 + adaLN per-token broadcast), Pi0Config 加 `tac_enabled` flag, 0 新参数; 复现难易度 ⭐⭐⭐⭐⭐ (算法/超参全披露, 不依赖闭源 π0.6 ckpt); 加 §6.4.9 Phase 3 ablation 新增 E3.RTC1-RTC4 行 (Inference RTC / TAC / TAC+RTC / TAC+A2C2); A2C2 暂搁置 (等 TAC 结果) |
 | 2026-05-22 (PM 二次决策) | **Track C 改单阶段 balanced + Track B 终止 Stage 2/3 + E3.6 提交**: 经 §6.3.6 信号路径分析, Action Cond 方案 A 在 action expert input 端的信号路径远比 Soft Prompt 短 (4-8 层 vs 24 层), Stage 2 freeze-backbone 边际价值低 → 弃用 3-stage curriculum, 改单阶段 joint training (kai+vis 50k step, balanced sampling vis × 7). 训练时间 24h → 12h. Track B Stage 2 (6fr6c) + 3-stage curriculum 整体终止, 仅保留 Stage 1 ckpt 49999 作 paper E3.7 baseline. 新提交: E3.6 per-DS norm + no cond (Beijing 16 H20, n98pl) + Track C single-stage balanced (Shanghai 16 A100, flgmf) |
 | 2026-05-22 (晚) | **Track C 方案 A 选定 + B/C/D 搁置**: 4 候选 Action Head Cond 方案 (A Concat / B FiLM / C adaLN / D Cross-Attn) 详细对比后, 选 **方案 A** (Concat domain token at action expert input)。理由: 工程最简 + 与 Soft Prompt 形成 1:1 sparse-prefix 对照 (不同模块、相同设计模式), paper E3.7 vs E3.8 直接量化 "VLM 端 vs Action expert 端" 注入点选择。B/C/D 暂搁置作技术参考。E3.9 双端组合也搁置, 待单端结果出来再决定。Track C 训练用 kai+vis 跨本体混合, 真机评估用 vis B 真机。§6.3 / §6.2 / §3.5.7 / §10.4 / §10.6 / 决策点 2 同步更新 |
