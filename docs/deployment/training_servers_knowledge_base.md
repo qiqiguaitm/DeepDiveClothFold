@@ -1228,34 +1228,67 @@ ssh sim01 'cd /data1/DATA_IMP/checkpoints && \
 
 ### 6.5 TOS bucket 目录约定 ⭐
 
+#### 6.5.A 顶层 prefix (按用途分)
+
+```
+tos://transfer-shanghai/
+├── KAI0/                         ⭐ 主数据 prefix (大写, canonical)
+├── kai0/checkpoints/             ckpt 落档 (小写)
+├── ckpt/                         早期 ckpt 中转
+├── shared_ckpt/                  跨用户共享 ckpt (XVLA / mixed_1_clean 等)
+├── shared_sz/                    深圳团队共享
+├── kai_official_relay/           kai0_base / kai0_dagger 官方数据中转
+├── from_uc01/                    uc01 → 任意机器中转 (含 gf3 venv tar)
+├── tim/                          用户私有 (临时打包 / 中转)
+├── migrate_js/                   js 集群停用前迁移备份
+├── migrate_pure200/              early pure200 迁移备份
+├── backup_uc_reinstall_20260516/ uc 重装前完整备份
+├── graspforge/                   另一项目 (GraspForge)
+├── sam3d/                        另一项目 (SAM3D)
+└── test_xvla_speed/              性能测试
+```
+
+#### 6.5.B KAI0/ 主数据结构 (canonical)
+
 ```
 tos://transfer-shanghai/KAI0/
-├── dataset/                       # 训练数据集 (canonical)
-│   ├── Task_A/
-│   │   ├── kai0_base/            # 官方 base (3055 ep)
-│   │   ├── kai0_dagger/          # 官方 dagger (3457 ep)
-│   │   ├── vis_base/             # 自采 raw (各日期子目录)
-│   │   ├── vis_base_clean_v2/    # 自采清理后 (837 ep)
-│   │   ├── A_new_smooth_800/     # 合并后训练 dataset
-│   │   ├── A_new_pure_200/
-│   │   └── A_new_pure2_1800/
-│   ├── Task_E/                   # 扶起倒箱
-│   └── Task_P/                   # 抓放盒子
+├── Task_A/                       ⭐ 主任务 (双臂叠衣)
+│   ├── base/
+│   │   ├── 2026-04-23-v2/        每个 date dir 结构:
+│   │   ├── 2026-04-24-v2/          ├── data/chunk-000/episode_*.parquet
+│   │   ├── 2026-04-25-v2/          ├── videos/chunk-000/
+│   │   ├── 2026-04-28-v2/          │   ├── hand_left/episode_*.mp4
+│   │   ├── 2026-04-29-v2/          │   ├── hand_right/episode_*.mp4
+│   │   ├── 2026-04-30-v2/          │   ├── top_head/episode_*.mp4
+│   │   ├── 2026-05-06-v2/          │   └── top_head_depth/episode_*.zarr/
+│   │   ├── 2026-05-07-v2/          └── meta/{info.json,episodes.jsonl,tasks.jsonl}
+│   │   ├── 2026-05-08-v2/
+│   │   ├── 2026-05-09-v2/        注: 4 月之前的 date 无 top_head_depth (那时未录 depth);
+│   │   ├── 2026-05-16-v2/             5-06 起所有 date 含完整 depth zarr.
+│   │   ├── 2026-05-18-v2/
+│   │   ├── 2026-05-19-v2/
+│   │   ├── 2026-05-20-v2/
+│   │   ├── 2026-05-21-v2/
+│   │   ├── 2026-05-22-v2/
+│   │   └── kai0_official_base/   官方 base 副本 (3055 ep)
+│   ├── autonomy/
+│   │   └── <date-v2>/            自主推理录制数据 (同 base 结构)
+│   └── dagger/
+│       └── <date-v2>/            DAgger 接管数据 (同 base 结构)
 │
-├── checkpoints/                   # 训练完成 ckpt (tar 压缩)
-│   ├── task_a_new_smooth_800_step49999.tar
-│   ├── task_a_new_pure_200_step49999.tar
-│   └── ...
-│
-├── base_init_ckpts/              # 基础模型 (供训练 init 用)
-│   ├── pi05_base.tar             # 12.3 GB, 官方 pi0.5
-│   ├── mixed_1_clean/            # Task_A 训练好的中间 ckpt
-│   └── ...
-│
-└── external/                     # 第三方资源
-    ├── XVLA-Soft-Fold/           # Facebear HF 数据集副本
-    └── ...
+├── Task_E/  base/<date-v2>/      扶起倒箱
+├── Task_H/  base/<date-v2>/      
+├── Task_HP/ base/<date-v2>/      
+├── Task_P/  base/<date-v2>/      抓放盒子
+├── Task_PP/ base/<date-v2>/      
+└── Task_PS/ base/<date-v2>/      
 ```
+
+#### 6.5.C "-v2" 后缀约定 (2026-05-11 起)
+
+- `<YYYY-MM-DD>-v2` = canonical 命名 (本地权威格式, 全 TOS 路径只用此格式)
+- 没有 -v2 后缀的 legacy 目录均为 deprecated, 不应作为新数据落点
+- 一个 date 在 TOS 同时只能以 `-v2` 形式存在; 数据修改 → 升 -v3 / -v4, 同名永不内容变更 (append-only)
 
 ### 6.6 同步频率 + 一致性约定
 
