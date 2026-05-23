@@ -313,7 +313,7 @@ class ObsPrefetchWorker:
         # daemon thread, no join — just let it die with process
 
     def get_obs(self, timeout: float = 0.1):
-        """Get the freshest pre-fetched obs. Raises queue.Empty on timeout."""
+        """Get freshest pre-fetched (obs, head_stamp_ns) tuple. Raises queue.Empty on timeout."""
         return self._queue.get(timeout=timeout)
 
     def _loop(self):
@@ -323,16 +323,19 @@ class ObsPrefetchWorker:
 
         while self._running:
             try:
-                obs = self._owner._get_observation()
+                # C.2 2026-05-23: 用 _get_observation_with_stamp 拿 (obs, stamp_ns) tuple.
+                # stamp 通过 queue 侧通道传给 main, 不进 obs dict — JAX/V1 server 看不到.
+                obs, stamp_ns = self._owner._get_observation_with_stamp()
                 if obs is None:
                     # sensor 数据不全 (sync_frame 失败), 短暂 yield 后重试
                     time.sleep(0.005)
                     continue
 
+                item = (obs, stamp_ns)
                 # Drop-old, put-new: queue 永远含最新 obs.
                 # 若 main 还没取走上一个, 就 drop 上一个换新.
                 try:
-                    self._queue.put_nowait(obs)
+                    self._queue.put_nowait(item)
                 except queue.Full:
                     try:
                         _ = self._queue.get_nowait()
@@ -340,7 +343,7 @@ class ObsPrefetchWorker:
                     except queue.Empty:
                         pass
                     try:
-                        self._queue.put_nowait(obs)
+                        self._queue.put_nowait(item)
                     except queue.Full:
                         # race condition (main 同时也在取), 放弃这帧, 下轮重 fetch
                         pass
@@ -1924,7 +1927,13 @@ class PolicyInferenceNode(Node):
             img_left = self.bridge.imgmsg_to_cv2(img_left_msg, 'bgr8')
             img_right = self.bridge.imgmsg_to_cv2(img_right_msg, 'bgr8')
 
-        return img_front, img_left, img_right, joint_left_msg, joint_right_msg
+        # C.2 2026-05-23: 捕获 head 相机帧 stamp (ns), 让 _record_latency_sample 准确测
+        # image_age. A.2 pipelined mode 下 worker pop deque 导致 main 读 deque[-1] 偶发空
+        # (70% NaN); 改成沿着 obs 通过 tuple 把"这次推理实际用的帧"的 stamp 传过去, 测量稳定.
+        head_stamp = img_front_msg.header.stamp
+        head_stamp_ns = head_stamp.sec * 1_000_000_000 + head_stamp.nanosec
+
+        return img_front, img_left, img_right, joint_left_msg, joint_right_msg, head_stamp_ns
 
     # ── Image preprocessing (严格复刻原版管线) ──────────────────────
 
@@ -1940,20 +1949,35 @@ class PolicyInferenceNode(Node):
         return img
 
     def _get_observation(self):
-        """Pack current sensor data into policy input.
+        """Pack current sensor data into policy input. Returns obs dict (or None).
+
+        Thin wrapper around `_get_observation_with_stamp` 丢掉 stamp — 保留这个签名
+        向后兼容任何"只关心 obs"的调用方. 新代码 (worker / inference loop main 路径)
+        应直接用 _get_observation_with_stamp() 拿 stamp.
+        """
+        obs, _stamp = self._get_observation_with_stamp()
+        return obs
+
+    def _get_observation_with_stamp(self):
+        """Pack current sensor data into policy input + return head 帧 stamp.
+
+        Returns (obs_dict, head_stamp_ns) or (None, None) if sensor data 不全.
+        head_stamp_ns 用于准确测 image_age (尤其 A.2 pipelined mode 下 worker 已经
+        pop 走 deque, main 读 deque[-1] 偶发空). stamp 不进 obs dict, 走 tuple 侧通道
+        避免 JAX/V1 transform 链兼容性风险.
 
         严格复刻原版 update_observation_window + inference_fn 的图像管线:
         1. get_synced_frame (timestamp 对齐)
-        2. JPEG encode/decode (训练对齐)
-        3. BGR → RGB
+        2. JPEG encode/decode (训练对齐, P2 fast_obs_pipeline 可跳过)
+        3. BGR → RGB (P2 fast_obs_pipeline 可跳过)
         4. resize_with_pad(224, 224) — 保持宽高比, 零填充
         5. HWC → CHW
         """
         frame = self._get_synced_frame()
         if frame is None:
-            return None
+            return None, None
 
-        img_front, img_left, img_right, joint_left_msg, joint_right_msg = frame
+        img_front, img_left, img_right, joint_left_msg, joint_right_msg, head_stamp_ns = frame
 
         from openpi_client import image_tools
 
@@ -1980,7 +2004,7 @@ class PolicyInferenceNode(Node):
             np.array(joint_right_msg.position),
         ), axis=0)
 
-        return {
+        obs = {
             'state': qpos,
             'images': {
                 'top_head':   imgs[0].transpose(2, 0, 1),   # CHW
@@ -1989,6 +2013,9 @@ class PolicyInferenceNode(Node):
             },
             'prompt': self.prompt,
         }
+        # C.2: stamp 不进 obs dict (避免 JAX/V1 transform 链兼容性风险),
+        # 走 tuple 侧通道. obs 完全 bit-identical 旧版.
+        return obs, int(head_stamp_ns)
 
     # ── Inference loop ──────────────────────────────────────────────
 
@@ -1998,11 +2025,12 @@ class PolicyInferenceNode(Node):
         self, t_loop_start, t_obs_start, t_obs_end,
         t_ws_send, t_ws_recv, t_buffer_done,
         obs, result,
+        obs_stamp_ns=None,  # C.2: head 帧 stamp 侧通道, 优先于 deque[-1] fallback
     ):
         """Write one CSV row capturing 11-segment client-side latency profile.
 
         Segments (ms):
-            t_image_age           : ros now - latest image header.stamp
+            t_image_age           : C.2 优先 obs_stamp_ns; fallback deque[-1] stamp
             t_obs_construct       : t_obs_end - t_obs_start (_get_observation cost)
             t_ws_full_rtt         : t_ws_recv - t_ws_send (raw infer() round-trip)
             t_ws_overhead         : t_ws_full_rtt - server_total (= serialize+transit)
@@ -2014,16 +2042,24 @@ class PolicyInferenceNode(Node):
             return
         try:
             self._lat_profile_cycle += 1
-            # Image age: time since latest image was captured (header.stamp).
             now_ros = self.get_clock().now()
             img_age_ms = float('nan')
-            with self._sensor_lock:
-                if self._img_front_deque:
-                    latest_img = self._img_front_deque[-1]
-                    img_stamp = latest_img.header.stamp
-                    img_age_ns = (now_ros.nanoseconds
-                                  - (img_stamp.sec * 1_000_000_000 + img_stamp.nanosec))
-                    img_age_ms = img_age_ns / 1e6
+            # C.2 2026-05-23: 优先用调用方传的 obs_stamp_ns (本次推理实际用的 head 帧
+            # stamp, 走 tuple 侧通道 — 不进 obs dict, 兼容 JAX/V1 transform 链).
+            # A.2 pipelined mode 下 worker 已经 pop 走 deque, main 读 deque[-1] 偶发
+            # 空 (70% NaN); 用 stamp 参数避免那个 race.
+            if obs_stamp_ns is not None:
+                img_age_ns = now_ros.nanoseconds - int(obs_stamp_ns)
+                img_age_ms = img_age_ns / 1e6
+            else:
+                # Legacy fallback: 读 deque[-1] (pre-C.2 行为, JAX 路径 / 同步模式走这里)
+                with self._sensor_lock:
+                    if self._img_front_deque:
+                        latest_img = self._img_front_deque[-1]
+                        img_stamp = latest_img.header.stamp
+                        img_age_ns = (now_ros.nanoseconds
+                                      - (img_stamp.sec * 1_000_000_000 + img_stamp.nanosec))
+                        img_age_ms = img_age_ns / 1e6
 
             pt = result.get('policy_timing', {}) if isinstance(result, dict) else {}
             obs_construct_ms = (t_obs_end - t_obs_start) * 1000
@@ -2107,14 +2143,16 @@ class PolicyInferenceNode(Node):
                 # worker 在上一 cycle 的 forward 期间已经准备好 obs (~15ms 任务),
                 # 这里 get() 几乎 0 等. main 完成的总 cycle 不再含 obs_construct 时间.
                 # Fallback: queue 空 (worker 启动初期 / sensor data 不全) → 同步取.
+                # C.2: 通过 tuple 侧通道拿 head 帧 stamp, 准确测 image_age (obs dict 不动).
+                obs_stamp_ns = None
                 if self._pipelined_obs and self._obs_prefetch is not None:
                     try:
-                        obs = self._obs_prefetch.get_obs(timeout=0.1)
+                        obs, obs_stamp_ns = self._obs_prefetch.get_obs(timeout=0.1)
                     except queue.Empty:
                         # worker 还没准备好 (启动初期 / sensor 不齐), 同步走一次
-                        obs = self._get_observation()
+                        obs, obs_stamp_ns = self._get_observation_with_stamp()
                 else:
-                    obs = self._get_observation()
+                    obs, obs_stamp_ns = self._get_observation_with_stamp()
                 if obs is None:
                     time.sleep(0.01)
                     continue
@@ -2204,6 +2242,7 @@ class PolicyInferenceNode(Node):
                             t_ws_send=t_ws_send, t_ws_recv=t_ws_recv,
                             t_buffer_done=t_buffer_done,
                             obs=obs, result=result,
+                            obs_stamp_ns=obs_stamp_ns,  # C.2: head 帧 stamp 走侧通道
                         )
 
                     # Publish full chunk for rerun_viz to show predicted trajectory
