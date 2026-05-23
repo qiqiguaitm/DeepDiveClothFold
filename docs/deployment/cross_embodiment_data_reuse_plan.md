@@ -1422,6 +1422,44 @@ KAI0 原始数据从 sim01 上传 TOS, 各训练服务器从 TOS 拉到本地 mi
 
 ## 10. 状态跟踪 (持续更新)
 
+### 10.0 当前执行总览 (2026-05-23 更新)
+
+**已完成 ✅**:
+| 模型 | 数据 | Action | Cond | 结果 |
+|---|---|---|---|---|
+| pi05 delta task_a_base | kai0_base 3055 ep | delta | ❌ | 50k step ckpt @ cnbj |
+| Action Cond × delta | kai+vis × 7 balanced | delta | ✅ 2-domain | 50k step ckpt @ cnbj |
+
+**正在跑 🟢** (8 个并行训练):
+| Job | 资源 | 进度 |
+|---|---|---|
+| Track C abs single-stage (Action Cond × absolute) | Shanghai 16 A100 | 96% (48k/50k) |
+| E3.6 per-DS norm no cond baseline | Beijing 16 H20 | 49% (24k/50k) |
+| pi05 vis_v2_full baseline (新 1406 ep 数据) | Beijing 8 H20 | 6% (slow IO) |
+| pi05 vis_v2_full + TAC (RTC2) | Beijing 16 H20 | starting |
+| Track X X3.A 3-domain (A+B+C) Stage A | uc02 8 A800 | 32% (6.4k/20k) |
+| Track X X3.B 2-domain (A+B) Stage A | uc01 8 A800 | 32% (6.4k/20k) |
+
+**数据资产 ✅**:
+- `vis_v2_full` (新): 1406 ep / 1.93M frames / 16 v2 dates 04-23~05-22 (cnsh + cnbj)
+- `vis_v2_merged` (旧): 895 ep / 04-23~05-09 (legacy, 用 symlink reuse)
+- EE6D 20D action 转换 (kai/vis joint→EE6D via PiperFK + Rot6D): 7.4M frames cached
+- XVLA-Soft-Fold (C domain): 1542 hdf5 files / 2.85M frames cached
+
+**Paper Ablation 矩阵 (实测)**:
+|  | No cond | Action Cond (Track C) |
+|---|---|---|
+| Absolute action | E3.6 (running) | **Track C abs** (~1h done) |
+| Delta action | **pi05 delta** ✅ | **Action Cond × delta** ✅ |
+
+→ 2×2 配齐, 等 eval MAE 量化收益。
+
+**Track X 实施变更**:
+- 原计划: lerobot-train + EE6D + 多 stage curriculum (~2.5 day prep)
+- **实际**: lerobot/xvla-base + custom multi-domain wrapper on uc01/02 (~1.5 day prep ✅ done)
+
+---
+
 ### 10.1 Track A Phase 0 — 数据预处理 🔄 in_progress (启动 2026-05-21)
 
 | Sub-task | 状态 | 启动 | 完成 | 备注 |
@@ -1490,84 +1528,69 @@ KAI0 原始数据从 sim01 上传 TOS, 各训练服务器从 TOS 拉到本地 mi
 
 | 步骤 | 状态 | Job ID | Start | End | Step | Best Val | 备注 |
 |---|---|---|---|---|---|---|---|
-| Phase 1.5 代码实现 | ✅ **完成** | commits 4050336 + 81d2ec8 + 5f18e3f | 2026-05-22 | 2026-05-22 | — | — | pi0_config / pi0.py / weight_loaders / configs / datasets_yaml 全套实现 + balanced sampling. 旧 ckpt 完全兼容 |
-| Smoke test (kai+vis mixed) | ✅ **PASS** | uc01 actcond_smoke | 2026-05-22 04:21 | 2026-05-22 04:34 | 50 / 100 | — | uc01 8 A800 batch 16. **mu d0 absmax=7.35e-5 L2=5.57e-4** (grad flow OK) |
-| ~~3-stage curriculum (S1/S2/S3)~~ | ❌ **2026-05-22 PM 弃用** | — | — | — | — | — | 用户决策: action expert 端信号路径短, 不需 curriculum. 改单阶段 |
-| **Single-stage balanced** | 🔄 running | t-20260522160619-flgmf | 2026-05-22 16:06 UTC | — | — / 50k | — | Shanghai 16 A100. kai_base + kai_dagger + vis × 7 joint (datasets_yaml). pi05_base init. ETA ~12h |
-| **Track C 整体 (C3.0 终态)** | 🔄 single-stage running | — | 2026-05-22 | — | — | — | 训练 ~12h. 终 ckpt → vis 真机评估 |
+| Phase 1.5 代码实现 | ✅ DONE | commits 4050336 + 81d2ec8 + 5f18e3f | 2026-05-22 | 2026-05-22 | — | — | pi0_config / pi0.py / weight_loaders / configs / datasets_yaml |
+| Smoke test (kai+vis mixed) | ✅ PASS | uc01 actcond_smoke | 2026-05-22 04:21 | 2026-05-22 04:34 | 50 / 100 | — | mu d0 absmax=7.35e-5 (grad flow OK) |
+| **Track C abs single-stage** | 🟢 96% running | t-20260522194822-sqthr | 2026-05-22 19:48 UTC | ETA 1h | 48k / 50k | TBD eval | Shanghai 16 A100. kai+vis × 7 joint. ckpt: cnsh /vePFS/.../xvla_actcond_single_stage_joint/ |
+| **Track C × delta variant** | ✅ DONE | t-20260522195640-t42hs | 2026-05-22 | 2026-05-23 08:06 UTC | **50k** | TBD eval (running on gf3) | Beijing 16 H20, 19h46m. ckpt: cnbj /vePFS-North-E/.../xvla_actcond_single_stage_joint_delta/49999/ |
+| **pi05 delta task_a_base (no cond)** | ✅ DONE | t-20260522192932-cldrd | 2026-05-22 | 2026-05-23 06:50 UTC | **50k** | TBD eval (running) | Beijing 16 H20, 19h15m. baseline for delta-vs-absolute / cond-vs-nocond. ckpt: cnbj /vePFS-North-E/.../pi05_flatten_fold_task_a_base_delta/49999/ |
+| **E3.6 per-DS norm no cond** | 🟢 49% running | t-20260522201522-s72th | 2026-05-22 | ETA ~10h | 24k / 50k | — | Beijing 16 H20. baseline 对照 |
 
 > Track C (方案 A) 作为 paper ablation 提供 "action expert 端 domain conditioning" 数据点 (vs Track X 主线的 X-VLA 原生 Soft Prompt 实现)。
 
-### 10.6 Track X — X-VLA 官方架构 Native 训练 ⏳ pending (2026-05-22 晚 启动规划)
+### 10.6 Track X — X-VLA 官方架构 Native 训练 🟢 RUNNING (2026-05-23 启动)
 
-#### 10.7.1 Phase 0 数据/环境准备 (X3.A + X3.B 共用)
+> **实际实现** (2026-05-23): 用 LeRobot's `lerobot/xvla-base` 0.9B ckpt + custom multi-domain wrapper (`xvla_scripts/multi_domain_dataset.py` + `xvla_train.py`) on uc01/02 8 A800 each. EE6D 20D action (kai+vis 用 PiperFK 转换 + Rot6D 编码, XVLA-Soft-Fold 用预计算的 `observation/eef_6d`). 与论文 paper-faithful 不同点: 用 lerobot port 不是原 X-VLA repo (LeRobot 提供完整 wrapper, 实现更简洁).
+>
+> **数据状态**: 全部 EE6D ckpt 已准备好在 uc01/02 NFS:
+> - kai0_base 20D EE6D parquet (3055 ep / 3.36M frames)
+> - kai0_dagger 20D EE6D parquet (3457 ep / 2.42M frames)
+> - vis_v2_merged 20D EE6D parquet (895 ep / 1.06M frames)
+> - xvla_soft_fold action FK 转换 cache (1542 files / 2.85M frames)
 
-| 阶段 | 状态 | 备注 |
-|---|---|---|
-| **E0.6** Joint→EE6D action 转换 | ⏳ 待启 | 复用 `calib/piper_fk.py` + Rot6D 编码, 1 day. 输出 KAI0 + vis 的 20D EE6D action |
-| **E0.7** XVLA-Soft-Fold 格式适配 | ⏳ 待启 | hdf5 → LeRobot 或 X-VLA 原生, 0.5 day. **仅 X3.A 需要**, X3.B 跳过 |
-| **E0.8** Mixed dataset YAML | ⏳ 待启 | 0.5 day. 两组各写一份: `mixed_3domain.yaml` (A+B+C) + `mixed_2domain.yaml` (A+B) |
-| **E0.9** X-VLA env + 官方 ckpt | ⏳ 待启 | conda env XVLA + HF `2toINF/X-VLA` 拉到 vePFS-cnbj, 0.5 day |
-| **Phase 0 合计** | — | ~2.5 day (X3.B 可减 0.5 day 因不需 XVLA 适配) |
+#### Prep 完成 ✅
 
-#### 10.7.2 Exp X3.A — 3-domain Curriculum (A + B + C → vis adaptation)
+| 项 | 状态 |
+|---|---|
+| HF ckpt `lerobot/xvla-base` (3.3GB) | ✅ uc01 NFS `/data/shared/ubuntu/workspace/xvla_ckpts/` |
+| X-VLA env (lerobot + torch+cu121 + 全依赖) | ✅ uc01 NFS `/data/shared/ubuntu/workspace/X-VLA-env/.venv` |
+| EE6D 转换 (kai/vis joint→EE6D 20D, PiperFK + Rot6D) | ✅ |
+| XVLA-Soft-Fold action FK 缓存 | ✅ |
+| Multi-domain dataset wrapper + DDP training script | ✅ |
 
-> 2-stage curriculum: Stage A (continual pretrain on A+B+C balanced 1:7:2) → Stage B (vis-only adaptation)
-
-| 阶段 | 状态 | Job ID | 起 | 终 | Step | Best Val | 备注 |
-|---|---|---|---|---|---|---|---|
-| **X3.A.SA** Stage A Continual Pretrain | ⏳ 待启 | — | — | — | — / 20k | — | Init: lerobot/xvla-base. Data: A+B+C balanced 1:7:2 (eff 16,235 ep). 16 H20, ~15h. 内部 freeze_steps=1000 |
-| **X3.A.SB** Stage B vis-only Adapt | ⏳ 待启 | — | — | — | — / 10k | — | Init: X3.A.SA 输出. Data: B (vis) only. LR 5e-5, freeze_steps=500, 监控 val MAE 选 best. 16 H20, ~8h |
-| **X3.A.eval** vis 真机评估 | ⏳ 待启 | — | — | — | — | — | force domain_id=20 (vis), 30 ep + 3 OOD |
-| **X3.A 整体** | ⏳ pending | — | — | — | — | — | ~23h training + 1 day eval |
-
-#### 10.7.3 Exp X3.B — 2-domain Curriculum (A + B → vis adaptation, **不含 XVLA**)
-
-> 同 X3.A 流程, 仅 Stage A 数据少 C (XVLA), domain 数 2 (vs 3)
+#### X3.A — 3-domain (A + B + C) 🟢 RUNNING
 
 | 阶段 | 状态 | Job ID | 起 | 终 | Step | Best Val | 备注 |
 |---|---|---|---|---|---|---|---|
-| **X3.B.SA** Stage A Continual Pretrain | ⏳ 待启 | — | — | — | — / 20k | — | Init: lerobot/xvla-base. Data: A+B balanced 1:7 (eff 12,777 ep). 16 H20, ~12h. 内部 freeze_steps=1000 |
-| **X3.B.SB** Stage B vis-only Adapt | ⏳ 待启 | — | — | — | — / 10k | — | Init: X3.B.SA 输出. Data: B (vis) only. 同 X3.A.SB config. 16 H20, ~8h |
-| **X3.B.eval** vis 真机评估 | ⏳ 待启 | — | — | — | — | — | force domain_id=20 (vis), 30 ep + 3 OOD |
-| **X3.B 整体** | ⏳ pending | — | — | — | — | — | ~20h training + 1 day eval |
+| **X3.A Stage A** Continual Pretrain | 🟢 32% | uc02 PID 429201 | 2026-05-23 08:40 | ETA 4.3h | 6.4k / 20k | — | uc02 8 A800. balanced 1:7:2 (kai+vis×7+xvla×2). 修了 weakref-str bug (save_pretrained → torch.save) |
+| **X3.A Stage B** vis-only Adapt | ⏳ pending | — | — | — | — / 10k | — | 待 Stage A 完成 |
 
-#### 10.7.4 Track X 关键决策点 (XVLA 数据贡献 ablation)
+#### X3.B — 2-domain (A + B, no XVLA) 🟢 RUNNING
 
-| 决策点 | 触发条件 | 行动 |
-|---|---|---|
-| **D1**: X3.A vs X3.B 真机评估对比 | 两实验都完成 | 量化 XVLA (C) 的贡献价值 |
-| D1.结果 X3.A > X3.B | XVLA 增益显著 | 终态采用 X3.A 配置 (3-domain) |
-| D1.结果 X3.A ≈ X3.B | XVLA neutral | 简化为 X3.B (减少复杂度) |
-| D1.结果 X3.A < X3.B | XVLA 反而 dilute | 终态采用 X3.B, XVLA 仅用于 Track A SSL pretrain |
+| 阶段 | 状态 | Job ID | 起 | 终 | Step | Best Val | 备注 |
+|---|---|---|---|---|---|---|---|
+| **X3.B Stage A** Continual Pretrain | 🟢 32% | uc01 PID 802242 | 2026-05-23 08:40 | ETA 4.3h | 6.4k / 20k | — | uc01 8 A800. balanced 1:7 (kai+vis×7). 同上 fix |
+| **X3.B Stage B** vis-only Adapt | ⏳ pending | — | — | — | — / 10k | — | 待 Stage A 完成 |
 
-#### 关键路径 (启动顺序)
+### 10.7 vis_v2_full 数据集 + 新 v2 数据训练 (2026-05-23 新)
 
-```
-[E0.6-E0.9 数据预处理] ─── 2.5 day
-        ↓
-[X3.B.SA Stage A: A+B continual] ─── ~12h    ← 优先启 (pipeline 验证, 无 XVLA 依赖)
-        ↓
-[X3.B.SB Stage B: vis adapt]    ─── ~8h
-        ↓
-[X3.B 真机评估]                  ─── 1 day
-                                          ↓
-[X3.A.SA Stage A: A+B+C continual] ─── ~15h
-        ↓
-[X3.A.SB Stage B: vis adapt]    ─── ~8h
-        ↓
-[X3.A 真机评估]                  ─── 1 day
-        ↓
-[D1 决策: XVLA 是否有增益?]
-```
+> 用户决策 (2026-05-23 上午): 合并 TOS 上所有 v2 dates 重新构建 vis 训练集, 用于 pi05 baseline + TAC (RTC2 paper 2512.05964) 对比.
 
-**总周期**: ~5-7 day on Robot-North-H20 16 H20 (含数据预处理 + 真机)
+**数据集构建** ✅ DONE:
+- `vis_v2_full`: 16 v2 dates (04-23 → 05-22) → **1406 ep / 1.93M frames / 4218 video symlinks** (vs 旧 vis_v2_merged 895 ep)
+- TOS 结构整合: `KAI0/KAI0/` nested duplicate 已合并到 `KAI0/`
+- norm_stats + episodes_stats 已计算
+- gf0 cnsh + cnbj 都有完整副本 (cnbj 用现有 vis_v2_merged 老 895 ep 视频 + 新 6 dates vis_base_real 视频 reuse symlinks)
 
-**关键依赖**:
-1. **E0.6 Joint→EE6D** 完成 (用 PiperFK + Rot6D, 1 day)
-2. **E0.7 XVLA-Soft-Fold 格式适配** 完成 (仅 X3.A 需要)
-3. **X-VLA env + 官方 ckpt** 部署到 vePFS-cnbj
-4. **Stage A 完成后** 立即接 Stage B (用 Stage A 输出 ckpt 作为 init)
+| 训练 | 状态 | Job ID | 起 | 终 | Step | Best Val | 备注 |
+|---|---|---|---|---|---|---|---|
+| **pi05 vis_v2_full** baseline | 🟢 6% running | t-20260523161300-x94g2 | 2026-05-23 16:13 | ETA ~32h ⚠️ slow | 3.4k / 50k | — | Beijing 8 H20. pi05_base init. **rate 2.5s/it (慢, 视频 symlink IO 瓶颈)**. ckpt: cnbj /vePFS-North-E/.../pi05_flatten_fold_vis_v2_full/ |
+| **pi05 vis_v2_full + TAC** (RTC2) | 🔄 starting | t-20260523175653-hdv82 (v4) | 2026-05-23 17:56 | ETA ~10h | -/50k | — | Beijing **16 H20**. tac_enabled=True, tac_max_delay=6 (30Hz×200ms). Per-token adaRMS via gemma.py RMSNorm 3D branch. v1-v3 都 failed (8gpu retry + Pi0 attr + typecheck). v4 finally OK. |
+
+**Bug 链 (TAC v4 之前)**:
+- v1 8gpu (cdckw): user 改要 16gpu → stopped
+- v2 16gpu (k4z7k): `self.tac_enabled` attr missing → fix pi0 __init__
+- v3 16gpu (d6rr9): `timestep` type 严格 1D, TAC 传 2D → fix annotation
+- **v4 16gpu (hdv82)**: 全部 fix, running ✓
 
 ---
 
