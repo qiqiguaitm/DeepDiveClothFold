@@ -671,7 +671,7 @@ ssh gf0 "pip install --user volcengine volcengine-python-sdk"
 - Beijing: 2 × 16 GPU job 或 1 × 32 GPU job
 - Shanghai: 2 × 8 GPU job 或 1 × 16 GPU job ⭐ 新增可用空间
 
-**跨 region 共享性**: 数据需双地各放一份。kai0 base+dagger 已就位 gf0 (cnsh) + gf3 (cnbj); vis_v2_merged 已就位 uc01 NFS + gf0 (cnsh), gf3 (cnbj) 2026-05-22 后补; XVLA-Soft-Fold 详见 cross_embodiment_data_reuse_plan.md §9.2。
+**跨 region 共享性**: 数据需双地各放一份。kai0 base+dagger 已就位 gf0 (cnsh) + gf3 (cnbj); vis_v2_merged 已就位 uc01 NFS + gf0 (cnsh), gf3 (cnbj) 2026-05-22 后补; XVLA-Soft-Fold 多地副本详见 `xvla/data/xvla_soft_fold/README.md`。
 
 #### 5.6.c.3 经 gf0 操作 mlp CLI 速查
 

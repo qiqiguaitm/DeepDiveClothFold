@@ -10,7 +10,8 @@
 >
 > **X-VLA conditioning 主线 (2026-05-22 新增)**:
 > - **`xvla_conditioning_methods_results.md`** ⭐ — **新增主索引**: Hard Prompt / Soft Prompt (Track B) / Action Head Cond (Track C) 三种 conditioning 方式在 kai+vis 混合数据 (7407 ep) 同等条件下的对照实验, paper E3.7/E3.8/E3.9 ablation 主线
-> - `../deployment/cross_embodiment_data_reuse_plan.md` — Track A SSL / Track B Soft Prompt / Track C Action Head Cond 完整执行计划 + 假说 H1-H4 + 决策点
+> - **`conditioning_vs_action_representation_ablation.md`** ⭐ 新 (2026-05-23) — **Conditioning × Action Rep 2×2 ablation**: 同 init 同 step 同 hparams 下 (E3.6 / pi05 delta / Track C abs / Action Cond × delta) 系统对比 conditioning 与 abs/delta 各自贡献. 用于诊断 "Action Cond × delta 真机震动" 归因
+> - `../../../deployment/cross_embodiment_strategy.md` — 跨本体战略 (Track A SSL / Track C Action Head Cond / Track X X-VLA 官方) + 假说 H1-H4 + 决策点 (Track B 已废弃)
 >
 > **action-only / finetune 历史**:
 > - `task_e_master_plan.md` — Task E 完整规划与所有 Phase 1/2 实验细节

@@ -150,7 +150,7 @@ class Pi0(_model.BaseModel):
         # Track C action head conditioning hub (方案 A: Concat domain token at action
         # expert input). 1 learnable token per domain, prepended in embed_suffix.
         # PaliGemma is unaware of domain — only the action expert sees the conditioning.
-        # See cross_embodiment_data_reuse_plan.md §6.3.1 for design.
+        # See docs/deployment/cross_embodiment_strategy.md §5.3 for design.
         # Backward compatible: when num_domains=0 (default), no module created;
         # old ckpts load unchanged.
         self.action_head_cond_num_domains = int(getattr(config, "action_head_cond_num_domains", 0) or 0)

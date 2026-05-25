@@ -1224,7 +1224,7 @@ _CONFIGS = [
     # Track C: Action Head Conditioning Token (方案 A) — 2026-05-22 选定
     # Concat 1 learnable domain token to action expert input. paligemma unaware of domain.
     # 1:1 sparse-prefix 对照 Track B Soft Prompt (32 tokens in VLM input).
-    # See docs/deployment/cross_embodiment_data_reuse_plan.md §6.3 for design rationale.
+    # See docs/deployment/cross_embodiment_strategy.md §5.3 for design rationale.
     # ===================================================================================
 
     # Track C single-stage (2026-05-22 决策修订): 直接 kai+vis joint 50k from pi05_base.

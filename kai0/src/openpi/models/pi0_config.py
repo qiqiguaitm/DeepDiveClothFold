@@ -65,7 +65,7 @@ class Pi0Config(_model.BaseModelConfig):
     # unaware of the domain — conditioning only modulates action denoising.
     # When disabled (default 0), the model behaves identically to upstream pi0/pi05 (and
     # to soft-prompt-only configs); old ckpts load fine because the new param is just
-    # not instantiated. See cross_embodiment_data_reuse_plan.md §6.3.1 for design.
+    # not instantiated. See docs/deployment/cross_embodiment_strategy.md §5.3 for design.
     action_head_cond_num_domains: int = 0
 
     # TAC (Training-time Action Conditioning) — paper 2512.05964 Algorithm 1.
