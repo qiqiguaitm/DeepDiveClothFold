@@ -155,6 +155,12 @@ def generate_launch_description():
     rtc_max_guidance_weight_arg = DeclareLaunchArgument('rtc_max_guidance_weight',
         default_value='0.5',
         description='Upper bound on RTC guidance weight (see pi0_rtc.py)')
+    # Layer 1.1B — chunk overlap smoothing: 'min_jerk' (default, quintic smoothstep,
+    # validated 2026-05-25 vis_v2_full real-machine: jiggle -46%, peak/s -41% vs linear,
+    # plus emergent post-task attractor freeze) | 'linear' (legacy fallback).
+    rtc_smooth_method_arg = DeclareLaunchArgument('rtc_smooth_method',
+        default_value='min_jerk',
+        description='RTC chunk-overlap weight curve: min_jerk (default, quintic smoothstep, LiPo arXiv:2506.05165) | linear (legacy)')
     # ── Replan / smoothing knobs (exposed so V1 path can override without
     #    touching node defaults). Defaults match the policy_inference_node.py
     #    declare_parameter() values (JAX legacy sizing); start_autonomy_v1.sh
@@ -275,6 +281,7 @@ def generate_launch_description():
             'enable_rtc': LaunchConfiguration('enable_rtc'),
             'rtc_execute_horizon': LaunchConfiguration('rtc_execute_horizon'),
             'rtc_max_guidance_weight': LaunchConfiguration('rtc_max_guidance_weight'),
+            'rtc_smooth_method': LaunchConfiguration('rtc_smooth_method'),
             'inference_rate': LaunchConfiguration('inference_rate'),
             'latency_k': LaunchConfiguration('latency_k'),
             'min_smooth_steps': LaunchConfiguration('min_smooth_steps'),
@@ -367,7 +374,7 @@ def generate_launch_description():
         execute_mode_arg, enable_rerun_arg, calib_arg,
         fg_enable_arg, bg_enable_arg,
         enable_rtc_arg, rtc_execute_horizon_arg,
-        rtc_max_guidance_weight_arg,
+        rtc_max_guidance_weight_arg, rtc_smooth_method_arg,
         inference_rate_arg, latency_k_arg, min_smooth_steps_arg,
         cam_fps_arg, enable_head_depth_arg, enable_left_depth_arg, enable_right_depth_arg,
         fast_obs_pipeline_arg, pipelined_obs_arg, transport_arg,

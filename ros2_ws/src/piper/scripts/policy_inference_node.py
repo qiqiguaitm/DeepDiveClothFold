@@ -223,11 +223,19 @@ class StreamActionBuffer:
                 old_list = old_list[:len(new_list)]
                 overlap_len = len(new_list)
 
-            # Linear weights: first element 100% old, last element 0% old
+            # Weights for chunk-overlap blending. Default = linear (legacy).
+            # Layer 1.1B = quintic smoothstep `6t^5 - 15t^4 + 10t^3` (minimum-jerk
+            # transition: 1st + 2nd derivatives vanish at both endpoints — chunk
+            # boundary continuity up to acceleration). LiPo arXiv:2506.05165.
             if overlap_len == 1:
                 w_old = np.array([1.0], dtype=float)
             else:
-                w_old = np.linspace(1.0, 0.0, overlap_len, dtype=float)
+                tau = np.linspace(0.0, 1.0, overlap_len, dtype=float)
+                if self.smooth_method == 'min_jerk':
+                    s = 6.0 * tau**5 - 15.0 * tau**4 + 10.0 * tau**3
+                    w_old = 1.0 - s
+                else:  # 'linear' (default, legacy)
+                    w_old = 1.0 - tau
             w_new = 1.0 - w_old
 
             # C.3 2026-05-23: 矢量化 smooth (替 Python list comprehension).
@@ -411,6 +419,13 @@ class PolicyInferenceNode(Node):
         self.declare_parameter('enable_rtc', True)
         self.declare_parameter('rtc_execute_horizon', 16)
         self.declare_parameter('rtc_max_guidance_weight', 0.5)
+        # Layer 1.1B — chunk overlap smoothing method. Default 'min_jerk' (quintic
+        # smoothstep 6t^5 - 15t^4 + 10t^3, 1st+2nd derivatives vanish at endpoints →
+        # minimum-jerk chunk-boundary transition; LiPo paper arXiv:2506.05165).
+        # Validated 2026-05-25 on vis_v2_full real-machine: jiggle -46%, jerk peak/s
+        # -41% vs 'linear', plus post-task attractor freeze (cmd converges to const
+        # after task → 0 drift in idle scenes). Set to 'linear' to fall back to legacy.
+        self.declare_parameter('rtc_smooth_method', 'min_jerk')
         # NOTE: mask_prefix_delay is declared upstream in pi0_rtc.py:244 but
         # not exposed here — forwarding a Python bool through jit triggers
         # TracerBoolConversionError at pi0_rtc.py:323. Left as function default
@@ -482,8 +497,10 @@ class PolicyInferenceNode(Node):
         # ── State ──
         self.bridge = CvBridge()
         self.policy = None
+        _smooth_method = str(self.get_parameter('rtc_smooth_method').value)
         self.stream_buffer = StreamActionBuffer(
-            decay_alpha=self.decay_alpha, state_dim=14)
+            decay_alpha=self.decay_alpha, state_dim=14, smooth_method=_smooth_method)
+        self.get_logger().info(f'StreamActionBuffer smooth_method = {_smooth_method}')
 
         # B1 client-side latency profile (opt-in via KAI0_LATENCY_PROFILE=1).
         # Writes one CSV row per inference cycle to /tmp/kai0_latency_<pid>.csv with
