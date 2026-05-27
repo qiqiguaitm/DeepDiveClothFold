@@ -1,0 +1,3 @@
+[submodule "xvla/X-VLA"]
+	path = xvla/X-VLA
+	url = https://github.com/2toinf/X-VLA.git
