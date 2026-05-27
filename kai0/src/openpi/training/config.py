@@ -1362,6 +1362,100 @@ _CONFIGS = [
         inline_eval_every=4,
     ),
 
+    # ===================================================================================
+    # R1 / R2 — PyTorch DDP 原生训练 (plan §10.8, 2026-05-23 PM).
+    # 与 JAX baseline `pi05_flatten_fold_vis_v2_full` 同数据 + 同 hparams, 仅训练框架不同.
+    # 出 ckpt 用于 realtime_vla 选项 X PyTorch+Triton 5-10× 加速部署路径.
+    # 启动: torchrun --nproc_per_node=16 scripts/train_pytorch.py <name> --exp_name ...
+    # ===================================================================================
+
+    # R1: PyTorch + absolute action — cnbj paths (Robot-North-H20 16 H20).
+    TrainConfig(
+        name="pi05_pytorch_vis_v2_full_absolute",
+        model=pi0_config.Pi0Config(pi05=True),
+        data=LerobotAgilexDataConfig(
+            repo_id="/vePFS-North-E/vis_robot/workspace/deepdive_kai0/kai0/data/Task_A/vis_v2_full",
+            default_prompt="Flatten and fold the cloth.",
+            use_delta_joint_actions=False,
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader(
+            "/vePFS-North-E/vis_robot/base_init_ckpts/extracted/pi05_base/params"
+        ),
+        # PyTorch native init from converted safetensors (synced to cnbj 2026-05-23).
+        pytorch_weight_path="/vePFS-North-E/vis_robot/openpi_cache/modelscope_cache/lerobot/pi05_base",
+        pytorch_training_precision="bfloat16",
+        lr_schedule=_optimizer.CosineDecaySchedule(
+            warmup_steps=1_000, peak_lr=1.5e-5, decay_steps=50_000, decay_lr=1.5e-6,
+        ),
+        ema_decay=0.9999,
+        num_train_steps=50_000,
+        keep_period=10_000,
+        save_interval=2_000,
+        num_workers=8,
+        batch_size=128,
+        fsdp_devices=16,
+        inline_eval_val_root="/vePFS-North-E/vis_robot/workspace/deepdive_kai0/kai0/data/Task_A/vis_v2_merged_val",
+        inline_eval_n_frames=200,
+        inline_eval_every=4,
+    ),
+
+    # R2: PyTorch + delta action — cnsh paths (robot-task 16 A100, in parallel with R1).
+    TrainConfig(
+        name="pi05_pytorch_vis_v2_full_delta",
+        model=pi0_config.Pi0Config(pi05=True),
+        data=LerobotAgilexDataConfig(
+            repo_id="/vePFS/tim/workspace/deepdive_kai0/kai0/data/Task_A/vis_v2_full",
+            default_prompt="Flatten and fold the cloth.",
+            use_delta_joint_actions=True,
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader(
+            "/vePFS/tim/workspace/openpi_cache/openpi-assets/checkpoints/pi05_base/params"
+        ),
+        pytorch_weight_path="/vePFS/tim/workspace/openpi_cache/modelscope_cache/lerobot/pi05_base",
+        pytorch_training_precision="bfloat16",
+        lr_schedule=_optimizer.CosineDecaySchedule(
+            warmup_steps=1_000, peak_lr=1.5e-5, decay_steps=50_000, decay_lr=1.5e-6,
+        ),
+        ema_decay=0.9999,
+        num_train_steps=50_000,
+        keep_period=10_000,
+        save_interval=2_000,
+        num_workers=8,
+        batch_size=128,
+        fsdp_devices=16,
+        inline_eval_val_root="/vePFS/tim/workspace/deepdive_kai0/kai0/data/Task_A/vis_v2_merged_val",
+        inline_eval_n_frames=200,
+        inline_eval_every=4,
+    ),
+
+    # pi05 vis-only training on vis_5day_recent (filtered 05-18~05-22 from vis_v2_full).
+    # 498 ep / 827k frames. Same hparams as pi05_flatten_fold_vis_v2_full, single-node 8 H20.
+    TrainConfig(
+        name="pi05_flatten_fold_vis_5day_recent",
+        model=pi0_config.Pi0Config(pi05=True),
+        data=LerobotAgilexDataConfig(
+            repo_id="/vePFS-North-E/vis_robot/workspace/deepdive_kai0/kai0/data/Task_A/vis_5day_recent",
+            default_prompt="Flatten and fold the cloth.",
+            use_delta_joint_actions=False,
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader(
+            "/vePFS-North-E/vis_robot/base_init_ckpts/extracted/pi05_base/params"
+        ),
+        lr_schedule=_optimizer.CosineDecaySchedule(
+            warmup_steps=1_000, peak_lr=1.5e-5, decay_steps=50_000, decay_lr=1.5e-6,
+        ),
+        ema_decay=0.9999,
+        num_train_steps=50_000,
+        keep_period=10_000,
+        save_interval=2_000,
+        num_workers=8,
+        batch_size=128,
+        fsdp_devices=8,
+        inline_eval_val_root="/vePFS-North-E/vis_robot/workspace/deepdive_kai0/kai0/data/Task_A/vis_v2_merged_val",
+        inline_eval_n_frames=200,
+        inline_eval_every=4,
+    ),
+
     # pi05 vis-only training on vis_v2_full (16 v2 dates 04-23 → 05-22, 1409 ep / 1.93M frames).
     # User request 2026-05-23: train pure vis baseline (no kai mix) from pi05_base.
     # 8 GPU, batch 128, 50k step, lr 1.5e-5 → 1.5e-6. Volc Beijing/Shanghai.
