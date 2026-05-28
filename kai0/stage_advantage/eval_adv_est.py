@@ -581,7 +581,7 @@ def main():
                         help="Comma-separated GPU IDs to use")
     parser.add_argument(
         "--data", type=str,
-        default="/vePFS/tim/workspace/deepdive_kai0/kai0/data/Task_A/advantage",
+        default="/vePFS/tim/workspace/deepdive_kai0/kai0/data/Task_A/kai0_advantage",
         help="Path to LeRobot dataset root (must contain data/ and videos/)",
     )
     args = parser.parse_args()

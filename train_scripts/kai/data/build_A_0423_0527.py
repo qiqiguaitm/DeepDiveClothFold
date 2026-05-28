@@ -26,7 +26,7 @@ import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-SRC_ROOT = Path("/vePFS/tim/workspace/deepdive_kai0/kai0/data/Task_A/vis_base_real")
+SRC_ROOT = Path("/vePFS/tim/workspace/deepdive_kai0/kai0/data/Task_A/vis_base")
 DST = Path("/vePFS/tim/workspace/deepdive_kai0/kai0/data/Task_A/self_built/A_0423_0527")
 # Analysis CSVs (Class C blacklist + End-snap trim) only on TOS; gf0 has /transfer-shanghai mount.
 ANALYSIS = Path("/transfer-shanghai/KAI0/Task_A/base/analysis")

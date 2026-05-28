@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Merge all vis_base_real/*-v2 dirs into single lerobot dataset with contiguous 0..N-1 indices.
+"""Merge all vis_base/*-v2 dirs into single lerobot dataset with contiguous 0..N-1 indices.
 
 Use symlinks to data + videos (zero copy). Re-index everything.
 
@@ -11,8 +11,8 @@ import json, sys, os, shutil
 from pathlib import Path
 
 CAMERAS = ("observation.images.top_head", "observation.images.hand_left", "observation.images.hand_right")
-SRC_ROOT = Path("/vePFS/tim/workspace/deepdive_kai0/kai0/data/Task_A/vis_base_real")
-DST = Path("/vePFS/tim/workspace/deepdive_kai0/kai0/data/Task_A/vis_v2_merged")
+SRC_ROOT = Path("/vePFS/tim/workspace/deepdive_kai0/kai0/data/Task_A/vis_base")
+DST = Path("/vePFS/tim/workspace/deepdive_kai0/kai0/data/Task_A/self_built/vis_v2_merged")
 
 
 def main():

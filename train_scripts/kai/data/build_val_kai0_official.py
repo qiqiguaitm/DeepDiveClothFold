@@ -29,7 +29,7 @@ def main():
     p = argparse.ArgumentParser()
     p.add_argument("--n-base", type=int, default=15)
     p.add_argument("--n-dag", type=int, default=15)
-    p.add_argument("--dst", default=str(DATA_ROOT / "val_kai0_official"))
+    p.add_argument("--dst", default=str(DATA_ROOT / "self_built" / "val_kai0_official"))
     args = p.parse_args()
 
     dst = Path(args.dst)

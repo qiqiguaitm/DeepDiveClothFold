@@ -337,7 +337,7 @@ print('Download complete')
 
     # 拷贝 norm_stats
     if [ -f "${CKPT_DIR}/Task_A/mixed_1/norm_stats.json" ]; then
-      DATA_DIR="${KAI0_DIR}/data/Task_A/base"
+      DATA_DIR="${KAI0_DIR}/data/Task_A/kai0_base"
       if [ -d "$DATA_DIR" ]; then
         cp "${CKPT_DIR}/Task_A/mixed_1/norm_stats.json" "$DATA_DIR/"
         ok "norm_stats.json 已拷贝到 $DATA_DIR/"

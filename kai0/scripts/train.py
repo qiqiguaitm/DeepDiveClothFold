@@ -469,7 +469,7 @@ def main(config: _config.TrainConfig):
     init_wandb(config, resuming=resuming, enabled=(config.wandb_enabled and jax.process_index() == 0))
 
     # 90/10 episode split (if val_ratio > 0)
-    # NOTE: Task_A/advantage has sparse episode_index (values > 3055 exist while meta has
+    # NOTE: Task_A/kai0_advantage has sparse episode_index (values > 3055 exist while meta has
     # only 3055 entries) — LeRobotDataset's `episodes=` filter breaks when val subset
     # lands entirely in sparse region. Falling back to train-distribution eval.
     train_episodes = None

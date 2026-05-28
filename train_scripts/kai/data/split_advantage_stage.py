@@ -17,7 +17,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--source",
-        default="/vePFS/tim/workspace/deepdive_kai0/kai0/data/Task_A/advantage",
+        default="/vePFS/tim/workspace/deepdive_kai0/kai0/data/Task_A/kai0_advantage",
         help="Advantage dataset path",
     )
     parser.add_argument(

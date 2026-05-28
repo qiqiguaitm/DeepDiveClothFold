@@ -8,13 +8,13 @@
   # 2. 推理测试（需先启动 policy server）
   python scripts/validate_awbc.py infer \
     --host localhost --port 8000 \
-    --dataset data/Task_A/advantage \
+    --dataset data/Task_A/kai0_advantage \
     --num-episodes 5
 
   # 3. Prompt 条件化对比（需先启动 policy server）
   python scripts/validate_awbc.py prompt-diff \
     --host localhost --port 8000 \
-    --dataset data/Task_A/advantage \
+    --dataset data/Task_A/kai0_advantage \
     --num-episodes 10
 """
 
@@ -269,14 +269,14 @@ def main():
     p_infer = sub.add_parser("infer", help="Test inference action output")
     p_infer.add_argument("--host", type=str, default="localhost")
     p_infer.add_argument("--port", type=int, default=8000)
-    p_infer.add_argument("--dataset", type=str, default="data/Task_A/advantage")
+    p_infer.add_argument("--dataset", type=str, default="data/Task_A/kai0_advantage")
     p_infer.add_argument("--num-episodes", type=int, default=5)
 
     # prompt-diff subcommand
     p_diff = sub.add_parser("prompt-diff", help="Test prompt conditioning (positive vs negative)")
     p_diff.add_argument("--host", type=str, default="localhost")
     p_diff.add_argument("--port", type=int, default=8000)
-    p_diff.add_argument("--dataset", type=str, default="data/Task_A/advantage")
+    p_diff.add_argument("--dataset", type=str, default="data/Task_A/kai0_advantage")
     p_diff.add_argument("--num-episodes", type=int, default=10)
     p_diff.add_argument("--output", type=str, default="logs/awbc_prompt_diff.json")
 

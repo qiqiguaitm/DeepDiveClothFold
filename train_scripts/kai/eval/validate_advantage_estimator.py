@@ -7,7 +7,7 @@
 
 用法：
   python scripts/validate_advantage_estimator.py \
-    --dataset data/Task_A/advantage \
+    --dataset data/Task_A/kai0_advantage \
     --pred-suffix KAI0_100000 \
     --num-episodes 200 \
     --output logs/adv_est_validation.json
@@ -45,7 +45,7 @@ def compute_discretization_agreement(official: np.ndarray, predicted: np.ndarray
 
 def main():
     parser = argparse.ArgumentParser(description="Validate Advantage Estimator predictions vs official labels")
-    parser.add_argument("--dataset", type=str, default="data/Task_A/advantage", help="Advantage dataset root")
+    parser.add_argument("--dataset", type=str, default="data/Task_A/kai0_advantage", help="Advantage dataset root")
     parser.add_argument("--pred-suffix", type=str, default="KAI0_100000", help="Prediction data dir suffix")
     parser.add_argument("--num-episodes", type=int, default=0, help="Number of episodes to compare (0=all)")
     parser.add_argument("--output", type=str, default="logs/adv_est_validation.json", help="Output JSON path")

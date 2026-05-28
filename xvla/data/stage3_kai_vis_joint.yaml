@@ -4,4 +4,4 @@
 roots:
   - {root: /vePFS/tim/workspace/deepdive_kai0/kai0/data/Task_A/kai0_base, domain_id: 0}
   - {root: /vePFS/tim/workspace/deepdive_kai0/kai0/data/Task_A/kai0_dagger, domain_id: 0}
-  - {root: /vePFS/tim/workspace/deepdive_kai0/kai0/data/Task_A/vis_v2_merged, domain_id: 1}
+  - {root: /vePFS/tim/workspace/deepdive_kai0/kai0/data/Task_A/self_built/vis_v2_merged, domain_id: 1}

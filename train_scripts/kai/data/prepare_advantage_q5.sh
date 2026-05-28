@@ -1,6 +1,6 @@
 #!/bin/bash
 # π0.7-style advantage 数据集预处理
-# 从 data/Task_A/advantage/ 生成 data/Task_A/advantage_q5/
+# 从 data/Task_A/kai0_advantage/ 生成 data/Task_A/advantage_q5/
 #   - n_slices=5 离散化
 #   - stage-nums=2（Task_A flat/fold 独立计算 percentile）
 #   - tasks.jsonl 格式改为 π0.7 风格 "Quality: 1/5" ~ "Quality: 5/5"

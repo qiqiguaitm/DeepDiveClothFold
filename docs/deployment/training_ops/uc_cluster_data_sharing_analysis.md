@@ -1,23 +1,24 @@
 # uc01/02/03 集群当前数据共享方式分析
 
-> 2026-05-27 整理. 综合 `submission/uc_cluster_jobs.md` + `storage_and_env.md` + `overview.md` + memory `reference_uc_cluster_nfs_layout.md` (2026-05-18 后重装架构) 推导而出。
+> 2026-05-28 现场实测重写 (推翻 2026-05-27 早版本基于过期文档的推导).
 >
-> **结论速览**: uc 集群是"**双 NFS 平面 + 单机本地高速盘**"混合架构 — 代码/venv 走管理网 NFS, 集群训练 ckpt 走 RDMA 网 NFS, 单机 ckpt + 数据集走本地 ext4(+ symlink trick 绕过 NFS 同步)。
+> **结论速览**: uc 集群当前是 **单 NFS 平面 (uc01 export, 走管理网 eth0) + 单机本地 ckpt (symlink trick 绕 NFS)** 两层架构。文档历史描述的"RDMA NFS B 平面 (`/data/cluster_ckpt` 192.168.1.0/24)"**实测已废弃 / 未启用**。所有共享 (代码 / venv / 数据集 / 集群训练 ckpt) 都走唯一 NFS 平面。
 
 ---
 
-## 1. 硬件 / 网络拓扑前置
+## 1. 硬件 / 网络 / 物理盘 (实测)
 
 | 维度 | 值 |
 |---|---|
 | 节点 | uc01, uc02, uc03 (各 8× A800-80GB) |
-| 本地系统盘 | `/dev/vda2` 492 GB ext4 (装 OS + venv + 本机 ckpt) |
-| 本地大盘 | `/data/shared` 4 TB ext4 (代码 + 数据集 + 共享 NFS 导出根) |
-| 额外 NVMe | uc03 多一块 `/nix` 3.5 TB NVMe |
-| 管理 / 公网 | `eth0` 10.60.x.x/16 (virtio_net, MTU 1452, 慢) |
-| RDMA 训练网 | `eth1-4` 192.168.{1-4}.x/24 (mlx5_core, 200 Gbps × 4, RoCEv2, MTU 4200) |
+| 系统盘 | `/dev/vda2` 492 GB ext4, mount `/` |
+| 数据盘 | `/dev/vdb` 4 TB ext4, mount `/data` (uc01: 2.1T used / 1.7T avail) |
+| 管理 / 公网 | `eth0` 10.60.x.x/16 (virtio_net, NFS 走此网) |
+| RDMA 训练网 | `eth1-4` 192.168.{1-4}.x/24 (mlx5_core, 200 Gbps × 4, RoCEv2) — **当前仅用于 NCCL/RDMA**, 不参与 NFS |
+| uc01 IP (mgmt) | `10.60.135.47` |
+| uc01 hostname | `10-60-135-47` (账户 `ubuntu`) |
 
-主机间 RDMA 平面 IP:
+主机间 RDMA 平面 IP (仅 NCCL 用):
 ```
 uc01: 192.168.{1,2,3,4}.2
 uc02: 192.168.{1,2,3,4}.3
@@ -26,237 +27,265 @@ uc03: 192.168.{1,2,3,4}.4
 
 ---
 
-## 2. 数据共享平面总览 (3 类共存)
+## 2. NFS 平面 (唯一)
 
-uc 集群同时存在 **3 套独立的数据放置策略**, 各自服务不同场景:
+### 2.1 export 配置 (uc01 = server, 实测)
 
-| # | 共享方式 | server / mount | 内容 | 谁写 / 谁读 | 网卡 |
-|---|---|---|---|---|---|
-| **A** | **NFS over 管理网** | `uc01:/data/shared/ubuntu/workspace` → uc02/03 同路径 | **代码 + `kai0/.venv` + `base_init_ckpts/`** | uc01 改, uc02/03 自动可见 | eth0 (10.60.0.0/16) |
-| **B** | **NFS over RDMA 网** | `uc01:/data/cluster_ckpt` (`192.168.1.2`) → uc02/03 `/cluster_ckpt` | **3-host 集群训练时的 Orbax ckpt + (可选) 大数据集** | 3 host 同时写/读 (Orbax) | eth1 (200 Gbps RoCE) |
-| **C** | **不共享 / 本地独立** | 各机本地 `/data/shared/*` 真实目录 (NFS 导出范围之外的部分) | **数据集 (KAI0 + Kai0_official) + 单机训练 ckpt + 单机 `/home/tim/local_ckpts/`** | 各机自管, 跨机不可见 | (本地 ext4) |
-
-> ⚠️ 一个易混点: A 的 NFS export 只是 `/data/shared/ubuntu/workspace` **这一个子目录**, **不是整个 `/data/shared/`**. 这是 (C) 能与 (A) 共存的关键 — 同一物理盘上, 一部分被 export, 一部分仅本机可见。
-
----
-
-## 3. NFS 平面 A: 代码 + venv 共享 (管理网)
-
-### 3.1 配置
-
-**uc01 (server)**:
 ```
 /etc/exports:
   /data/shared/ubuntu/workspace  10.60.0.0/16(rw,sync,no_subtree_check,no_root_squash)
 ```
 
-**uc02 / uc03 (client) `/etc/fstab`** (单行):
-```
-10.60.135.47:/data/shared/ubuntu/workspace  /data/shared/ubuntu/workspace  nfs  defaults  0 0
-```
+> 这是 `/etc/exports` 的**全部内容** — 没有第二条, 没有 `/data/cluster_ckpt`, 没有 192.168.1.0/24 网段的 RDMA NFS。
 
-> uc01 内网 IP = `10.60.135.47` (走 eth0 virtio).
-
-### 3.2 共享的内容
+### 2.2 client mount (uc02/03 实测)
 
 ```
-/data/shared/ubuntu/workspace/
-├── deepdive_kai0/                     ← 主代码仓 (git)
-│   └── kai0/
-│       ├── .venv/                     ← Python 3.12 (uv 管理) - 8.2 GB
-│       ├── src/, scripts/, ...
-│       └── checkpoints/ → symlink     ← 见 §5
-└── base_init_ckpts/                   ← 共享 init ckpt
-    ├── pi05_base/                     ← 13 GB, 官方 pi05
-    └── Task_A_mixed_1/                ← 22 GB, 从 TOS shared_ckpt 拉回
+10.60.135.47:/data/shared/ubuntu/workspace
+  → /data/shared/ubuntu/workspace
+  nfs4 vers=4.1, rsize=1048576, wsize=1048576, hard, proto=tcp, timeo=600
 ```
 
-### 3.3 工作目录路径与软链
+`findmnt -t nfs,nfs4` 在 uc02 / uc03 上都只显示这一项。
 
-各机 `/home/ubuntu/workspace/deepdive_kai0/` 是软链 → `/data/shared/ubuntu/workspace/deepdive_kai0/` (2026-05-18 重装后). `~/workspace` 也类似指向同一处。
+### 2.3 NFS 共享下内容 (uc01 实测, `du -sh`)
 
-> 在 uc01 上 `uv add` / `uv sync` 改 `.venv` **一次**, uc02/03 立即可用, 无需逐机重装。但 `uv python install 3.12` 仍需每机一次 (Python interpreter 在 `~/.local/share/uv/` 本地路径)。
-
-### 3.4 性能 / 瓶颈
-
-- 管理网 eth0 是 virtio + MTU 1452, 慢 — 但代码/venv 是冷读, NFS cache 命中后即本地速度, 不构成训练瓶颈。
-- 不适合高频 I/O (训练 ckpt write / dataloader 大批读), 这些走平面 B 或 C。
+| 子目录 | 大小 | 用途 |
+|---|---|---|
+| `dataset/` | **783 GB** ⭐ | **TOS 同步主数据 (见 §3)** |
+| `deepdive_kai0/` | 455 GB | 主代码 (含 `kai0/.venv` 8.2 GB + ckpt symlink — 见 §4) |
+| `cluster_ckpts/` | 42 GB | **3-host HSDP/FSDP 集群训练 ckpt (走 NFS, 不是单独 RDMA NFS)** |
+| `base_init_ckpts/` | 34 GB | 共享 init ckpt (pi05_base 13G, Task_A_mixed_1 22G) |
+| `X-VLA-env/` | 8.5 GB | X-VLA 项目 venv / 环境 |
+| `xvla_ckpts/` | 3.3 GB | X-VLA 训练 ckpt |
+| `dataset_ee6d/` | 1.8 GB | (Kai0_official + Task_A 子集 + `xvla_soft_fold_action_cache`) |
+| `logs/`, `piper_sdk/`, `xvla_scripts/` | <2 GB | 杂项 |
 
 ---
 
-## 4. NFS 平面 B: 集群训练 ckpt 共享 (RDMA 网)
+## 3. TOS 同步数据集 (主问题) ⭐
 
-### 4.1 配置
-
-**uc01 (server)**:
-```
-/etc/exports:
-  /data/cluster_ckpt  192.168.1.0/24(rw,sync,no_subtree_check,no_root_squash)
-```
-
-**uc02 / uc03 (client) `/etc/fstab`**:
-```
-192.168.1.2:/data/cluster_ckpt  /cluster_ckpt  nfs  vers=4,hard,intr,timeo=600,rsize=1048576,wsize=1048576
-```
-
-### 4.2 用途 (仅 24-GPU HSDP/FSDP 集群训练)
-
-来源: `submission/uc_cluster_jobs.md §12.5`
-
-- **Orbax CheckpointManager 跨主机一致性**: Orbax 用 POSIX 元数据 (file create / rename / fsync) 做 3-host barrier, 必须共享文件系统。
-- **(可选) 大数据集**: 测过 ~115 GB 训练数据集放 NFS, GPU 99% util, NFS 不是瓶颈。
-- **`config.py` 同步**: ⚠️ 但是 `config.py` 本身 **不** 走 NFS — 3 host 各自从本地 venv 内 import, 改完要 `scp` 推一遍 (见 §12.7)。
-
-### 4.3 性能基线
-
-| 操作 | 实测 |
-|---|---|
-| write | ~219 MB/s (单 stream NFSv4 over TCP/RDMA) |
-| read | ~2 GB/s |
-| 网卡 | 跨 host 直传走 RoCE eth1 (192.168.1.x), 不走 eth0 |
-
-### 4.4 必须知道的陷阱 (uc_cluster_jobs.md §12.8 陷阱 C)
-
-**Orbax `sync_global_devices ... save_root_metadata` 名字不匹配**:
-- 症状: `AssertionError: sync_global_devices name mismatch ('CheckpointManager:save_root_metadata') Expected: X; got: Y`
-- 原因: NFS 元数据 stale + 上次启动残留 → 3 host `os.listdir()` 看到不同内容
-- 修复: 启动前 `rm -rf $checkpoint_dir; sync; sleep 1`
-
----
-
-## 5. 本地高速盘 + Symlink Trick: 单机训练 ckpt
-
-### 5.1 设计动机
-
-用户原话: "节约 NFS 磁盘空间 + 单机训练写 ckpt 不应走 NFS (太慢, 也无谓占共享空间)"。但 openpi 默认把 ckpt 写到 `$KAI0_DATA_ROOT/checkpoints/<config>/<exp>/`, 而 `$KAI0_DATA_ROOT = $HOME/workspace/deepdive_kai0/kai0` 在 NFS 上 — 直接写会走 NFS。
-
-### 5.2 解法: NFS 上放 symlink 字符串, 各机 client 自己解析
+### 3.1 实际路径
 
 ```
-NFS 内容 (uc01 server):
-  /data/shared/ubuntu/workspace/deepdive_kai0/kai0/checkpoints
-    → symlink string "/data/shared/ubuntu/local_ckpts"
-
-各 host 解析这个 symlink:
-  uc01: /data/shared/ubuntu/local_ckpts → 本机 /dev/vdb (本地 SSD)
-  uc02: /data/shared/ubuntu/local_ckpts → 本机 /dev/vdb (本地 SSD, 互不冲突)
-  uc03: /data/shared/ubuntu/local_ckpts → 本机 /dev/vdb (本地 SSD, 互不冲突)
+/data/shared/ubuntu/workspace/dataset/
+├── KAI0/                                          509 GB ⭐ TOS 主同步入口
+│   ├── from_tos_file.py                           单文件下载脚本 (TOS SDK, AK/SK 硬编码)
+│   ├── to_tos.py / to_tos_file.py                 上传脚本
+│   ├── Task_A/                                    与 tos://transfer-shanghai/KAI0/Task_A/ 一一对应
+│   │   ├── base/{2026-04-23, ..., 2026-05-22-v2}/      28 个 date 子集
+│   │   ├── autonomy/, dagger/, inference/
+│   ├── Task_E, Task_H, Task_HP, Task_P, Task_PP, Task_PS/
+│   ├── task_a_mix_b6000_p1200_mixed_1_step49999.tar    12.4 GB ckpt (TOS 中转)
+│   └── task_p_v2_aligned_step19999.tar                 12.4 GB ckpt (TOS 中转)
+├── Kai0_official/                                 129 GB (HF 官方 base/dagger/advantage)
+├── hf_kai0/                                        47 GB
+├── kai_official_relay/                             88 GB (跨用户中转: base + dagger)
+├── Task_A/{self_built, vis_v2_merged, vis_v2_merged_val}    11 GB
+├── exp1_eval_val/                                  27 MB
+└── val_kai0_official/                             437 MB
 ```
 
-> 关键: NFS 只 export 了 `workspace/` 子目录, **没 export 整个 `ubuntu/`**, 所以同名兄弟目录 `local_ckpts/` 不被 NFS 覆盖, 各机看到自己的本地版本。这是用 symlink 字符串"穿透 NFS"的 trick。
+### 3.2 关键事实 (与文档历史描述不同)
 
-### 5.3 实际 launcher 用法
+| 项 | 现实 | 旧文档说 |
+|---|---|---|
+| TOS pull 目标根 | `/data/shared/ubuntu/workspace/dataset/KAI0/` (NFS 共享) | `/data/shared/dataset/...` 或 `~/workspace/deepdive_kai0/kai0/data/Task_A/...` (二者均错, 前者空, 后者只有 `ssl_phase0/`) |
+| 拉取范围 | **只在 uc01 拉一次**, uc02/03 经 NFS 自动可见 | `for u in uc01 uc02 uc03; do ssh $u tosutil cp...` 各拉一份 (错, 浪费 3× TOS 带宽) |
+| 跨机一致性验证 | uc01 `from_tos_file.py` inode = 6037; uc02 同文件 inode = 6037 ✓ NFS 共享 | — |
+| 同步脚本位置 | `/data/shared/ubuntu/workspace/dataset/KAI0/{from_tos_file.py, to_tos.py, to_tos_file.py}` (canonical, AK/SK 硬编码) | — (文档未指明) |
+
+### 3.3 拉取 / 上传命令模板 (canonical)
 
 ```bash
-CONFIG=pi05_flatten_fold_<your_config>
-EXP=<your_exp_name>
-LOCAL_DIR=/home/tim/local_ckpts/$CONFIG/$EXP   # 真实路径在本机 /dev/vda2
-WORKSPACE_DIR=$KAI0_DATA_ROOT/checkpoints/$CONFIG/$EXP
+# 拉单个文件 (例: 拉 pi05_base.tar 到 KAI0 根)
+ssh uc01 "cd /data/shared/ubuntu/workspace/dataset/KAI0 && \
+  python from_tos_file.py \
+    --object_key KAI0/checkpoints/pi05_base.tar \
+    --file ./pi05_base.tar"
 
-mkdir -p "$LOCAL_DIR"
-mkdir -p "$(dirname "$WORKSPACE_DIR")"
-ln -sfn "$LOCAL_DIR" "$WORKSPACE_DIR"     # per-exp 软链
-.venv/bin/python scripts/train.py $CONFIG --exp_name=$EXP
+# 拉整目录 (推荐用 tosutil, 比 python 单文件并发更高)
+ssh uc01 "cd /data/shared/ubuntu/workspace/dataset/KAI0/Task_A && \
+  tosutil cp -r tos://transfer-shanghai/KAI0/Task_A/base/2026-05-22-v2/ ./base/"
+
+# 上传 (用 to_tos.py 文件夹模式, 或 to_tos_file.py 单文件模式)
+ssh uc01 "cd /data/shared/ubuntu/workspace/dataset/KAI0 && \
+  python to_tos.py --folder ./Task_A/base/2026-05-22-v2 \
+                   --tos_prefix KAI0/Task_A/base/2026-05-22-v2"
 ```
 
-### 5.4 `/home/tim/local_ckpts` 实现 (各机)
+> ⚠️ TOS AK/SK 硬编码在 `from_tos_file.py:11-12` / `to_tos.py:14-15`, 不读 env var (尽管脚本里有 `os.getenv('TOS_ACCESS_KEY')` 注释行)。要切凭据需改源码。
 
-| 机器 | 实现 | 物理后端 | 可用 |
-|---|---|---|---|
-| uc01 | 真实 dir | `/dev/vda2` (492G ext4) | ~290 G |
-| uc02 | 真实 dir | `/dev/vda2` | ~410 G |
-| uc03 | 真实 dir | `/dev/vda2` | (待测) |
+### 3.4 性能 (实测 GPU 99% util)
+
+文档 `submission/uc_cluster_jobs.md §12.5` 实测 ~115 GB 训练数据集放 NFS 时 GPU 99% util — NFS 在数据集消费场景下不是瓶颈。当前 783 GB `dataset/` 全部放 NFS, 训练表现一致。
 
 ---
 
-## 6. 数据集存储 (按机器各自一份, 不共享)
+## 4. 单机训练 ckpt: NFS-内 symlink trick (实测)
+
+### 4.1 现状
 
 ```
-各机本地真实目录 (不在 NFS export 范围内):
-  /data/shared/dataset/KAI0/Task_<X>/base/        ← 自建, rsync from vePFS
-  /data/shared/dataset/Kai0_official/Task_A/      ← HF 官方 base/dagger/advantage
-~/workspace/deepdive_kai0/kai0/data/Task_<X>/    ← symlinks 指向上面 (在 NFS 上, 但解析到本地)
+NFS 上 (uc01 server 提供):
+  /data/shared/ubuntu/workspace/deepdive_kai0/kai0/checkpoints
+    → symlink (NFS 内字符串) → /data/shared/ubuntu/local_ckpts
+
+NFS export 范围 ONLY: workspace/ 子树
+  /data/shared/ubuntu/local_ckpts/  ← 不在 export 范围, 各机本地
+
+各 host resolve:
+  uc01: /data/shared/ubuntu/local_ckpts → 本机 /dev/vdb (ext4, 4TB)
+  uc02: 同 → 各自本机 /dev/vdb
+  uc03: 同 → 各自本机 /dev/vdb
 ```
 
-- 3 机各保一份, 跨机不可见。
-- 大数据集 (>100 GB) 合并/构建: `hardlink mp4` (同分区秒级) + `rewrite parquet` (规整 schema)。
-- `/data/shared/ubuntu_old/workspace` 是 2026-05-18 重装前的老数据 — uc02 770 G (含 pure_1800_mixed1 SOTA), uc03 1.7 T (含 smooth_800 等)。
+uc01 / uc02 实测 symlink 字符串完全相同 (`-> /data/shared/ubuntu/local_ckpts`), mtime 都是 `May 18 12:45` (2026-05-18 重装时一次性建立)。
+
+### 4.2 巧妙之处
+
+- NFS 把 symlink **当字符串**传给 client; client 在本机 namespace 解析这个绝对路径。
+- 因为 NFS 只 export 了 `workspace/`, 没 export `ubuntu/`, 所以同名兄弟目录 `ubuntu/local_ckpts/` 在各 host 上指向各自 `/dev/vdb` 上的真实 dir。
+- 训练 ckpt write 走本地 ext4, 不挤 NFS 带宽, 也不互相覆盖。
+
+### 4.3 注意: 物理盘是 `/dev/vdb` 不是 `/dev/vda2`
+
+`storage_and_env.md §2.2` 旧表写 "uc01 ckpt 走 /dev/vda2 (492G ext4)" — **错**。实测:
+- `/dev/vda2` mount `/` (系统盘)
+- `/dev/vdb` mount `/data` (4 TB 数据盘, 整个 `/data/...` 包括 `local_ckpts/` 都在这上面)
+- uc01 当前 `/data` 余 1.7 T (Use% 56%), 比旧表 "~290G 可用" 宽裕得多
 
 ---
 
-## 7. 跨集群 (uc ↔ 火山 ↔ 本地) 数据流
+## 5. 3-host HSDP/FSDP 集群训练 ckpt: **也走 NFS** (与历史文档不同) ⚠️
 
-uc 与 vePFS / Robot-North-H20 / robot-task 队列 **不直接共享 FS**, 跨集群同步走两条路:
+### 5.1 实测路径
 
 ```
-            公网 SSH / rsync                  TOS 跨 region 骨干
-[uc02 数据] ──────────────► [gf0 vePFS] ◄─────────────► [gf3 vePFS-North-E]
-                              │                              │
-                              │ 同 vePFS 自动可见            │ 同 vePFS-North-E 自动可见
-                              ▼                              ▼
-                       robot-task (cnsh)              Robot-North-H20 (cnbj)
-                       火山 28 A100                   火山 56 H20
+/data/shared/ubuntu/workspace/cluster_ckpts/      42 GB, NFS 共享
+├── pi05_flatten_fold_a_new_pure_200_js/
+├── pi05_flatten_fold_kai0_official_kai_prompt/
+├── xvla_exp1_hard_prompt_merged_uc/
+└── xvla_exp1_hard_prompt_mixed_uc/
 ```
 
-- **uc → 火山-cnsh**: `rsync uc02:/data/shared/... gf0:/vePFS/.../`
-- **uc → 火山-cnbj**: 中转 TOS — `tosutil cp /vePFS → tos://transfer-shanghai/` 再 `gf3 tosutil cp → /vePFS-North-E/`
-- **火山 ckpt → 真机部署**: 反向, 同样经 TOS
+`findmnt -T` 显示 `/dev/vdb ext4` (uc01 上是本地盘, uc02/03 上 mount 是 NFS over eth0)。
+
+### 5.2 RDMA NFS B 平面: **已废弃 / 未启用**
+
+文档 `submission/uc_cluster_jobs.md §12.5` 写:
+```
+uc01 /etc/exports: /data/cluster_ckpt 192.168.1.0/24(rw,sync,...)
+uc02/uc03 /etc/fstab: 192.168.1.2:/data/cluster_ckpt /cluster_ckpt nfs ...
+```
+
+**实测推翻**:
+- uc01 `/etc/exports` 仅一条 (无 `/data/cluster_ckpt` 项)
+- uc01 `/data/cluster_ckpt/` 是本地空目录 (仅 root owned, 没数据)
+- uc02 / uc03 上 `/cluster_ckpt` **未 mount** (`findmnt /cluster_ckpt` 空)
+- 当前 3-host 集群训练用 NFS 上的 `cluster_ckpts/` (复数, NFS 内) 替代
+
+### 5.3 性能影响评估
+
+走管理网 eth0 NFS 而非 RDMA NFS 的代价:
+- Orbax checkpoint write 是周期性低频 (每 `keep_period` step 一次), 不是热路径 → eth0 带宽足够
+- 实际训练吞吐 (`submission/uc_cluster_jobs.md §12.9`) pi05 HSDP 1.0 s/it, FSDP 1.2 s/it — 与 ckpt FS 解耦
+- 若未来出 Orbax barrier 慢, 可考虑恢复 RDMA NFS, 但目前没有这个症状
 
 ---
 
-## 8. 共享方式选择决策树
+## 6. 共享方式决策树 (现状)
 
 ```
 要存什么?
-├── 代码 / venv / 共享 init ckpt
-│   └── 改 uc01 即可 → NFS 平面 A 自动同步 (eth0 管理网)
 │
-├── 3-host HSDP/FSDP 集群训练的 Orbax ckpt
-│   └── 写到 /cluster_ckpt/... → NFS 平面 B (eth1 RDMA, ~2 GB/s read)
+├── 代码 / venv / 共享 init ckpt
+│   └── 改 uc01 即可 → NFS 平面自动同步
+│       路径: /data/shared/ubuntu/workspace/{deepdive_kai0/, base_init_ckpts/, X-VLA-env/}
+│
+├── TOS 同步的训练数据集
+│   └── 只在 uc01 上 tosutil/python 拉 → NFS 自动可见
+│       路径: /data/shared/ubuntu/workspace/dataset/KAI0/...
+│
+├── 3-host HSDP/FSDP 集群训练 ckpt (Orbax cross-host barrier)
+│   └── 写 NFS 共享路径
+│       路径: /data/shared/ubuntu/workspace/cluster_ckpts/<exp>/
 │
 ├── 单机训练 ckpt
-│   └── 写到 /home/tim/local_ckpts/... + per-exp symlink trick
-│      → 走本机 /dev/vda2 (不占 NFS, 互不冲突)
+│   └── 走 NFS symlink trick → 各机本地 /dev/vdb
+│       逻辑路径: $KAI0_DATA_ROOT/checkpoints/<config>/<exp>/
+│                  = .../kai0/checkpoints → /data/shared/ubuntu/local_ckpts/...
+│       物理路径: 各机本机 /dev/vdb ext4 (4TB)
 │
-├── 数据集 (>5 GB, 持续读)
-│   └── /data/shared/dataset/... (本地, 各机各一份)
-│      或 (集群训练时) /cluster_ckpt/dataset/... (NFS-B, 实测 GPU 99% util)
-│
-└── 跨集群 (uc → 火山)
-    └── rsync 公网 → gf0:/vePFS (cnsh) 或 TOS 中转 → gf3:/vePFS-North-E (cnbj)
+└── 跨集群 (uc → 火山 cnsh/cnbj)
+    └── rsync 公网到 gf0:/vePFS  或  TOS 中转 (大文件 + 跨 region)
+        见 data_sync_tos.md §6
 ```
 
 ---
 
-## 9. 重要注意事项 / 历史"踩坑"
+## 7. 必须知道的注意事项
 
-1. **NFS export 范围限定**: 只 `workspace/` 一个子目录, 不是 `ubuntu/` 整体 — 这是 §5 symlink trick 能工作的前提。改 export 范围前请评估对单机 ckpt 的影响。
-2. **`config.py` 改完必 scp**: 集群训练时 3 host 各自从 venv 内 import, 不走 NFS 自动同步 (因 `config.py` 在 `.venv` 之外的 `src/openpi/` 路径但 worker 是从本机 NFS-mounted 路径读, 实际**是会走 NFS 的** — 但 NFS 缓存可能延迟, 仍建议显式 scp + verify; 见 `uc_cluster_jobs.md §12.7`)。
-3. **千万不要直接写 ckpt 到 `<kai0>/checkpoints/<config>/<exp>` 真实目录**: 那是 NFS 路径, 旧版有 lsyncd 双向 mirror 时会导致损坏, 现在虽然 lsyncd 已停, 但占 NFS 空间 + 慢。一律走 symlink trick。
-4. **SSH 密码登录已禁用** (cloud-init 50-cloud-init.conf), 唯一登录 = pubkey。运维加新人要先放 pubkey。
-5. **uc01 是 SPOF**: 平面 A + 平面 B 都以 uc01 为 server, uc01 down 会同时影响 uc02/03 的 NFS — 重启 uc01 前请先停 uc02/03 上的训练。
+1. **NFS 只 export `workspace/`, 不是整个 `ubuntu/`** — 这是 symlink trick (§4) 能工作的前提。改 export 范围前请评估对单机 ckpt 的影响。
+
+2. **TOS AK/SK 硬编码在 `dataset/KAI0/{from_tos_file,to_tos}.py`** — AK 是子账号凭据, 不应外泄。Git 化前必须替换为 env var 读取。
+
+3. **千万不要写 ckpt 到 `kai0/checkpoints/<config>/<exp>` 真实路径** — 那是 NFS 路径, 会占共享空间 + 拖慢其他机 I/O。一律走 symlink trick (§4) 或直接写 `/data/shared/ubuntu/local_ckpts/...`。
+
+4. **`config.py` 改完要 scp 同步 3 机** — 虽然 `config.py` 在 NFS 上理论上自动同步, 但 worker 进程是从本机 python import, NFS 缓存可能延迟; 实测 `submission/uc_cluster_jobs.md §12.7` 仍要显式 scp + grep 验证。
+
+5. **uc01 是 SPOF** — NFS server + 数据集源都在 uc01。uc01 down 同时影响 uc02/03 的 NFS read。重启 uc01 前先停 uc02/03 上的训练。
+
+6. **SSH 密码登录已禁用** (cloud-init 50-cloud-init.conf), 唯一登录 = pubkey。
 
 ---
 
-## 10. 验证当前架构是否仍生效 (建议运行)
-
-文档与 memory 引用最新事件是 2026-05-18 (重装). 本分析基于这些静态信息推导, 建议在使用前在 uc01 上跑一遍快速检查:
+## 8. 校验命令 (留作下次 verify)
 
 ```bash
-# 在 uc01 上:
-cat /etc/exports                                  # 验 NFS export 列表
-showmount -e localhost                            # 验当前活跃 export
-ssh uc02 'mount | grep -E "nfs|cluster_ckpt"'     # 验 client mount 是否仍生效
-ssh uc02 'ls -ld /data/shared/ubuntu/local_ckpts' # 验 symlink trick 仍指向本地
+# A. NFS server 配置
+ssh uc01 "cat /etc/exports; showmount -e localhost"
 
-# 在所有 3 机上对比同一文件 (验代码 NFS 同步):
-for h in uc01 uc02 uc03; do
-  ssh $h "stat -c '%i %s %y' /data/shared/ubuntu/workspace/deepdive_kai0/kai0/scripts/train.py"
+# B. NFS client mount
+for h in uc02 uc03; do
+  ssh $h "findmnt -t nfs,nfs4"
 done
-# inode 应该一样 (同一 NFS 文件)
 
-# 验 RDMA 网 NFS:
-ssh uc02 "df -h /cluster_ckpt 2>&1 | head"
+# C. 跨机 inode 一致性验证 (代码/数据 真共享)
+for h in uc01 uc02 uc03; do
+  ssh $h "stat -c '$h: inode=%i %n' /data/shared/ubuntu/workspace/dataset/KAI0/from_tos_file.py"
+done
+# 期望: 3 行 inode 全相同
+
+# D. local_ckpts symlink trick
+for h in uc01 uc02 uc03; do
+  ssh $h "
+    ls -la /data/shared/ubuntu/workspace/deepdive_kai0/kai0/checkpoints  # 应是 symlink → /data/shared/ubuntu/local_ckpts
+    findmnt -T /data/shared/ubuntu/local_ckpts                            # 应是本机 /dev/vdb (不是 NFS)
+  "
+done
+
+# E. cluster_ckpt 旧路径状态 (应为废弃)
+for h in uc01 uc02 uc03; do
+  ssh $h "
+    ls -la /data/cluster_ckpt 2>&1 | head -3
+    findmnt /cluster_ckpt 2>&1 || echo '/cluster_ckpt NOT mounted'
+  "
+done
+
+# F. 数据盘余量
+for h in uc01 uc02 uc03; do
+  ssh $h "df -h /data"
+done
 ```
 
-如有不符, 以现状为准并更新本文件。
+---
+
+## 9. 与历史文档的差异速查
+
+| 文档 | 历史描述 | 实测现状 | 建议修订 |
+|---|---|---|---|
+| `submission/uc_cluster_jobs.md §12.5` | 双 NFS 平面: 管理网 + RDMA `/data/cluster_ckpt` | 单 NFS 平面 (仅管理网); RDMA NFS 未启用; 3-host ckpt 走 NFS 内 `cluster_ckpts/` | 标注 §12.5 RDMA NFS 部分为"曾计划/未启用", 加新 §12.5b 描述实际 |
+| `data_sync_tos.md §6.2/§6.3` | uc 拉到 `~/workspace/deepdive_kai0/kai0/data/Task_A/<dataset>/`; for-loop 各机拉 | 拉到 `dataset/KAI0/...`; 只 uc01 拉 + NFS 共享 | 已在本次修订一并改 |
+| `storage_and_env.md §2.2 / §2.4` | `local_ckpts → /dev/vda2 (~290G)`; `/data/shared/dataset/...` | `local_ckpts → /dev/vdb (~1.7T avail)`; 数据在 `/data/shared/ubuntu/workspace/dataset/` | 已在本次修订一并改 |
+| memory `reference_uc_cluster_nfs_layout` | "单机训练 ckpt 不上 NFS, `/data/cluster_ckpt` 各机各自本地, 集群训练 init ckpt 需手动 scp" | 单机 ckpt 走 symlink-本地 ✓; cluster_ckpt 路径已迁到 NFS 共享路径 | 更新 memory |

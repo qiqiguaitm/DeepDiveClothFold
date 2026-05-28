@@ -30,7 +30,7 @@ from lerobot.common.datasets.lerobot_dataset import LeRobotDataset, LeRobotDatas
 
 
 CHECKPOINT_BASE = "/vePFS/tim/workspace/deepdive_kai0/kai0/checkpoints"
-DATA_DIR = "/vePFS/tim/workspace/deepdive_kai0/kai0/data/Task_A/advantage"  # unified eval set
+DATA_DIR = "/vePFS/tim/workspace/deepdive_kai0/kai0/data/Task_A/kai0_advantage"  # unified eval set
 
 
 def build_heldout_manifest(repo_id, val_ratio=0.1, action_horizon=50, seed=42):

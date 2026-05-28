@@ -5,7 +5,7 @@ and extracts a few evenly-spaced representative frames per video.
 
 Usage:
     python scripts/sample_examples.py \
-        --src /home/tim/workspace/deepdive_kai0/kai0/data/Task_A/base \
+        --src /home/tim/workspace/deepdive_kai0/kai0/data/Task_A/kai0_base \
         --dst /home/tim/workspace/deepdive_kai0/kai0/data/Task_A/self_built/base_sample_200 \
         --n 200 --seed 42 --frames-per-video 9
 """

@@ -37,7 +37,7 @@ class AdvantageLerobotDataset(LeRobotDataset):
             video_backend
         )
         # Rebuild episode_data_index from the ACTUAL hf_dataset row order.
-        # The released Task_A/advantage dataset has inconsistent meta <-> data episode_index:
+        # The released Task_A/kai0_advantage dataset has inconsistent meta <-> data episode_index:
         # meta.episodes lists ep_idx 0..3054, but the parquet rows contain ep_idx values in
         # a different range (0..3365 with gaps). The default LeRobotDataset.episode_data_index
         # is built from meta (wrong), so resampling a "same-episode" frame routinely lands

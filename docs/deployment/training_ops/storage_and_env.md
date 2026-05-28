@@ -95,8 +95,8 @@ ln -sfn "$LOCAL_DIR" "$WORKSPACE_DIR"
 > ⭐ **数据集存放规范 (2026-05-28 明确)**: **所有用户/脚本构建的数据集一律放 `kai0/data/Task_A/self_built/<name>/`**, 不要直接放 `Task_A/` 根目录下。
 > - build 脚本 (`train_scripts/kai/data/build_*.py`) 的 `DST` 必须指向 `.../data/Task_A/self_built/<name>`。
 > - config.py 中训练 config 的 `repo_id` 也指向 `self_built/<name>`。
-> - 例外: 原始采集 (`vis_base/`, `vis_base_real/`) + HF 官方 (`kai0_base/`, `kai0_dagger/`) + val 集 (`vis_v2_merged_val/`) 可放 `Task_A/` 根, 因它们不是"构建"产物。
-> - 历史遗留 (违反此规范, 已迁移): `vis_v2_full`, `A_0423_0527` 原直接放 `Task_A/` 根, 2026-05-28 起规范要求迁入 `self_built/`。
+> - 例外: 原始采集 (`vis_base/`, 真实本地盘 build 源) + HF 官方 (`kai0_base/`, `kai0_dagger/`, `kai0_advantage/`) 可放 `Task_A/` 根, 因它们不是"构建"产物。
+> - 已迁移 (2026-05-28 完成): `vis_v2_full`, `vis_v2_merged`, `vis_v2_merged_val`, `val_kai0_official`, `A_0423_0527` 原直接放 `Task_A/` 根, 现全部移入 `self_built/`; config.py / build 脚本 / volc+xvla yaml 中 **gf0 `/vePFS` 路径** 引用已同步更新 (gf3 `/vePFS-North-E`、uc `/data/shared` 各自路径保持不变)。
 
 
 ```
@@ -111,15 +111,17 @@ deepdive_kai0/
 │   │   │   ├── norm_stats.json
 │   │   │   └── params/                # ~12 GB JAX/Flax 权重
 │   │   └── pi05_flatten_fold_*/<exp_name>/  # 各训练 exp 的 ckpts
-│   └── data/                          # 数据集软链入口
+│   └── data/                          # 数据集入口 (gf0 现已全部真实落盘, 无软链)
 │       └── Task_A/
-│           ├── vis_base/              # → 真实/模拟采集数据集 (按 date)
-│           ├── vis_base_real/         # → 真实采集原始数据 (build 源, 按 date)
-│           ├── kai0_base/             # → HF 官方 kai0 base
-│           ├── kai0_dagger/           # → HF 官方 kai0 dagger
-│           ├── kai0_advantage/        # → HF 官方 advantage (uc01/uc02 only)
-│           ├── vis_v2_merged_val/     # cross-val (30 ep, build 出的 hold-out)
+│           ├── vis_base/              # 真实本地盘 (2026-05-28: 原 TOS 软链 + vis_base_real 已合并到此), build 源, 按 date; gf0 每小时 cron 从 TOS 增量拉新日期 (见 data_sync_tos.md §6.8)
+│           ├── kai0_base/             # HF 官方 base — 真实目录 (2026-05-28: 原 base 改名而来, 不再是软链)
+│           ├── kai0_dagger/           # HF 官方 dagger — 真实目录 (2026-05-28: 原 dagger 改名而来)
+│           ├── kai0_advantage/        # HF 官方 advantage — 真实目录 (2026-05-28: 自 self_built/advantage 迁回根; 视频软链→kai0_base)
 │           └── self_built/            # ⭐ 所有用户构建数据集一律放这里
+│               ├── vis_v2_full/       # 全 v2 日期合并 (build_vis_v2_full.py, 视频软链→vis_base)
+│               ├── vis_v2_merged/     # 合并数据集 (build_vis_v2_merged.py, 软链→vis_base)
+│               ├── vis_v2_merged_val/ # cross-val hold-out (30 ep, build 出的)
+│               ├── val_kai0_official/  # kai0_base+kai0_dagger 各留 15 集的 holdout (inline eval, build_val_kai0_official.py)
 │               ├── A_pure_1200/{base,val}/
 │               ├── A_new_pure_1200/{base,val}/
 │               ├── A_new_pure_200/

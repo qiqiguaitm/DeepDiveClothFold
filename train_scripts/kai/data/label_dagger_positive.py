@@ -29,7 +29,7 @@ from tqdm import tqdm
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--src", default="/vePFS/tim/workspace/deepdive_kai0/kai0/data/Task_A/dagger")
+    ap.add_argument("--src", default="/vePFS/tim/workspace/deepdive_kai0/kai0/data/Task_A/kai0_dagger")
     ap.add_argument("--dst", default="/vePFS/tim/workspace/deepdive_kai0/kai0/data/Task_A/dagger_labeled")
     ap.add_argument("--task-index", type=int, default=1, help="task_index for all frames (default 1 = positive)")
     ap.add_argument(

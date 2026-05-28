@@ -75,25 +75,27 @@ tar -cf - A_new_smooth_800/ | tosutil cp - tos://transfer-shanghai/KAI0/dataset/
 - 每次上传后更新 manifest 记录: dataset name / 上传日期 / 总大小 / ep 数 / 校验 hash
 - TOS 上同名旧版本被覆盖 → manifest 标记版本递进 (`v1`, `v2`, ...)
 
-### 6.2 训练服务器从 TOS 拉数据 (镜像消费)
+### 6.2 训练服务器从 TOS 拉数据 (镜像消费) ⭐ (2026-05-28 修订)
 
-各服务器 KAI0 数据路径**与 TOS 路径一一对应**, 拉取流程:
+各服务器 KAI0 数据路径与 TOS 路径**子路径一致** (TOS 端没有 `dataset/` 这层, 本地端 uc 为兼容历史有):
 
 | 训练服务器 | KAI0 本地路径 (mirror) | 拉取命令 |
 |---|---|---|
-| **gf0** | `/vePFS/tim/data/KAI0/...` | `cd /vePFS/tim/data/KAI0 && tosutil cp -r tos://transfer-shanghai/KAI0/dataset/Task_A/<dataset>/ ./dataset/Task_A/` |
-| **gf3** | `/vePFS-North-E/vis_robot/dataset/KAI0/...` | `cd /vePFS-North-E/vis_robot/dataset/KAI0 && tosutil cp -r tos://transfer-shanghai/KAI0/dataset/Task_A/<dataset>/ ./dataset/Task_A/` |
-| **uc01/02/03** | `/data/shared/ubuntu/workspace/deepdive_kai0/kai0/data/Task_A/<dataset>/` | `cd /data/shared/.../kai0/data && tosutil cp -r tos://transfer-shanghai/KAI0/dataset/Task_A/<dataset>/ ./Task_A/` |
+| **gf0** | `/vePFS/tim/data/KAI0/...` | `cd /vePFS/tim/data/KAI0 && tosutil cp -r tos://transfer-shanghai/KAI0/Task_A/<sub>/ ./Task_A/` |
+| **gf3** | `/vePFS-North-E/vis_robot/dataset/KAI0/...` | `cd /vePFS-North-E/vis_robot/dataset/KAI0 && tosutil cp -r tos://transfer-shanghai/KAI0/Task_A/<sub>/ ./Task_A/` |
+| **uc01** (仅 uc01, 经 NFS 自动同步给 uc02/03) ⭐ | `/data/shared/ubuntu/workspace/dataset/KAI0/...` | `cd /data/shared/ubuntu/workspace/dataset/KAI0 && tosutil cp -r tos://transfer-shanghai/KAI0/Task_A/<sub>/ ./Task_A/` |
+
+> ⭐ **uc 集群只在 uc01 拉一次** — `/data/shared/ubuntu/workspace/` 是 uc01 export 的 NFS root (`10.60.0.0/16`, 走管理网 eth0), uc02/03 通过 NFSv4.1 自动看到同一份 (跨机 inode 一致, 2026-05-28 实测). **不要 for-loop 各机各拉一份** — 浪费 3× TOS 带宽, 还会因不同步导致训练读到不同内容。详见 `uc_cluster_data_sharing_analysis.md`。
 
 **关键: 路径前缀对齐**:
 ```
-TOS:  tos://transfer-shanghai/KAI0/dataset/Task_A/A_new_smooth_800/
+TOS:  tos://transfer-shanghai/KAI0/Task_A/base/2026-05-22-v2/
             │                       │
-            └── 子路径与服务器本地  ─┴── 完全一致
-            
-gf0:  /vePFS/tim/data/KAI0/dataset/Task_A/A_new_smooth_800/
-gf3:  /vePFS-North-E/vis_robot/dataset/KAI0/dataset/Task_A/A_new_smooth_800/
-ucNN: /data/shared/ubuntu/workspace/deepdive_kai0/kai0/data/Task_A/A_new_smooth_800/
+            └── 子路径与服务器本地  ─┴── 完全一致 (但 uc 本地多一层 dataset/)
+
+gf0:  /vePFS/tim/data/KAI0/Task_A/base/2026-05-22-v2/
+gf3:  /vePFS-North-E/vis_robot/dataset/KAI0/Task_A/base/2026-05-22-v2/
+uc01: /data/shared/ubuntu/workspace/dataset/KAI0/Task_A/base/2026-05-22-v2/    ← uc02/03 经 NFS 自动可见
 ```
 
 ### 6.3 跨服务器 sync 工作流 (经 gf0 统一发起)
@@ -104,34 +106,39 @@ ucNN: /data/shared/ubuntu/workspace/deepdive_kai0/kai0/data/Task_A/A_new_smooth_
 # gf0 → 火山 / uc 上的数据 sync 都通过 gf0 ssh + 本机 tosutil
 ssh gf0 'bash -s' <<'EOF'
 # 1. 通知 sim01 准备好数据后, gf0 触发各服务器拉取
-DATASET=A_new_smooth_800
+SUB=base/2026-05-22-v2
 
 # gf0 自己拉 (cnsh vepfs)
-cd /vePFS/tim/data/KAI0/dataset/Task_A
-tosutil cp -r tos://transfer-shanghai/KAI0/dataset/Task_A/$DATASET ./
+cd /vePFS/tim/data/KAI0/Task_A
+tosutil cp -r tos://transfer-shanghai/KAI0/Task_A/$SUB ./
 
 # gf3 拉 (cnbj vepfs)
-ssh gf3 "cd /vePFS-North-E/vis_robot/dataset/KAI0/dataset/Task_A && \
-  tosutil cp -r tos://transfer-shanghai/KAI0/dataset/Task_A/$DATASET ./"
+ssh gf3 "cd /vePFS-North-E/vis_robot/dataset/KAI0/Task_A && \
+  tosutil cp -r tos://transfer-shanghai/KAI0/Task_A/$SUB ./"
 
-# 各 uc 拉 (uc 本地 SSD)
-for u in uc01 uc02 uc03; do
-  ssh $u "cd /data/shared/ubuntu/workspace/deepdive_kai0/kai0/data/Task_A && \
-    tosutil cp -r tos://transfer-shanghai/KAI0/dataset/Task_A/$DATASET ./"
-done
+# uc 集群只在 uc01 拉一次, uc02/03 经 NFS 自动同步 ⭐
+ssh uc01 "cd /data/shared/ubuntu/workspace/dataset/KAI0/Task_A && \
+  tosutil cp -r tos://transfer-shanghai/KAI0/Task_A/$SUB ./"
 
 # 验证 (各服务器抽样查目录大小 + ep 数)
-for h in gf0 gf3 uc01 uc02 uc03; do
+for h in gf0 gf3 uc01; do
   P=$(case $h in
-    gf0) echo /vePFS/tim/data/KAI0/dataset/Task_A/$DATASET;;
-    gf3) echo /vePFS-North-E/vis_robot/dataset/KAI0/dataset/Task_A/$DATASET;;
-    *)   echo /data/shared/ubuntu/workspace/deepdive_kai0/kai0/data/Task_A/$DATASET;;
+    gf0)  echo /vePFS/tim/data/KAI0/Task_A/$SUB;;
+    gf3)  echo /vePFS-North-E/vis_robot/dataset/KAI0/Task_A/$SUB;;
+    uc01) echo /data/shared/ubuntu/workspace/dataset/KAI0/Task_A/$SUB;;
   esac)
   echo -n "$h: "; [ "$h" = "gf0" ] && du -sh "$P" 2>/dev/null || \
     ssh $h "du -sh $P 2>/dev/null"
 done
+
+# 确认 uc02/03 也看到了 (经 NFS, 一般 <1s 同步)
+for h in uc02 uc03; do
+  ssh $h "ls /data/shared/ubuntu/workspace/dataset/KAI0/Task_A/$SUB | head -3"
+done
 EOF
 ```
+
+> **uc 端 canonical 同步脚本** (内含 AK/SK 硬编码, 不读 env): `/data/shared/ubuntu/workspace/dataset/KAI0/{from_tos_file.py, to_tos.py, to_tos_file.py}`. 通常 `tosutil cp -r` 已够用; Python 脚本仅在需要调分片并发 (task_num/part_size) 时用。
 
 ### 6.4 Ckpt 回流 (训练完成 → 经 TOS → sim01 部署)
 
@@ -240,6 +247,36 @@ tos://transfer-shanghai/KAI0/
 - ❌ ~~js01-04 JuiceFS 共享~~ (js 集群已停用)
 - ❌ ~~gf0 → sim01 SSH 反向隧道传 ckpt~~ (改走 TOS)
 - ⚠️ rsync 直连仅用于**临时小文件** (代码 patch / 配置 / 日志), 数据/ckpt **必须走 TOS**
+
+### 6.8 gf0 `vis_base` 自动**完整增量**同步 (cron + tosutil, 每小时) ⭐ (2026-05-28)
+
+**目的**: 让 gf0 上的 `kai0/data/Task_A/vis_base/`(vis_v2_* / A_0423_0527 等数据集的 build 源)持续与 TOS 保持最新, 无需手动拉。
+
+| 项 | 值 |
+|---|---|
+| 机器 | **仅 gf0**(本机有 `~/tosutil` + `~/.tosutilconfig` 凭据) |
+| 脚本 | `train_scripts/kai/data/sync_vis_base_from_tos.sh` |
+| 频率 | crontab `0 * * * *`(每小时整点) |
+| 传输工具 | **tosutil `cp -r -u`**(原生 TOS 客户端, 多线程, 不依赖 FUSE 挂载; 从 uc01 拷贝二进制装在 gf0) |
+| 源 → 目标 | 逐日期 `tos://transfer-shanghai/KAI0/Task_A/base/<date>-v2/` → `…/vis_base/<date>-v2/` |
+| 排除 | **`-exclude='*top_head_depth*'`**(depth zarr, 见下) |
+| 日志 | `logs/vis_base_sync.log`(>5MB 自动轮转) |
+
+**同步策略**: **完整增量** —— 每次遍历 TOS 上**所有** `<date>-v2`(不只新日期), 用 `tosutil cp -r -u` 增量拉取:
+- `-u` 按 **size/crc** 跳过未变文件(**非 mtime**, 实测早期日期 760/762 skip、0.24s), 只下载新/变更对象, **从不删除本地** → 保护 vis_v2_*/A_0423_0527 指向 vis_base 的软链。
+- 既能接住"旧日期后续追加 episode"的更新, 也能拉全新日期。
+- `flock -n` 防重叠(上次未跑完则跳过)。
+
+> **为何排除 depth zarr (`top_head_depth`)**: 深度图存为 zarr, 单日期约 **18.5 万个小 chunk 文件** × 13 个含 depth 的日期 ≈ **240 万对象**。若全量同步, 每轮要比对 240 万对象 → 20-30 分钟, 不适合每小时。而 depth **当前不被 vis_v2_* 训练消费**(只用 RGB: top_head/hand_left/hand_right)。`-exclude='*top_head_depth*'` 后只同步 RGB + parquet + meta(数万对象)。
+> - **本地已有的 depth 不会被删**(cp 从不删本地), 只是不再逐轮比对/更新。
+> - 若将来需要 depth: 手动 `tosutil cp -r -u .../base/<date>/videos/chunk-*/top_head_depth/ <DST>/<date>/videos/...`, 或单独做低频(每日)depth 同步。
+> - 即便排除 depth, tosutil 仍需列举日期前缀下的对象, 含 depth 日期单轮仍偏慢, 整轮约数分钟级(可接受, < 1h 间隔, flock 兜底)。
+
+> **前置归一化 (2026-05-28 一次性完成)**: 早期 10 个日期 (04-23~05-09) 的本地视频目录原为 `observation.images.*` 长名, 而 TOS 是短名 `top_head` —— 已把这 30 个目录改回短名 + retarget 了 vis_v2_*/A_0423_0527 中 7881 条相关软链。归一化后 vis_base 与 TOS 结构一致, 完整 `cp -r -u` 不会产生重复(否则会两套并存)。
+>
+> **tosutil 与 rsync-over-FUSE 之别**: tosutil 走 TOS API 原生多线程, 不依赖 `/transfer-shanghai` FUSE 挂载在位, 更快更稳。注意 **tosutil 无 `sync` 子命令**(官方文档确认), 用 `cp -r -u` 实现增量。路径映射: `cp -r .../base/<date>/ vis_base/` 会把末级 `<date>` 落在 `vis_base/<date>/`(实测)。
+>
+> ⚠️ **前置依赖: cron 守护进程必须在运行**。gf0 重装/重启后需 `sudo service cron start`(需 root)。验证: `pgrep -x cron && crontab -l`。tosutil 配置 `~/.tosutilconfig` 内 AK/SK + 路径(从 uc01 拷来后已把 `/home/ubuntu` 改为 `/home/tim`)。
 
 ---
 

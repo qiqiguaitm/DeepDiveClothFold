@@ -2,4 +2,4 @@
 # Stage 2 freezes everything except soft_prompt_hub (short ~5k step, lr 5e-4).
 # Stage 3 unfreezes all (50k step, lr 1.5e-5 → 1.5e-6).
 roots:
-  - {root: /vePFS/tim/workspace/deepdive_kai0/kai0/data/Task_A/vis_v2_merged, domain_id: 1}
+  - {root: /vePFS/tim/workspace/deepdive_kai0/kai0/data/Task_A/self_built/vis_v2_merged, domain_id: 1}

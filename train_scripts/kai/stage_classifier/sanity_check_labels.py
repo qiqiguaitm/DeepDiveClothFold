@@ -11,7 +11,7 @@ Stratified sampling: 10 uniform + 5 short (N<500) + 5 long (N>1200) val episodes
 
 Usage:
   python sanity_check_labels.py \
-    --source /vePFS/.../Task_A/advantage \
+    --source /vePFS/.../Task_A/kai0_advantage \
     --split  /vePFS/.../stage_classifier_split.json \
     --out-dir /vePFS/.../label_sanity_viz \
     --n-uniform 10 --n-short 5 --n-long 5 --seed 42

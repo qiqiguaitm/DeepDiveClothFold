@@ -7,8 +7,8 @@ from concurrent.futures import ProcessPoolExecutor
 import numpy as np
 
 AWBC_CKPT = "checkpoints/pi05_flatten_fold_awbc/awbc_v1/99999"
-NORM_STATS = "data/Task_A/base"
-ADVANTAGE_REPO = "/vePFS/tim/workspace/deepdive_kai0/kai0/data/Task_A/advantage"
+NORM_STATS = "data/Task_A/kai0_base"
+ADVANTAGE_REPO = "/vePFS/tim/workspace/deepdive_kai0/kai0/data/Task_A/kai0_advantage"
 DUMP_PATH = "model_arithmetic/heldout_dumps/advantage_awbc_sanity.pkl"
 N_BATCHES = 20
 N_GPUS = 8

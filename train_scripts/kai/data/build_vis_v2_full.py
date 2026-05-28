@@ -1,7 +1,7 @@
-"""Build merged vis dataset from all v2 dates under vis_base_real/.
+"""Build merged vis dataset from all v2 dates under vis_base/.
 
-Sources: /vePFS/tim/workspace/deepdive_kai0/kai0/data/Task_A/vis_base_real/{date}-v2/
-Output:  /vePFS/tim/workspace/deepdive_kai0/kai0/data/Task_A/vis_v2_full/
+Sources: /vePFS/tim/workspace/deepdive_kai0/kai0/data/Task_A/vis_base/{date}-v2/
+Output:  /vePFS/tim/workspace/deepdive_kai0/kai0/data/Task_A/self_built/vis_v2_full/
 
 LeRobot v2.1 layout. Globally renumber episode_index. Re-chunk to chunks_size=1000.
 videos → symlinks to source (saves space).
@@ -14,8 +14,8 @@ import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-SRC_ROOT = Path("/vePFS/tim/workspace/deepdive_kai0/kai0/data/Task_A/vis_base_real")
-DST = Path("/vePFS/tim/workspace/deepdive_kai0/kai0/data/Task_A/vis_v2_full")
+SRC_ROOT = Path("/vePFS/tim/workspace/deepdive_kai0/kai0/data/Task_A/vis_base")
+DST = Path("/vePFS/tim/workspace/deepdive_kai0/kai0/data/Task_A/self_built/vis_v2_full")
 CHUNKS_SIZE = 1000
 PROMPT = "Flatten and fold the cloth."
 TEMPLATE_ID = "task_a_base"

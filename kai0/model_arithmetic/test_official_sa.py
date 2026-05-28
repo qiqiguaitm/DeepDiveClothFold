@@ -24,7 +24,7 @@ def test_prompt_response(gpu_id, prompt_text):
     config = _config.get_config("pi05_flatten_fold_split_0")
     new_data = dataclasses.replace(
         config.data,
-        repo_id="/vePFS/tim/workspace/deepdive_kai0/kai0/data/Task_A/base",
+        repo_id="/vePFS/tim/workspace/deepdive_kai0/kai0/data/Task_A/kai0_base",
         default_prompt=prompt_text,
     )
     config = dataclasses.replace(config, data=new_data, batch_size=4)

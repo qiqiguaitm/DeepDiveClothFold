@@ -13,8 +13,8 @@ import numpy as np
 
 
 AWBC_CKPT = "checkpoints/pi05_flatten_fold_awbc/awbc_v1/99999"
-NORM_STATS = "data/Task_A/base"
-HELDOUT_REPO = "/vePFS/tim/workspace/deepdive_kai0/kai0/data/Task_A/dagger"
+NORM_STATS = "data/Task_A/kai0_base"
+HELDOUT_REPO = "/vePFS/tim/workspace/deepdive_kai0/kai0/data/Task_A/kai0_dagger"
 ADVANTAGE_PROMPT = "Flatten and fold the cloth. Advantage: positive"
 
 DUMP_PATH = "model_arithmetic/heldout_dumps/dagger_awbc_adv_prompt_v2.pkl"

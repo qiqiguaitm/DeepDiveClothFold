@@ -7,7 +7,7 @@ Save per-episode to disk for fast training.
 
 Usage:
     python train_scripts/kai/stage_classifier/precompute_features.py \
-        --source /vePFS/.../Task_A/advantage \
+        --source /vePFS/.../Task_A/kai0_advantage \
         --split /vePFS/.../Task_A/stage_classifier_split.json \
         --split-key train \
         --cache-root /vePFS/.../cache/stage_classifier/advantage \

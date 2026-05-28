@@ -18,7 +18,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 VIS_ROOT = "/home/tim/workspace/deepdive_kai0/kai0/data/Task_A/vis_base"
-REFERENCE_INFO = "/home/tim/workspace/deepdive_kai0/kai0/data/Task_A/base/meta/info.json"
+REFERENCE_INFO = "/home/tim/workspace/deepdive_kai0/kai0/data/Task_A/kai0_base/meta/info.json"
 DST_ROOT = "/vePFS/tim/workspace/deepdive_kai0/kai0/data/Task_A_visrobot01_only"
 SEED = 42
 FPS = 30

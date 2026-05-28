@@ -26,7 +26,7 @@ import numpy as np
 MODELS = {
     "normal_99999": {
         "ckpt": "checkpoints/pi05_flatten_fold_normal/normal_v1/99999",
-        "norm_stats": "data/Task_A/base",
+        "norm_stats": "data/Task_A/kai0_base",
     },
     "official_mixed": {
         "ckpt": "checkpoints/Task_A/mixed_1",

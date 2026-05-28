@@ -1,6 +1,6 @@
 #!/bin/bash
 # gf0 AWBC dagger-only (ablation): same config as gf0_awbc_baseline_v2 but trained
-# on Task_A/dagger_advantage (3457 ep) instead of Task_A/advantage (3055 ep).
+# on Task_A/dagger_advantage (3457 ep) instead of Task_A/kai0_advantage (3055 ep).
 # Aligned to 30K steps to match awbc_v2 A/B series (vanilla, robust).
 # Purpose: isolate the base↔dagger contribution to AWBC eval MAE.
 

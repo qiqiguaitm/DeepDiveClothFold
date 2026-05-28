@@ -81,7 +81,7 @@ Entrypoint: |
 
   # PRE-FLIGHT
   TRAIN=/vePFS/tim/workspace/deepdive_kai0/kai0/data/Task_A/self_built/A_0423_0527
-  VAL=/vePFS/tim/workspace/deepdive_kai0/kai0/data/Task_A/vis_v2_merged_val
+  VAL=/vePFS/tim/workspace/deepdive_kai0/kai0/data/Task_A/self_built/vis_v2_merged_val
   INIT=/vePFS/tim/workspace/deepdive_kai0/kai0/checkpoints/Task_A/mixed_1/params
   [ -f "$TRAIN/meta/episodes.jsonl" ] || { echo "FATAL: train data missing $TRAIN" >&2; exit 13; }
   [ -f "$TRAIN/norm_stats.json" ] || { echo "FATAL: norm_stats missing $TRAIN/norm_stats.json" >&2; exit 13; }

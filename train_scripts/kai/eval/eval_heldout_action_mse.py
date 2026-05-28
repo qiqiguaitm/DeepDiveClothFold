@@ -13,7 +13,7 @@ Usage:
     uv run python /vePFS/tim/workspace/deepdive_kai0/train_scripts/kai/eval/eval_heldout_action_mse.py \
         --config pi05_flatten_fold_awbc \
         --ckpt   checkpoints/pi05_flatten_fold_awbc/awbc_v1/99999 \
-        --val-repo data/Task_A/advantage \
+        --val-repo data/Task_A/kai0_advantage \
         --prompt-mode awbc \
         --n-eval-ep 30 --n-sample-frames 50
 """

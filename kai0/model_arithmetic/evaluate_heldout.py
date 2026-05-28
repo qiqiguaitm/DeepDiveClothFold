@@ -27,7 +27,7 @@ import numpy as np
 MODELS = {
     "normal_99999": {
         "ckpt": "checkpoints/pi05_flatten_fold_normal/normal_v1/99999",
-        "norm_stats": "data/Task_A/base",
+        "norm_stats": "data/Task_A/kai0_base",
     },
     "our_mixed": {
         "ckpt": "checkpoints/pi05_flatten_fold_mixed/mixed_inverse_loss/0",
@@ -39,11 +39,11 @@ MODELS = {
     },
     "awbc_99999": {
         "ckpt": "checkpoints/pi05_flatten_fold_awbc/awbc_v1/99999",
-        "norm_stats": "data/Task_A/base",  # same as normal
+        "norm_stats": "data/Task_A/kai0_base",  # same as normal
     },
 }
 
-HELDOUT_REPO = "/vePFS/tim/workspace/deepdive_kai0/kai0/data/Task_A/dagger"
+HELDOUT_REPO = "/vePFS/tim/workspace/deepdive_kai0/kai0/data/Task_A/kai0_dagger"
 N_BATCHES = 50
 N_ACTION_BATCHES = 10
 N_GPUS = 8

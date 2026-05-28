@@ -58,7 +58,7 @@ class TransformedDataset(Dataset[T_co]):
 
     def __getitem__(self, index: SupportsIndex) -> T_co:
         import random, logging
-        # Higher retry budget: the Task_A/advantage dataset has ~311/3055 episodes (≈10%)
+        # Higher retry budget: the Task_A/kai0_advantage dataset has ~311/3055 episodes (≈10%)
         # with missing videos, so occasional runs of bad samples are expected.
         MAX_ATTEMPTS = 50
         for attempt in range(MAX_ATTEMPTS):

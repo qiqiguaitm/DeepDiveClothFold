@@ -13,7 +13,7 @@ import numpy as np
 
 AWBC = {
     "ckpt": "checkpoints/pi05_flatten_fold_awbc/awbc_v1/99999",
-    "norm_stats": "data/Task_A/base",  # same as normal
+    "norm_stats": "data/Task_A/kai0_base",  # same as normal
 }
 
 # Reuse normal's dump (same norm_stats)

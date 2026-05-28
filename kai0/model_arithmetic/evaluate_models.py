@@ -39,7 +39,7 @@ CHECKPOINTS = {
 }
 
 # The dump data was normalized with this norm_stats
-DUMP_NORM_STATS_PATH = "data/Task_A/base"
+DUMP_NORM_STATS_PATH = "data/Task_A/kai0_base"
 
 
 def _quantile_unnormalize(x, q01, q99):
