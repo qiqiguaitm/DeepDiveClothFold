@@ -331,10 +331,12 @@
 | 项 | 状态 | 位置 / 备注 |
 |---|---|---|
 | `kai0/.venv_5090_trt` | ✅ 完整 | Python 3.10 + **PyTorch 2.7.1+cu128 (stable)** + **TensorRT 10.14.1** + tensorrt_bindings/libs |
-| `optimize/pi05_trt_pipeline.py` | ✅ 代码 367 行 | 5-stage 流水线: build → ONNX export → TRT engine → benchmark → numerical compare |
-| `optimize/trt_smoke_test.py` | ✅ 工具链验证 254 行 | TinyTransformer → TRT (确认 TRT export 路径对玩具模型可行) |
-| `optimize/TRT_30ms_PLAN.md` | 📄 详细 plan 376 行 | 3 个 sub-option A/B/C + ONNX 导出技术难点 |
 | `optimize/results/pi05_aoti.pt2` | 🗃 6.3 GB | AOTI 编译产物 (load fail, 留作 PyTorch stable 后重测) |
+
+> TRT pipeline 代码 (`pi05_trt_pipeline.py` 5-stage 流水线)、工具链 smoke test (`trt_smoke_test.py`)
+> 与 plan 文档 (`TRT_30ms_PLAN.md`) 已于 2026-05-28 删除 — TRT 路径已废弃 (V1 Triton 取代),
+> 关键教训保留在下方 B-E 节. 未来重启 (选项 1, PyTorch 2.13 stable) 时按 B 节阻塞点 + 现有
+> `.venv_5090_trt` 重建即可.
 
 ##### B. 5 个阻塞点 (按尝试顺序)
 
@@ -385,9 +387,7 @@ V1 §4.2.2 列的 **8/8 优化项全部已被 Inductor max-autotune 自动捕获
 ##### F. 相关链接
 
 - `optimize/results/FINAL_30ms_attempt_summary.md` — 完整 30ms 攻关时间线 + 全 8 backend 实测表
-- `optimize/TRT_30ms_PLAN.md` — TRT plan 原文 (3 个 sub-option A/B/C)
 - `optimize/results/phase1_F_G_J_findings.md` — F/G/J backend 失败分析
-- `optimize/pi05_trt_pipeline.py` — 完整 5-stage TRT 流水线代码
 - §3.4.2 实测踩坑 — 前置障碍解决记录 (sm_120 兼容 / dtype mismatch 等)
 - §6 V1 Triton 实施日志 — 取代 TRT 的最终路径
 
