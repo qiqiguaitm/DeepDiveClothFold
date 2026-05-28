@@ -11,6 +11,7 @@
 | 分析主题 | 文件 | 创建 | 状态 |
 |---|---|---|---|
 | **数据量增大反而 MAE 变差** (vis_v2_full 0.0131 vs pure_200 0.0065) — 排除 init 后的训练动态归因 + **2026-05-27 §11 chunk/noise 诊断 + 真机 oscillation 修复路线** | [data_scale_vs_quality_vis_v2_full_vs_pure_200.md](data_scale_vs_quality_vis_v2_full_vs_pure_200.md) | 2026-05-26 | 主线 |
+| **base 数据集是否值得预处理?** — 全 19 日期质量扫描 (高频噪声/teleport/end-snap/gripper). 结论: 不值得去噪平滑 (数据已干净); 4-29 gripper "异常" 经分桶证实是正常夹布非半夹 | [base_dataset_preprocess_assessment.md](base_dataset_preprocess_assessment.md) | 2026-05-28 | 结论 |
 
 ---
 
