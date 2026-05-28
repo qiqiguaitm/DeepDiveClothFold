@@ -11,14 +11,14 @@
 # Usage:
 #   ./rtc_apply.sh             # print current values
 #   ./rtc_apply.sh off         # pure smoothing, no RTC guidance
-#   ./rtc_apply.sh on          # V1 default (10Hz, latency_k=3, exec_h=6)
-#   ./rtc_apply.sh v1_default  # same as on (explicit name)
-#   ./rtc_apply.sh jax_legacy  # old pre-V1 default (3Hz, k=8, exec_h=16)
+#   ./rtc_apply.sh on          # JAX legacy default (3Hz, k=8, exec_h=16); aliases: default, jax_legacy
+#   ./rtc_apply.sh v1_default  # V1 serve default (10Hz, latency_k=3, exec_h=6)
+#   ./rtc_apply.sh jax_legacy  # same as on
 #   ./rtc_apply.sh rtc_tight   # high replan + short guidance window
 #   ./rtc_apply.sh rtc_long    # RTC over full horizon (A/B control)
 #   ./rtc_apply.sh rtc_paper   # paper Table 4 conservative (exec_h=25, max_guid=0.5)
 #   ./rtc_apply.sh rtc_paper_strong  # paper Table 4 numeric (max_guid=5.0, ⚠ 10x warning)
-#   ./rtc_apply.sh rtc5        # legacy alias for jax_legacy
+#   ./rtc_apply.sh rtc5        # legacy mid-freq preset (6Hz, k=4, exec_h=16)
 #   ./rtc_apply.sh rtc3        # legacy alias for rtc_tight
 #   ./rtc_apply.sh show        # same as no-arg
 #
