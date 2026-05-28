@@ -14,11 +14,16 @@ install(PROGRAMS
   scripts/video_publisher_node.py
   scripts/joint_state_loopback_node.py
   scripts/autonomy_recorder_node.py
+  scripts/dagger_recorder_node.py
+  scripts/dagger_pedal_node.py
+  scripts/arm_master_servo_node.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
 install(DIRECTORY launch/
   DESTINATION share/${PROJECT_NAME}/launch
 )
+# session_launch.py is installed by the DIRECTORY rule above; explicit
+# enumeration above for scripts (PROGRAMS) only.
 
 ament_package()

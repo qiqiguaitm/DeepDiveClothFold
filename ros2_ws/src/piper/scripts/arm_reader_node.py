@@ -317,11 +317,22 @@ class C_PiperRosNode(Node):
 def main():
     rclpy.init()
     node = C_PiperRosNode()
+    import signal
+    def _term(_sig, _frm):
+        raise KeyboardInterrupt
+    signal.signal(signal.SIGTERM, _term)
     try:
         node.Pubilsh()
     except KeyboardInterrupt:
         pass
     finally:
+        # Release CAN socket + SDK ReadCan thread (see arm_master_servo_node
+        # main() for the rationale; without this the slave CAN interface can
+        # linger after Ctrl-C, breaking the next teleop / dagger start).
+        try:
+            node.piper.DisconnectPort()
+        except Exception:
+            pass
         node.destroy_node()
         rclpy.shutdown()
 

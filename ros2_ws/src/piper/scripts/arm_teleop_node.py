@@ -35,6 +35,12 @@ class C_PiperRosNode(Node):
         self.declare_parameter('mode', 0)
         self.declare_parameter('mode_master', True)
         self.declare_parameter('auto_enable', False)
+        # passive_init (mode=0 only): skip EnableArm + MasterSlaveConfig at boot.
+        # The node still subscribes to /master/enable, /master/linkage_config,
+        # /master/teach_mode so an external orchestrator (dagger_recorder) can
+        # activate the master arm at takeover time without the hardware-level
+        # master↔slave linkage interfering during the policy phase.
+        self.declare_parameter('passive_init', False)
 
         self.can_port = self.get_parameter('can_port').value
         self.get_logger().info(f"can_port is {self.can_port}")
@@ -107,8 +113,17 @@ class C_PiperRosNode(Node):
         self.piper = C_PiperInterface(can_name=self.can_port)
         self.piper.ConnectPort()
 
+        # passive_init read AFTER ConnectPort but BEFORE _initialize_master_arm_config
+        raw_pi = self.get_parameter('passive_init').value
+        self.passive_init = raw_pi.lower() in ('true', '1', 'yes') if isinstance(raw_pi, str) else bool(raw_pi)
+        if self.mode == 0 and self.passive_init:
+            self.get_logger().warn(
+                "mode=0 passive_init=True: skipping EnableArm + MasterSlaveConfig at boot. "
+                "Master arm stays passive until /master/enable + /master/linkage_config arrive."
+            )
+
         # 新增：mode=0时初始化机械臂配置
-        if self.mode == 0:
+        if self.mode == 0 and not self.passive_init:
             self._initialize_master_arm_config()
 
         # service
@@ -280,6 +295,16 @@ class C_PiperRosNode(Node):
         self.get_logger().info("初始化主臂示教模式 (0xFA)")
 
         if self.is_enabled:
+            # Explicitly apply MasterSlaveConfig(0xFA). The standalone enable path
+            # (master_enable_callback under passive_init) doesn't call
+            # MasterSlaveConfig, so firmware linkage_config may be at a stale or
+            # undefined value. Re-applying is idempotent when already correct.
+            self.piper.MasterSlaveConfig(
+                linkage_config=0xFA, feedback_offset=0x00,
+                ctrl_offset=0x00, linkage_offset=0x00,
+            )
+            time.sleep(0.5)
+
             # 重新使能以确保状态正确
             self.get_logger().info("重新使能机械臂...")
             self.piper.EnableArm(7)
@@ -296,6 +321,14 @@ class C_PiperRosNode(Node):
         self.get_logger().info("初始化从臂跟随模式 (0xFC)")
 
         if self.is_enabled:
+            # Explicitly apply MasterSlaveConfig(0xFC) — same rationale as
+            # _init_master_teach_mode above.
+            self.piper.MasterSlaveConfig(
+                linkage_config=0xFC, feedback_offset=0x00,
+                ctrl_offset=0x00, linkage_offset=0x00,
+            )
+            time.sleep(0.5)
+
             # 从臂模式需要退出拖动示教模式
             self.piper.MotionCtrl_1(grag_teach_ctrl=0x02)  # 退出拖动示教模式
             self.in_teach_mode = False
@@ -428,6 +461,11 @@ class C_PiperRosNode(Node):
         # 记录进入循环前的时间
         start_time = time.time()
         elapsed_time_flag = False
+        # Phase-B instrumentation: 每 1s (200 ticks) 打一次 piper_sdk 健康度
+        # + err_code, 用于排查"偶发臂中断". 改 _debug_health_period=0 可关闭.
+        self._debug_health_period = 200
+        self._debug_health_tick = 0
+        self._debug_last_ok = True
         while rclpy.ok():
             if self.auto_enable and self.mode == 1:
                 while not enable_flag:
@@ -464,10 +502,34 @@ class C_PiperRosNode(Node):
             if self.mode == 0:
                 if self.mode_master or self.new_config_ == 0xFA:
                     self.PublishMasterArmJointAndGripper()
-                    self.get_logger().info("Publishing master arm joint states (mode_master=True)")
-                else:
-                    self.get_logger().info("Master joint states publishing disabled (mode_master=False)")
             self._publish_master_status()
+
+            # ── Phase-B 健康度采样 (每 200 ticks ≈ 1s) ─────────────────────
+            if self._debug_health_period:
+                self._debug_health_tick += 1
+                if self._debug_health_tick >= self._debug_health_period:
+                    self._debug_health_tick = 0
+                    try:
+                        ok = self.piper.isOk()
+                    except Exception as e:
+                        ok = False
+                        self.get_logger().error(f"[health] piper.isOk() raised: {e}")
+                    try:
+                        st = self.piper.GetArmStatus().arm_status
+                        err = st.err_code
+                        ctrl_mode = int(st.ctrl_mode)
+                        teach = int(st.teach_status)
+                    except Exception as e:
+                        err, ctrl_mode, teach = -1, -1, -1
+                        self.get_logger().error(f"[health] GetArmStatus raised: {e}")
+                    # 只在状态变化或非 healthy 时打印, 避免日志爆炸
+                    if (not ok) or err != 0 or (self._debug_last_ok and not ok):
+                        self.get_logger().warn(
+                            f"[health] can={self.can_port} mode={self.mode} "
+                            f"isOk={ok} err_code=0x{err & 0xffff:04x} "
+                            f"ctrl_mode=0x{ctrl_mode:02x} teach=0x{teach:02x}"
+                        )
+                    self._debug_last_ok = ok
             rate.sleep()
 
     # 其他原有方法保持不变...
@@ -704,6 +766,20 @@ class C_PiperRosNode(Node):
             self.piper.GripperCtrl(abs(joint_6), 1000, 0x01, 0)
             self.piper.MotionCtrl_2(0x01, 0x01, 100)
 
+            # ── Phase-B: 主控消息间隔监控 (排查 master 断流 vs 控制失败) ────
+            now = time.time()
+            last = getattr(self, "_debug_last_master_msg_ts", None)
+            self._debug_last_master_msg_ts = now
+            cnt = getattr(self, "_debug_master_msg_cnt", 0) + 1
+            self._debug_master_msg_cnt = cnt
+            if last is not None:
+                gap = now - last
+                if gap > 0.1:   # master 正常 50-100 Hz, 间隔 >100ms 警告
+                    self.get_logger().warn(
+                        f"[health] can={self.can_port} master_msg_gap={gap*1000:.0f}ms "
+                        f"(seq={cnt})"
+                    )
+
     def enable_callback(self, enable_flag: Bool):
         """机械臂使能回调函数
 
@@ -780,11 +856,21 @@ def main():
     elif node.mode == 1:
         node.get_logger().info("从臂模式启动 - 等待接收控制指令")
 
+    import signal
+    def _term(_sig, _frm):
+        raise KeyboardInterrupt
+    signal.signal(signal.SIGTERM, _term)
     try:
         node.Pubilsh()
     except KeyboardInterrupt:
         pass
     finally:
+        # Release CAN socket + SDK ReadCan thread before tearing the node down
+        # (otherwise next session may fail to open the CAN interface).
+        try:
+            node.piper.DisconnectPort()
+        except Exception:
+            pass
         node.destroy_node()
         rclpy.shutdown()
 

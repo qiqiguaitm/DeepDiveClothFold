@@ -1,0 +1,184 @@
+* { box-sizing: border-box; }
+html, body, #root { margin: 0; padding: 0; height: 100%; background: #0d1117; color: #e6edf3;
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+
+/* Capped content width keeps the dashboard from stretching on ultrawide
+   monitors (golden-ratio guidance: ~1200-1500px reads best). 8px spacing
+   system throughout (gap/padding all multiples of 8). */
+.app {
+  max-width: 1600px; margin: 0 auto; padding: 16px 24px 48px;
+  display: flex; flex-direction: column; gap: 16px;
+}
+
+/* Control strip — 3 columns below the full-width cameras. Each column is its
+   own flex stack so cards pack top-down with no blank gaps between them.
+   System (ckpt list) gets the wide column; long-path ckpt names need it. */
+.ctrl-region { display: flex; gap: 16px; align-items: flex-start; }
+.ctrl-col { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 16px; }
+.ctrl-col-wide { flex: 1.3; }
+
+/* History + Replay — list narrow, videos wide (~1 : 2.4). */
+.hr-region { display: flex; gap: 16px; align-items: stretch; }
+.hr-history { flex: 1; min-width: 0; }
+.hr-replay { flex: 2.4; min-width: 0; }
+.hr-history > .card, .hr-replay > .card { height: 100%; }
+
+/* ── section heading divider above History/Replay block ── */
+.section-label {
+  font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em;
+  color: #6e7681; border-top: 1px solid #21262d; padding-top: 8px;
+}
+
+/* Tablet/phone: collapse to single column. */
+@media (max-width: 1080px) {
+  .ctrl-region, .hr-region { flex-direction: column; }
+}
+
+/* History episode list */
+.ep-list { max-height: 360px; overflow-y: auto; }
+.ep-row {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 6px 8px; border: 1px solid #21262d; border-radius: 4px;
+  cursor: pointer; margin-bottom: 4px;
+}
+.ep-row:hover { background: #1c2128; }
+.ep-row.selected { background: #1f6feb22; border-color: #1f6feb; }
+.ep-main { display: flex; align-items: center; gap: 8px; }
+.ep-row .meta { color: #8b949e; font-size: 12px; }
+.ep-stats { display: flex; align-items: center; gap: 8px; font-size: 12px; color: #8b949e; }
+.ep-tag {
+  display: inline-block; width: 18px; height: 18px; line-height: 18px;
+  text-align: center; border-radius: 3px; font-size: 11px; font-weight: 700;
+}
+.ep-tag.ep-dagger { background: #d2992244; color: #f0c674; }
+.ep-tag.ep-inference { background: #1f6feb44; color: #79c0ff; }
+.ep-del {
+  background: #21262d; border: 1px solid #30363d; color: #8b949e; cursor: pointer;
+  padding: 1px 7px; font-size: 12px; border-radius: 4px; line-height: 1.4;
+}
+.ep-del:hover:not(:disabled) { color: #fff; background: #da3633; border-color: #f85149; }
+
+/* Replay video grid (head wider) */
+.replay-vids { display: grid; grid-template-columns: 1fr 1.4fr 1fr; gap: 8px; }
+
+/* Camera preview (3 tiles, head wider) */
+/* Cameras span the full content width (same 1600 cap as every other row)
+   so all rows share the same left/right edges. The wider app cap keeps the
+   live preview large without breaking alignment. */
+.cam-grid { display: grid; grid-template-columns: 1fr 1.4fr 1fr; gap: 12px; }
+.cam-tile {
+  aspect-ratio: 4/3; max-height: 66vh; background: #000; border-radius: 6px;
+  position: relative; display: flex; align-items: center; justify-content: center;
+  color: #8b949e; border: 1px solid #30363d; overflow: hidden;
+}
+.cam-tile img { width: 100%; height: 100%; object-fit: contain; }
+.cam-tile .cam-label { position: absolute; top: 4px; left: 6px; font-size: 11px; background: rgba(0,0,0,.6); padding: 2px 6px; border-radius: 3px; }
+.cam-tile .cam-stat { position: absolute; bottom: 4px; right: 6px; font-size: 11px; color: #3fb950; background: rgba(0,0,0,.6); padding: 2px 6px; border-radius: 3px; }
+
+/* Arms / joint bars */
+.arms { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.arms b { color: #8b949e; font-size: 13px; }
+.joint-row { display: flex; align-items: center; gap: 6px; margin: 3px 0; font-variant-numeric: tabular-nums; }
+.joint-row .name { width: 44px; color: #8b949e; font-size: 12px; }
+.joint-row .bar { flex: 1; height: 8px; background: #0d1117; border: 1px solid #21262d; border-radius: 3px; overflow: hidden; position: relative; }
+.joint-row .bar > div { position: absolute; top: 0; bottom: 0; background: #1f6feb; }
+.joint-row .val { width: 60px; text-align: right; font-size: 12px; }
+
+.card {
+  background: #161b22;
+  border: 1px solid #30363d;
+  border-radius: 8px;
+  padding: 16px;
+}
+.card h2 { margin: 0 0 12px; font-size: 14px; text-transform: uppercase; color: #8b949e; letter-spacing: 0.05em; }
+
+.kv { display: grid; grid-template-columns: 130px 1fr; row-gap: 6px; column-gap: 12px; font-size: 14px; }
+.kv .k { color: #8b949e; }
+.kv .v { color: #e6edf3; font-variant-numeric: tabular-nums; word-break: break-all; }
+
+.state-badge {
+  display: inline-block; padding: 4px 10px; border-radius: 4px;
+  font-weight: 600; font-size: 14px; text-transform: uppercase;
+}
+.state-POLICY_RUN   { background: #1f6feb33; color: #79c0ff; }
+.state-ALIGNING     { background: #d2a8ff33; color: #d2a8ff; }
+.state-HUMAN_RECORD { background: #d29922aa; color: #1c1c1c; font-weight: 700; }
+.state-RETURNING    { background: #d2a8ff33; color: #d2a8ff; }
+.state-unknown      { background: #30363d; color: #8b949e; }
+
+.rec-dot {
+  display: inline-block; width: 10px; height: 10px; border-radius: 50%;
+  margin-right: 6px; vertical-align: middle;
+  background: #f8514a; box-shadow: 0 0 8px #f8514a;
+  animation: pulse 1s infinite;
+}
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+.led {
+  display: inline-block; width: 10px; height: 10px; border-radius: 50%;
+  margin-right: 8px; vertical-align: middle;
+}
+.led-on  { background: #f8514a; box-shadow: 0 0 6px #f8514a; }
+.led-off { background: #30363d; }
+
+button {
+  background: #21262d; color: #e6edf3; border: 1px solid #30363d;
+  padding: 8px 14px; border-radius: 6px; font: inherit; cursor: pointer;
+}
+button:hover:not(:disabled) { background: #30363d; border-color: #6e7681; }
+button:disabled { opacity: 0.4; cursor: not-allowed; }
+button.primary { background: #238636; border-color: #2ea043; color: white; }
+button.primary:hover:not(:disabled) { background: #2ea043; }
+button.danger { background: #da3633; border-color: #f85149; color: white; }
+button.danger:hover:not(:disabled) { background: #f85149; }
+button.row { width: 100%; margin-top: 6px; text-align: left; padding: 6px 10px; }
+
+.row-buttons { display: flex; gap: 8px; flex-wrap: wrap; }
+.row-buttons button { flex: 1 1 0; }
+
+.ckpt-list { max-height: 320px; overflow-y: auto; }
+.ckpt-row {
+  display: grid; grid-template-columns: 24px 1fr auto; gap: 8px;
+  padding: 6px 8px; border: 1px solid #21262d; border-radius: 4px;
+  cursor: pointer; margin-bottom: 4px; align-items: center;
+}
+.ckpt-row:hover { background: #1c2128; }
+.ckpt-row.selected { background: #1f6feb22; border-color: #1f6feb; }
+.ckpt-row .meta { font-size: 12px; color: #8b949e; }
+.ckpt-row .bad { color: #f8514a; }
+
+.top-bar {
+  display: flex; align-items: center; gap: 16px;
+  font-size: 14px;
+}
+.top-bar h1 { margin: 0; font-size: 18px; white-space: nowrap; }
+.top-bar .spacer { flex: 1; }
+.top-bar .conn { font-family: monospace; font-size: 12px; color: #6e7681; }
+.top-bar .chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 12px; padding: 4px 10px; border-radius: 999px;
+  background: #21262d; border: 1px solid #30363d; color: #8b949e;
+}
+.top-bar .chip.on { color: #3fb950; border-color: #238636; }
+.top-bar .chip.rec { color: #f85149; border-color: #da3633; }
+
+.error { color: #f8514a; padding: 6px 10px; background: #f8514a22; border-radius: 4px; margin-top: 8px; font-size: 13px; }
+.hint { color: #8b949e; font-size: 12px; margin-top: 8px; line-height: 1.5; }
+
+/* Form controls — unified look for <select> + text inputs across cards. */
+.select, input[type="text"], input[type="number"] {
+  background: #0d1117; color: #e6edf3; border: 1px solid #30363d;
+  border-radius: 6px; padding: 5px 8px; font: inherit; font-size: 13px;
+  min-width: 0;
+}
+.select { cursor: pointer; }
+.select:hover, input:hover:not(:disabled) { border-color: #6e7681; }
+.select:focus, input:focus { outline: none; border-color: #1f6feb; }
+
+/* Tighten kv tables a touch + vertical-center the value cell so inline
+   controls (select / led) align with their label. */
+.kv { row-gap: 8px; align-items: center; }
+.kv .v { display: flex; align-items: center; gap: 6px; }

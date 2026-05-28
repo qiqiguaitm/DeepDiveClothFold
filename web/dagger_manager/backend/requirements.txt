@@ -1,0 +1,6 @@
+fastapi>=0.110
+uvicorn[standard]>=0.27
+pydantic>=2.5
+pyyaml>=6.0
+numpy>=1.26  # rclpy sensor_msgs deps
+Pillow>=10.0  # JPEG encoding for camera MJPEG endpoint
