@@ -170,104 +170,15 @@ model_d = torch.compile(model, mode="reduce-overhead", fullgraph=True)
 
 ---
 
-## 7. 测试脚本结构
+## 7. 测试脚本
 
-新增文件: `kai0/scripts/benchmark_pi05_inference.py`
+实现(已落地真实文件): **`optimize/benchmark_pi05_inference.py`**(~1161 行, 5 backend A–E, 测 `PI0Pytorch.sample_actions`)。本文档 §2/§4/§6 是其设计依据(脚本头部也回指本文档)。
 
-```python
-import argparse
-import time
-import torch
-import numpy as np
-from openpi.models.pi0_config import Pi0Config
-from openpi.models_pytorch.pi0_pytorch import PI0Pytorch
-
-
-def make_model(device="cuda", dtype=torch.bfloat16):
-    config = Pi0Config(pi05=True, action_horizon=50, ...)
-    model = PI0Pytorch(config).to(device, dtype=dtype).eval()
-    return model
-
-
-def make_dummy_inputs(batch=1, device="cuda"):
-    return {
-        "observation_images": torch.randn(batch, 3, 3, 224, 224, device=device, dtype=torch.bfloat16),
-        "joint_state": torch.randn(batch, 14, device=device, dtype=torch.float32),
-        "diffusion_noise": torch.randn(batch, 50, 14, device=device, dtype=torch.float32),
-        "prompt": "Flatten and fold the cloth",
-    }
-
-
-def benchmark(fn, name, n_warmup=10, n_test=100):
-    # warm-up
-    for _ in range(n_warmup):
-        fn()
-    torch.cuda.synchronize()
-    # measure
-    times = []
-    for _ in range(n_test):
-        torch.cuda.synchronize()
-        t0 = time.perf_counter()
-        fn()
-        torch.cuda.synchronize()
-        times.append((time.perf_counter() - t0) * 1000)
-    times = np.array(times)
-    return {
-        "name": name,
-        "mean": times.mean(),
-        "std": times.std(),
-        "p50": np.percentile(times, 50),
-        "p95": np.percentile(times, 95),
-        "p99": np.percentile(times, 99),
-        "min": times.min(),
-        "max_mem_gb": torch.cuda.max_memory_allocated() / 1e9,
-    }
-
-
-def main():
-    model = make_model()
-    inputs = make_dummy_inputs()
-
-    # A: eager
-    @torch.inference_mode()
-    def run_a():
-        return model(**inputs)
-    result_a = benchmark(run_a, "A. eager")
-
-    # B: compile default
-    model_b = torch.compile(model, mode="default", fullgraph=False)
-    @torch.inference_mode()
-    def run_b():
-        return model_b(**inputs)
-    result_b = benchmark(run_b, "B. compile-default")
-
-    # C: cuda graph
-    # ... (按 §6 C 实现, 包含 buffer 预分配 + capture + replay 闭包)
-    result_c = benchmark(run_c, "C. cuda-graph")
-
-    # D: compile + reduce-overhead
-    model_d = torch.compile(model, mode="reduce-overhead", fullgraph=True)
-    @torch.inference_mode()
-    def run_d():
-        return model_d(**inputs)
-    try:
-        result_d = benchmark(run_d, "D. compile+graph (fullgraph=True)")
-    except Exception as e:
-        print(f"D fullgraph=True failed: {e}")
-        model_d2 = torch.compile(model, mode="reduce-overhead", fullgraph=False)
-        @torch.inference_mode()
-        def run_d2():
-            return model_d2(**inputs)
-        result_d = benchmark(run_d2, "D. compile+graph (fullgraph=False)")
-
-    # 打印表格 + 写 markdown
-    print_results([result_a, result_b, result_c, result_d])
-    save_results_md([result_a, result_b, result_c, result_d])
-
-
-if __name__ == "__main__":
-    main()
+```bash
+.venv/bin/python optimize/benchmark_pi05_inference.py --backends A,B,C,D,E --n-test 100
 ```
+
+结构: `build_model`(随机权重 pi05)→ `make_dummy_observation`(3 相机 224² bf16 + state + prompt 64 token)→ 每 backend 包成闭包(eager / compile-default / cuda-graph / reduce-overhead / max-autotune)→ `benchmark(fn, name, n_warmup, n_test)` 采 mean/std/P50/P95/P99/min/peak-mem → 打印表格 + 写 markdown 报告。
 
 ---
 
@@ -315,7 +226,7 @@ A: XX ms, B: XX,XXX ms, C: XXX ms, D: XX,XXX ms
 ## 10. 执行步骤
 
 1. **用户确认** §3 硬件选择 + §4 ckpt 选择 + §9 是否多硬件对比
-2. AI 写脚本 `kai0/scripts/benchmark_pi05_inference.py` (1-2 hr)
+2. ✅ 脚本已落地: `optimize/benchmark_pi05_inference.py`(5 backend A–E)
 3. 在选定机器上跑 (单次完整测试 ~5-10 min, 含 4 backend × warm-up + 100 测量)
 4. 输出落到 `docs/deployment/benchmark_results/pi05_inference_<hostname>_<date>.md`
 5. 结果反馈主分析文档:
