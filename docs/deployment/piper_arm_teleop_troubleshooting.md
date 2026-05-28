@@ -74,7 +74,7 @@ ls -d /tmp/can_diag/INCIDENT_* 2>/dev/null | tail -1   # 最新一次故障的 b
 ### 2.2 手动快照（需要补充信息时）
 
 ```bash
-bash start_scripts/diag/can_health_snap.sh > /tmp/snap_$(date +%H%M%S).txt
+bash start_scripts/kai/diag/can_health_snap.sh > /tmp/snap_$(date +%H%M%S).txt
 ```
 
 输出 8 段:
@@ -225,7 +225,7 @@ bash start_scripts/start_data_collect.sh restart
 
 | 文件 | 作用 |
 |---|---|
-| `start_scripts/diag/can_health_snap.sh` | 快照 / loop 监控 |
+| `start_scripts/kai/diag/can_health_snap.sh` | 快照 / loop 监控 |
 | `start_scripts/start_data_collect.sh` | 数据采集入口 |
 | `web/data_manager/run.sh` | 进程管理 (arms / cameras / backend / frontend) |
 | `ros2_ws/src/piper/scripts/arm_teleop_node.py` | 遥操节点 (含 Phase-B logging) |
@@ -243,7 +243,7 @@ bash start_scripts/start_data_collect.sh restart
   cat <该目录>/_INCIDENT.txt        # 自动写好的触发原因
 
 如果没 incident bundle (问题发生太快 / can_diag 没起来):
-  bash start_scripts/diag/can_health_snap.sh > /tmp/snap_$(date +%H%M%S).txt
+  bash start_scripts/kai/diag/can_health_snap.sh > /tmp/snap_$(date +%H%M%S).txt
 
 看 _INCIDENT.txt / 快照 "## 2. CAN frame rate":
   □ 死的 iface < 100 帧/s → 看 "## 1." errors;

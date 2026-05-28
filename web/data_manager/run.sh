@@ -61,7 +61,7 @@ ACTIVATE_CAN="$REPO_ROOT/piper_tools/activate_can.sh"
 START_TELEOP="$REPO_ROOT/start_scripts/kai/start_teleop.sh"
 LAUNCH_3CAM="$REPO_ROOT/start_scripts/kai/launch_3cam.py"
 
-SERVICES=(arms cameras backend frontend pedal)
+SERVICES=(arms cameras backend frontend pedal can_diag)
 
 # 服务 → 监听端口 (用于孤儿清理)。没监听端口的服务 (arms/cameras) 留空。
 # 历史背景: 之前 start_svc 用 $! 写 pidfile, 抓到的是瞬死的 setsid 父 PID,
@@ -262,6 +262,17 @@ do_start() {
         fi
     fi
 
+    # 7) CAN 健康监控 (出事自动打包 incident bundle 到 /tmp/can_diag/)
+    if [[ "${SKIP_CAN_DIAG:-0}" != "1" ]]; then
+        local can_diag_sh="$REPO_ROOT/start_scripts/kai/diag/can_health_snap.sh"
+        local can_diag_interval="${CAN_DIAG_INTERVAL:-30}"
+        if [[ -x "$can_diag_sh" ]]; then
+            start_svc can_diag "exec bash '$can_diag_sh' --loop $can_diag_interval"
+        else
+            warn "can_diag: $can_diag_sh not executable (skipping monitor)"
+        fi
+    fi
+
     echo
     log "all services launched."
     log "  前端:  http://$(hostname -I | awk '{print $1}'):5173/"
@@ -271,7 +282,7 @@ do_start() {
 
 do_stop() {
     # 按启动反序停
-    for svc in pedal frontend backend cameras arms; do
+    for svc in can_diag pedal frontend backend cameras arms; do
         stop_svc "$svc"
     done
     # stop_svc 走 pidfile, 可能漏掉 pidfile 失同步的 ros2 子进程, 兜底清一次.
