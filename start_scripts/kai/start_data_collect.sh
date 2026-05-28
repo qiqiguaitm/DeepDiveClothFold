@@ -17,6 +17,8 @@
 #   SKIP_CAMERAS=1     跳过相机
 #   SKIP_PEDAL=1       跳过 USB 踏板监听 (默认启用; 无踏板硬件时会被重试循环自动退避)
 #   SKIP_DEPS=1        跳过后端 pip 依赖同步
+#   SKIP_CAN_DIAG=1    跳过 CAN 健康监控后台任务 (默认启用, 30s 间隔, 出事自动打包到 /tmp/can_diag/)
+#   CAN_DIAG_INTERVAL=N (默认 30) — can_diag 快照间隔秒数
 #   KAI0_DATA_ROOT=... 采集落盘根目录 (默认 /data1/DATA_IMP/KAI0)
 #                      磁盘布局: $KAI0_DATA_ROOT/<Task>/<subset>/<YYYY-MM-DD>/{data,meta,videos}/
 #                      (subset=base|dagger|...; 同一 subset 的多日数据聚在一棵子树, 方便整 subset
@@ -28,7 +30,7 @@
 set -eo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 ROS2_WS="$PROJECT_ROOT/ros2_ws"
 RUN_SH="$PROJECT_ROOT/web/data_manager/run.sh"
 

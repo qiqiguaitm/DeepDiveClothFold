@@ -17,9 +17,9 @@ set -eo pipefail
 pkill -f ros2 2>/dev/null || true
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+PROJECT_ROOT="$(dirname "$(dirname "$SCRIPT_DIR")")"
 ROS2_WS="$PROJECT_ROOT/ros2_ws"
-CAN_ACTIVATE="$PROJECT_ROOT/can_tools/activate_can.sh"
+CAN_ACTIVATE="$PROJECT_ROOT/piper_tools/activate_can.sh"
 ROS_DISTRO="jazzy"
 
 echo "============================================"

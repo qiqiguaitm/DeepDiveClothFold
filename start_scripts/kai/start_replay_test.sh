@@ -38,7 +38,7 @@ if ! command -v ros2 >/dev/null 2>&1; then
 fi
 # Workspace overlay (piper package) — needed only for piper_msgs etc., not core
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 if [[ -f "$PROJECT_ROOT/ros2_ws/install/setup.bash" ]]; then
     source "$PROJECT_ROOT/ros2_ws/install/setup.bash" 2>/dev/null || true
 fi

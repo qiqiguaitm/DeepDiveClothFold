@@ -39,7 +39,7 @@ fi
 
 echo "[start_autonomy_from_ckpt] config_name=$CONFIG_NAME asset_id=$ASSET_ID ckpt_dir=$CKPT_DIR"
 
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/../.."
 exec ./start_scripts/kai/start_autonomy.sh --execute \
   "config_name:=$CONFIG_NAME" \
   "checkpoint_dir:=$CKPT_DIR" \

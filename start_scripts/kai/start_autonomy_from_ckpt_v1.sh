@@ -33,7 +33,7 @@ if [ ! -f "$CKPT_DIR/_CHECKPOINT_METADATA" ]; then
   exit 1
 fi
 
-REPO="$(cd "$(dirname "$0")/.." && pwd)"
+REPO="$(cd "$(dirname "$0")/../.." && pwd)"
 PY=/data1/miniconda3/bin/python
 
 # 解析 train_config.json
