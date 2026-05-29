@@ -38,7 +38,9 @@ def joint_to_ee6d_row(q14: np.ndarray) -> np.ndarray:
         xyz_m = np.array(ee[:3], dtype=np.float32) / 1000.0  # mm → m
         rpy_deg = np.array(ee[3:], dtype=np.float32)
         R = Rotation.from_euler("xyz", np.radians(rpy_deg)).as_matrix()
-        rot6d = R[:, :2].T.flatten().astype(np.float32)  # 6D (first two cols)
+        # Rot6D = first two columns, row-major [r00,r01,r10,r11,r20,r21] — matches
+        # X-VLA upstream quat_to_rotate6d / deploy rotation.py. (was .T.flatten() = block, a bug)
+        rot6d = R[:, :2].flatten().astype(np.float32)
         out[arm*10 : arm*10+3] = xyz_m
         out[arm*10+3 : arm*10+9] = rot6d
         out[arm*10+9] = gripper

@@ -31,10 +31,10 @@ rot6d = R[:, :2].T.flatten()        # → [r00, r10, r20, r01, r11, r21]  (block
 | 部署编码 `SoftFold-Agilex/deploy/utils/rotation.py::rotation_matrix_to_6d` | `concat([R[0,:2],R[1,:2],R[2,:2]])` | `[r00,r01,r10,r11,r20,r21]` |
 | 部署解码 同文件 `rotation_6d_to_matrix` | `a1=rot[0:5:2], a2=rot[1:6:2]` | 期望上行排布 |
 
-**根因**: 多了个 `.T`。去掉即对齐: `rot6d = R[:, :2].flatten()`。
+**根因**: 多了个 `.T`。**已于 2026-05-29 修复** → `rot6d = R[:, :2].flatten()` (两脚本均已改, 对齐上游 interleaved)。
 
 **影响**:
 - **训练: 不崩, 自洽**。`models/action_hub.py` 的 `EE6DActionSpace.compute_loss` 是逐元素 MSE (ROT_IDX=(3..8)/(13..18) 当平铺向量), 不解释列结构 → 模型只是回归 target 的排布。但 **fine-tune 自 `xvla-base` 时, 6 个旋转通道有 4 个与预训练表示错位 (仅 idx 0/5 重合)**, 浪费预训练对齐, 可能拖慢旋转收敛。
 - **部署: 真冲突**。用上游 `rotation_6d_to_matrix` (interleaved) 解码本脚本 block 排布的输出 → 旋转矩阵拼乱, 机器人姿态错。
 
-**现状**: **未改** `.T` — 保留产出现有 X3.A/B/C 数据 + 已训 ckpt 的确切逻辑 (改了需重建 `xvla_soft_fold` 数据 + 重训)。修复 = 去 `.T` + 重建数据 + 重训, 或部署侧改用 block 解码。决策待定。
+**后续**: 修复后**所有**用本目录脚本建的 EE6D 数据 (block 排布) 都已过时, 需用修复版重建并重训 X3 — 既包括 `xvla_soft_fold` action cache, 也包括 parquet 域 (kai base/dagger/vis_v2_merged), 否则混用两种排布。修复前的 X3.A/B/C ckpt 作废。
