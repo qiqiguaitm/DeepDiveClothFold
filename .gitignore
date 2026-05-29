@@ -39,6 +39,9 @@ validation_data/
 # ===== Raw data (calibration / sensor capture) =====
 calib/data/
 
+# ===== X-VLA EE6D built datasets (heavy parquets, kept on-disk not in git) =====
+xvla/data/A_0423_0527/
+
 # ===== ROS / build outputs =====
 install/
 ros2_ws/install/

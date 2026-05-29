@@ -29,15 +29,24 @@ def decode_frame(video_path: Path, frame_idx: int) -> np.ndarray:
     if n_frames and frame_idx >= n_frames:
         frame_idx = n_frames - 1
     # seek to keyframe before target then decode forward
-    target_pts = int(frame_idx / stream.average_rate.numerator * stream.average_rate.denominator * stream.time_base.denominator / stream.time_base.numerator)
-    container.seek(target_pts, stream=stream)
-    for i, frame in enumerate(container.decode(video=0)):
-        if frame.index >= frame_idx:
+    avg_rate = float(stream.average_rate) if stream.average_rate else 30.0
+    tb = float(stream.time_base) if stream.time_base else (1.0 / avg_rate)
+    target_pts = int(frame_idx / avg_rate / tb) if avg_rate > 0 and tb > 0 else 0
+    try:
+        container.seek(target_pts, stream=stream)
+    except Exception:
+        pass
+    last = None
+    for frame in container.decode(video=0):
+        last = frame
+        # PyAV VideoFrame has no .index in some versions — derive frame index from pts.
+        cur_idx = int(round(float(frame.pts) * tb * avg_rate)) if frame.pts is not None else frame_idx
+        if cur_idx >= frame_idx:
             img = frame.to_ndarray(format="rgb24")
             container.close()
             return img
     container.close()
-    return frame.to_ndarray(format="rgb24") if "frame" in locals() else np.zeros((480, 640, 3), dtype=np.uint8)
+    return last.to_ndarray(format="rgb24") if last is not None else np.zeros((480, 640, 3), dtype=np.uint8)
 
 
 def resize_pad(img: np.ndarray, size: int) -> np.ndarray:
