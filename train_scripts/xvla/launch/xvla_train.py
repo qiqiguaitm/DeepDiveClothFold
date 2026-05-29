@@ -90,7 +90,7 @@ CONFIGS = {
         # eff batch 64 — A_0423_0527 is ~32% larger than vis_v2_merged, so 30k matches/exceeds
         # X3.C's validated 1.23-epoch exposure. save every 2k → 15 ckpts, pick best by eval.
         datasets=[
-            dict(root="/data/shared/ubuntu/workspace/deepdive_kai0/xvla/data/A_0423_0527", domain_id=20, prompt=PROMPT, weight=1.0),
+            dict(root="/data/shared/ubuntu/workspace/deepdive_kai0/xvla/data/self_built/A_0423_0527", domain_id=20, prompt=PROMPT, weight=1.0),
         ],
         steps=30_000,
         lr=5e-5,

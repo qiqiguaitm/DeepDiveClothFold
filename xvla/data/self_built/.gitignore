@@ -1,0 +1,4 @@
+# Self-built X-VLA datasets (EE6D parquets + video symlinks) live here.
+# Keep the folder in git, ignore all heavy contents.
+*
+!.gitignore

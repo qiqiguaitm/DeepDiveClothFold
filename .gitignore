@@ -39,8 +39,8 @@ validation_data/
 # ===== Raw data (calibration / sensor capture) =====
 calib/data/
 
-# ===== X-VLA EE6D built datasets (heavy parquets, kept on-disk not in git) =====
-xvla/data/A_0423_0527/
+# ===== X-VLA self-built datasets =====
+# Contents ignored via xvla/data/self_built/.gitignore (folder kept, datasets on-disk only)
 
 # ===== ROS / build outputs =====
 install/
