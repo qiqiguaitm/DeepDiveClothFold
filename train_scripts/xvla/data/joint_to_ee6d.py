@@ -43,7 +43,9 @@ def joint_to_ee6d_row(q14: np.ndarray) -> np.ndarray:
         rot6d = R[:, :2].flatten().astype(np.float32)
         out[arm*10 : arm*10+3] = xyz_m
         out[arm*10+3 : arm*10+9] = rot6d
-        out[arm*10+9] = gripper
+        # Binarize gripper to {0,1} — action_hub uses BCEWithLogitsLoss on this channel.
+        # Matches upstream AIRAgilex (real_world.py): raw*50<1.0 → 1 (closed). gripper in meters.
+        out[arm*10+9] = np.float32(gripper * 50.0 < 1.0)
     return out
 
 def convert_parquet(in_path: Path, out_path: Path) -> int:

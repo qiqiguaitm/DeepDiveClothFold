@@ -17,6 +17,15 @@ launcher 在 `../launch/xvla_train.py` (X3A/X3B/X3C/stage_b configs) + `xvla_tra
 **输入 14D** (per arm 7D, left=[0:7] right=[7:14]): `[6 joints(rad), 1 gripper]`
 **FK**: piper `C_PiperForwardKinematics(0x01)` (2° j2/j3 offset), xyz mm→m (/1000), 姿态 rpy(deg)→matrix
 **输出 20D** (per arm 10D, left=[0:10] right=[10:20]): `[xyz(3,m), Rot6D(6), gripper(1)]`, **全 absolute** (无 delta)
+- **gripper 二值化** {0,1}: `raw*50<1.0 → 1(闭合)` (匹配上游 AIRAgilex + 部署阈值)。action_hub 对该通道用 BCEWithLogitsLoss, 必须 {0,1}, 不能灌原始米值 (否则全≈0, gripper 学不会闭合)。
+
+## 官方一致性核对 (2026-05-29, 提交训练前 gate)
+
+对照实际训练用的 `lerobot.policies.xvla.modeling_xvla.XVLAPolicy` (非 upstream `xvla/X-VLA` repo):
+- ✅ 一致: 20D 维度/per-arm 布局/rot6d 顺序(修复后)/action chunk=30 (`config.chunk_size=n_action_steps=30`)/相机数/图像尺寸 (dataset 出 256/256/224 = `input_features` 声明, policy `resize_imgs_with_padding=[224,224]` 内部统一)/RGB/abs xyz (EE6D 路径上游也是 abs)/tokenizer(BART max50)/raw 米制
+- ✅ **不需要** norm_stats 或 ImageNet 归一: `modeling_xvla.forward` 没有任何 Normalize/Unnormalize, 直接对原始 proprio/action 算 loss (BCE gripper + MSE pos×500 + rot×10), 图像只 resize。config 的 `ACTION:MEAN_STD`/`VISUAL:IDENTITY` 被自定义 forward 绕过。
+- 🚫→✅ 唯一 blocker: gripper 未二值化 → 本次已修。
+- ⚠️ 非阻断的训练超参差异 (与 upstream train.py): vlm_lr_scale 0.1 vs 1.0, weight_decay 1e-4 vs 0, warmup 1000 vs 2000, cosine vs constant, freeze 粒度。不影响正确性, 保留我们既有设置。
 
 ## ⚠️ 已确认的 Rot6D 排布冲突 (2026-05-29 核定)
 
