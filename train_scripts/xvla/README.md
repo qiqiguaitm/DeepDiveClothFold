@@ -1,6 +1,8 @@
 # train_scripts/xvla/ — X-VLA 架构训练脚本
 
-> **预留位置**: 当前为空. 未来 Track X / X-VLA Florence2 PyTorch 训练脚本归此处.
+> Track X / X-VLA Florence2 PyTorch 训练脚本归此处. 2026-05-29 从 uc01 `workspace/xvla_scripts/` 归位:
+> - `data/` — kai/vis joint→EE6D 20D 转换 + multi-domain dataset (见 `data/README.md`, 含 ⚠️ Rot6D 排布冲突核定)
+> - `launch/` — `xvla_train.py` (X3A/B/C configs) + `xvla_train_smoke.py`
 
 ## 与 `train_scripts/kai/` 的关系
 
