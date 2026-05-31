@@ -39,10 +39,10 @@ disown
 ### 1.3 data_collect (采集 + UI)
 ```bash
 cd /home/tim/workspace/deepdive_kai0
-./start_scripts/kai/start_data_collect.sh              # 起 5 个服务
-./start_scripts/kai/start_data_collect.sh status       # 看状态
-./start_scripts/kai/start_data_collect.sh logs backend # 看 backend 日志
-./start_scripts/kai/start_data_collect.sh stop         # 全停
+./start_scripts/start_data_collect.sh              # 起 5 个服务
+./start_scripts/start_data_collect.sh status       # 看状态
+./start_scripts/start_data_collect.sh logs backend # 看 backend 日志
+./start_scripts/start_data_collect.sh stop         # 全停
 ```
 
 ⚠️ 单独起 backend (不带 teleop):
@@ -207,7 +207,7 @@ pkill -f 'uvicorn.*app.main'
 ### 场景 B: 先采集后 replay 验证
 ```bash
 # 1. 起 data_collect 全栈
-/home/tim/workspace/deepdive_kai0/start_scripts/kai/start_data_collect.sh
+/home/tim/workspace/deepdive_kai0/start_scripts/start_data_collect.sh
 # 浏览器录数据...
 
 # 2. 录完, 切到 replay (见 §3.1)
@@ -246,7 +246,7 @@ SKIP_ARMS=1 SKIP_CAMERAS=1 SKIP_PEDAL=1 SKIP_DEPS=1 ./run.sh start backend
 |---|---|
 | `start_scripts/kai/start_autonomy.sh` | autonomy 启动 + 写 marker=autonomy |
 | `start_scripts/kai/start_replay_stack.sh` | slim 启动 + 写 marker=replay + stop 子命令 |
-| `start_scripts/kai/start_data_collect.sh` | data_collect 启动 + 写 marker=teleop / stop 删 marker |
+| `start_scripts/start_data_collect.sh` | data_collect 启动 + 写 marker=teleop / stop 删 marker |
 | `start_scripts/kai/start_replay_test.sh` | CLI 端到端测试 (auto-detect 节点) |
 | `ros2_ws/src/piper/scripts/replay_node.py` | slim replay 节点 (无 JAX) |
 | `ros2_ws/src/piper/scripts/policy_inference_node.py` | 完整 policy + replay 节点 |

@@ -6,11 +6,11 @@
 # 底层复用 web/data_manager/run.sh 的进程管理 (setsid/pidfile/start/stop/status/logs)
 #
 # 用法:
-#   ./scripts/start_data_collect.sh               # 启动全部
-#   ./scripts/start_data_collect.sh stop           # 停止全部
-#   ./scripts/start_data_collect.sh restart        # 重启
-#   ./scripts/start_data_collect.sh status         # 查看各服务状态
-#   ./scripts/start_data_collect.sh logs [svc]     # 追踪日志 (arms|cameras|backend|frontend)
+#   ./start_scripts/start_data_collect.sh               # 启动全部
+#   ./start_scripts/start_data_collect.sh stop           # 停止全部
+#   ./start_scripts/start_data_collect.sh restart        # 重启
+#   ./start_scripts/start_data_collect.sh status         # 查看各服务状态
+#   ./start_scripts/start_data_collect.sh logs [svc]     # 追踪日志 (arms|cameras|backend|frontend)
 #
 # 环境变量 (传递给 run.sh):
 #   SKIP_ARMS=1        跳过机械臂
@@ -30,7 +30,7 @@
 set -eo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 ROS2_WS="$PROJECT_ROOT/ros2_ws"
 RUN_SH="$PROJECT_ROOT/web/data_manager/run.sh"
 
@@ -82,7 +82,9 @@ if [[ "$ACTION" == "start" || "$ACTION" == "restart" ]]; then
     elif [ -r "$HOME/.sudo_password" ]; then
         _PW="$(head -n1 "$HOME/.sudo_password")"
     else
-        _PW="tim"
+        # 无硬编码口令 (勿入库): 设 $SUDO_PASSWORD 或写 ~/.sudo_password (chmod 600);
+        # 二者皆无则 askpass 给空, sudo -n NOPASSWD 路径仍可工作。
+        _PW=""
     fi
     cat > "$_ASKPASS_SCRIPT" <<EOF
 #!/bin/sh

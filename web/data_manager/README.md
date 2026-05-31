@@ -220,7 +220,7 @@ ssh -p 55555 tim@14.103.44.161 'sudo chown -R tim:tim /vePFS/visrobot01/KAI0'
 ### 常用配置
 ```bash
 # 关同步
-KAI0_SYNC_ENABLED=0 bash start_scripts/kai/start_data_collect.sh
+KAI0_SYNC_ENABLED=0 bash start_scripts/start_data_collect.sh
 
 # 换推 gf1 (两端都连同一块 gpfs, 二选一即可)
 export KAI0_SYNC_REMOTES='[{"name":"gf1-vepfs","user":"tim","host":"14.103.44.161","port":11111,"dest_root":"/vePFS/visrobot01/KAI0"}]'
