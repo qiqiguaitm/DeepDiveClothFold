@@ -189,19 +189,16 @@ js02:/mnt/data/tim/checkpoints/pi05_flatten_fold_a_new_pure_200_js/task_a_new_pu
 | 集群 | cnsh robot-task 8× A100, 训练耗时 **~68.5h** (DDP + dataloader 慢) |
 | Ckpt 目录 | `kai0/checkpoints/pi05_pytorch_a_new_pure_200/A_mirror200_pi05_pytorch/{step}/` (含 model.safetensors + optimizer.pt) |
 
-### 8.2 MAE@{1,10,25,50} (native A_new_pure_200_val, 20 ep × 200 frames)
+### 8.2 完整 MAE@{1,10,25,50} 曲线 (native A_new_pure_200_val, 20 ep × 200 frames, 全 26 个 ckpt)
+
+> 🔴 **2026-05-31 作废重测**: 本表初版的 26-step 曲线 (@50 末段 ~0.0646) 是**用错 prompt 评的** — `eval_val_action_mse.py --prompt` 默认 `"stand up the fallen box"` (Task E), batch eval 未覆盖 → 叠衣模型被喂叠箱指令, MAE 全程虚高 ~1.8×。**正确 prompt `"Flatten and fold the cloth."` 重测见 §8.4.4 (plain 50k @50=0.0350)**。完整正确曲线重测中 (下表待填)。
 
 | step | MAE@1 | @10 | @25 | @50 |
 |---:|---:|---:|---:|---:|
-| 8000 | 0.0142 | 0.0256 | 0.0444 | 0.0703 |
-| 16000 | 0.0129 | 0.0239 | 0.0416 | 0.0662 |
-| 24000 | 0.0131 | 0.0237 | 0.0412 | 0.0653 |
-| 32000 | 0.0125 | 0.0234 | 0.0409 | 0.0650 |
-| 40000 | 0.0123 | 0.0231 | 0.0406 | 0.0649 |
-| 48000 | 0.0121 | 0.0230 | 0.0404 | 0.0647 |
-| **50000** | **0.0121** | **0.0229** | **0.0404** | **0.0646** | ⭐ best |
+| … | (正确-prompt 重测中) | | | |
+| **50000** (correct prompt) | **0.0100** | 0.0174 | 0.0258 | **0.0350** |
 
-**Best = step 50000, MAE@1 = 0.0121** (全 horizon 单调下降到 final)。最佳 ckpt: `kai0/checkpoints/pi05_pytorch_a_new_pure_200/A_mirror200_pi05_pytorch/50000/`。
+**Best ckpt 位置**: `kai0/checkpoints/pi05_pytorch_a_new_pure_200/A_mirror200_pi05_pytorch/{step}/` (含 model.safetensors + optimizer.pt, 每 2k 步, 2000…50000)。正确-prompt best step 待完整曲线确认 (plateau ~38k 后)。
 
 ### 8.3 🔥 关键发现 — PyTorch 比 JAX 显著差 (同 init 纯框架对照)
 

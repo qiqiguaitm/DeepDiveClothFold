@@ -12,8 +12,10 @@
 
 | 优先级 | 计划 | 状态 | 资源 | ETA | 目的 |
 |---|---|---|---|---|---|
-| ⭐⭐⭐ P0 | [**A_0423_0527 双 init JAX** (排 5-16~5-21 校准漂移)](plans/A_0423_0527_excl_calibration_drift.md) | ⏳ pending | 8× GPU × 2 run | ~3-5 day | **验证 v7 gripper 校准漂移假说**: 排除漂移期后真机应 work |
-| ⭐⭐ P0 | [**A_mirror200_pi05_pytorch** (pure_200 PyTorch 对照)](plans/A_mirror200_pi05_pytorch.md) | ⏳ pending | 8× GPU | ~30-50h | **隔离 "PyTorch vs JAX" 训练框架变量**, 在已知 work 的 pure_200 上 reproduce SOTA |
+| ⭐⭐⭐ P0 | [**AWBC × ViVa value model 对比**](plans/awbc_viva_value_comparison_plan.md) | 📝 待评审 | (见 plan) | (见 plan) | 只换 advantage label 来源 (pi0-AdvEst → ViVa) 的受控 A/B |
+| ⭐⭐ P1 | [**A_mirror200_pi05_pytorch** (pure_200 PyTorch 对照)](plans/A_mirror200_pi05_pytorch.md) | ✅ done (见 §8 results + postmortem) | 8× GPU | — | 已完成: PyTorch 同协议比 JAX 差 4.1× (@50), EMA 假说证伪 |
+| ~~A_0423_0527 双 init~~ | [(plan)](plans/A_0423_0527_excl_calibration_drift.md) | ❌ 取消 | — | — | 用户 2026-05-31 决定不做 |
+| ~~PyTorch EMA patch + 重训~~ | [(plan)](plans/pytorch_ema_patch_and_retrain.md) | ❌ 作废 | — | — | EMA 假说被 model-soup 证伪, 见 postmortem |
 
 ### 之前优先级 plan (2026-05-23 PM 之后新提的)
 
