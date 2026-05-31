@@ -20,7 +20,7 @@
 | 优先级 | 计划 | 状态 | 资源 | ETA | 关联 task |
 |---|---|---|---|---|---|
 | ⭐ P1 | [PyTorch 原生训练 pi05 vis_v2_full R1+R2](plans/pytorch_native_vis_v2_full.md) | ⏳ pending (config 未加) | Robot-North-H20 16 H20 串行 | ~4-5 day | `#18` |
-| ⭐ P1 | [Track X X-VLA 官方架构 X3.A/X3.B Curriculum](plans/xvla_track_x_curriculum.md) | 🔄 原版 X3.A/B/C (vis_v2_merged) 作废 (3 bug + 未控制变量); **新版控制变量三件套 running** (全 A_0423_0527 vis: X3.C uc01 / X3.B uc02 / X3.A uc03, 30k/5e-5) | uc01+02+03 各 8 A800 | ~4.5h | `#17` |
+| ⭐ P1 | [Track X X-VLA 官方架构 X3.A/X3.B Curriculum](plans/xvla_track_x_curriculum.md) | ✅ **控制变量三件套训练+eval 完成** (全 A_0423_0527 vis): **X3.C vis-only 各 horizon 全胜** (@1=0.0142), 加 kai +78% / 加 xvla 再 +9% — 但属 fit 非泛化, **真机待做**才是域贡献终判 (§0.1) | uc01+02+03 各 8 A800 | done | `#17` |
 | P2 | [Track A SSL Phase 0-3 Pretrain Pipeline](plans/ssl_phase_pretrain_pipeline.md) | 🔄 Phase 0 部分 done (kai0 base+dagger CoTracker3+SAM2), 余下 pending | uc02 8 GPU + Robot-North-H20 | ~3-5 day Phase 0, 后续待评估 | `#11/12/13/14` |
 
 ---
