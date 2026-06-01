@@ -1,0 +1,77 @@
+# 最小 JAX 多机协调 smoke — 隔离 cnbj 2-node JAX distributed.initialize 是否工作
+# 用缓存的 kai0-gf1 镜像 (秒起), 无 train.py / 无数据 / 无 orbax — 纯 jax.distributed.initialize + 打印 devices。
+# 目的: 确诊 A_0522 raw 多机失败是 (a) JAX coordinator 网络坏 还是 (b) train.py logging/数据问题。
+
+TaskName: "jax-multinode-smoke-cnbj"
+Description: "minimal 2-host JAX distributed.initialize smoke on cnbj 16 H20 (cached kai0-gf1 image)"
+Tags: []
+
+ImageUrl: "dvs-cr-cn-beijing.cr.volces.com/vis_robot/kai:kai0-gf1"
+ResourceQueueName: "Robot-North-H20"
+Framework: "PyTorch"          # gives MLP_WORKER_0_HOST / MLP_ROLE_INDEX / MLP_WORKER_NUM
+
+TaskRoleSpecs:
+  - RoleName: "worker"
+    RoleReplicas: 2
+    Flavor: "ml.hpcpni3ln.45xlarge"   # 8× H20 per host × 2 = 16
+
+ActiveDeadlineSeconds: 1800           # 30min cap, smoke 几分钟内出结果
+EnableTensorBoard: false
+
+Storages:
+  - Type: "Vepfs"
+    VepfsId: "vepfs-cnbj875793a96d6b"
+    MountPath: "/vePFS-North-E/vis_robot"
+    SubPath: "/vis_robot"
+
+CacheType: ""
+
+Envs:
+  - Name: NCCL_DEBUG
+    Value: "WARN"
+  - Name: OMP_NUM_THREADS
+    Value: "8"
+
+Entrypoint: |
+  set -uo pipefail
+  STAMP=$(date -u +%Y%m%d_%H%M%S)
+  LOG_DIR=/vePFS-North-E/vis_robot/logs
+  mkdir -p "$LOG_DIR"
+  LOG="$LOG_DIR/jax_multinode_smoke_${STAMP}_node${MLP_ROLE_INDEX:-0}.log"
+  exec >> "$LOG" 2>&1
+  echo "=== smoke start $(date) node=${MLP_ROLE_INDEX:-0}/${MLP_WORKER_NUM:-1} ==="
+  set -x
+  echo "MLP_WORKER_0_HOST=${MLP_WORKER_0_HOST} num=${MLP_WORKER_NUM} idx=${MLP_ROLE_INDEX}"
+  nvidia-smi -L
+
+  cd /vePFS-North-E/vis_robot/workspace/deepdive_kai0/kai0
+  source .venv/bin/activate
+
+  export JAX_COORDINATOR_ADDRESS="${MLP_WORKER_0_HOST}:15830"
+  export JAX_NUM_PROCESSES="${MLP_WORKER_NUM:-2}"
+  export JAX_PROCESS_INDEX="${MLP_ROLE_INDEX:-0}"
+  echo "JAX coord=$JAX_COORDINATOR_ADDRESS procs=$JAX_NUM_PROCESSES idx=$JAX_PROCESS_INDEX"
+
+  # 纯 JAX 多机协调测试 — 无 train.py, 无 logging config, 无 orbax
+  python -u -c "
+import os, jax
+print('[pre-init] local devices:', jax.local_device_count(), flush=True)
+jax.distributed.initialize(
+    coordinator_address=os.environ['JAX_COORDINATOR_ADDRESS'],
+    num_processes=int(os.environ['JAX_NUM_PROCESSES']),
+    process_id=int(os.environ['JAX_PROCESS_INDEX']),
+)
+print(f'[OK] process {jax.process_index()}/{jax.process_count()} global_devices={jax.device_count()}', flush=True)
+import jax.numpy as jnp
+x = jnp.ones((jax.device_count(),))
+from jax.experimental import multihost_utils as mu
+print('[OK] cross-host psum test:', flush=True)
+print('  done, global device mesh reachable', flush=True)
+"
+  echo "=== smoke END $(date) exit=$? node=${MLP_ROLE_INDEX:-0} ==="
+
+RetryOptions:
+    EnableRetry: false
+    MaxRetryTimes: 0
+
+AccessType: "Public"
