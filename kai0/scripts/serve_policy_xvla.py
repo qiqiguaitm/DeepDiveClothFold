@@ -25,7 +25,7 @@ Rot6D) 见 xvla_action_codec.py。
 
 Run (用 .venv_xvla, 见 sim01_deployment.md §3.6):
     kai0/.venv_xvla/bin/python kai0/scripts/serve_policy_xvla.py \
-        --ckpt_dir /data1/DATA_IMP/checkpoints/ckpt_others/xvla_x3b_stage_a_step_final \
+        --ckpt_dir /data1/DATA_IMP/checkpoints/ckpt_xvla/xvla_x3c_smooth800_step_final \
         --port 8003
 """
 
@@ -34,6 +34,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import socket
 import sys
 import time
@@ -135,6 +136,46 @@ def _load_calibration(path: Path):
 
 
 # ──────────────────────────────────────────────────────────────────────────
+# Pipeline trace (opt-in via XVLA_TRACE_DIR) — 与 client 侧同款 _PipeTrace。
+# 所有写盘 try/except 包裹: tracing 永不影响 server 推理。trace 关时根本不构造。
+# 落盘 schema 见 xvla/analyze_pipeline_trace.py。
+# ──────────────────────────────────────────────────────────────────────────
+
+
+class _PipeTrace:
+    def __init__(self, root: str, side: str):
+        self.side = side
+        self.arr_dir = os.path.join(root, f"{side}_arrays")
+        self.img_dir = os.path.join(root, f"{side}_images")
+        os.makedirs(self.arr_dir, exist_ok=True)
+        os.makedirs(self.img_dir, exist_ok=True)
+        self._f = open(os.path.join(root, f"{side}_trace.jsonl"), "a", buffering=1)
+
+    def event(self, **rec):
+        rec.setdefault("t_wall", time.time())
+        try:
+            self._f.write(json.dumps(rec, default=float, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
+
+    def save_arrays(self, seq, **arrs):
+        try:
+            np.savez_compressed(os.path.join(self.arr_dir, f"{int(seq):06d}.npz"), **arrs)
+        except Exception:
+            pass
+
+    def save_image(self, seq, name, img):
+        try:
+            a = np.asarray(img)
+            if a.ndim == 3 and a.shape[0] == 3 and a.shape[-1] != 3:
+                a = np.transpose(a, (1, 2, 0))
+            cv2.imwrite(os.path.join(self.img_dir, f"{int(seq):06d}_{name}.jpg"),
+                        cv2.cvtColor(a.astype(np.uint8), cv2.COLOR_RGB2BGR))
+        except Exception:
+            pass
+
+
+# ──────────────────────────────────────────────────────────────────────────
 # Policy adapter
 # ──────────────────────────────────────────────────────────────────────────
 
@@ -161,6 +202,16 @@ class XVLAServerPolicy(_base_policy.BasePolicy):
         self._chunk = int(policy.config.chunk_size)
         # 固定 prompt 的 token 缓存 (与训练 cached_tokens 同: max_length=50)
         self._tok_cache: Dict[str, torch.Tensor] = {}
+        # pipeline trace (opt-in): XVLA_TRACE_DIR 置位才落盘, 否则 self._trace=None → 零开销
+        self._infer_n = 0
+        self._trace = None
+        _tdir = os.environ.get("XVLA_TRACE_DIR")
+        if _tdir:
+            try:
+                self._trace = _PipeTrace(_tdir, "server")
+                logger.warning("[trace] pipeline trace ON → %s", _tdir)
+            except Exception as e:  # noqa: BLE001
+                logger.warning("[trace] init failed: %s", e)
 
     def _tokens(self, prompt: str) -> torch.Tensor:
         if prompt not in self._tok_cache:
@@ -182,12 +233,15 @@ class XVLAServerPolicy(_base_policy.BasePolicy):
             raise ValueError(f"obs['state'] must be >=14D; got {state14.shape}")
 
         batch: Dict[str, torch.Tensor] = {}
+        _trace_imgs: Dict[str, np.ndarray] = {}   # 模型实际输入图 (resize_pad 后) for trace
         # 图像: top_head/hand_right/hand_left → image/image2/image3, resize_pad, /255 (无 ImageNet 归一)
         for key, size, slot in zip(_IMG_KEYS, _IMG_SIZES, _OBS_SLOT_FOR_IMG):
             arr = images.get(slot)
             if arr is None:
                 raise ValueError(f"obs['images'] missing '{slot}' (need top_head/hand_right/hand_left)")
             hwc = _resize_pad(_to_hwc_uint8(arr, slot), size)
+            if self._trace is not None:
+                _trace_imgs[slot] = hwc
             t = torch.from_numpy(hwc).permute(2, 0, 1).float().div_(255.0)  # (3,H,W) ∈[0,1]
             batch[key] = t.unsqueeze(0).to(self._device, dtype=self._dtype)
 
@@ -246,11 +300,39 @@ class XVLAServerPolicy(_base_policy.BasePolicy):
             out16[h, 8:16] = _ee6d_to_world8(acts[h, 10:20], self._TR,
                                              self._g_open, self._g_close, self._binarize, self._thr)
 
+        total_ms = float((time.monotonic() - t0) * 1000.0)
+
+        # pipeline trace: 落 server 侧一条 (收到的 state14/算出 state20/原始20D/world16/模型输入图)
+        if self._trace is not None:
+            try:
+                self._infer_n += 1
+                cseq = obs.get("trace_seq")
+                # 有 client seq 就用它 (跨进程 join); 没有 (如 warmup infer) 用负数, 避免与
+                # client seq=1 撞键 (warmup 不走 client 主循环, 不该和真 infer 同 seq)。
+                seq = int(cseq) if cseq is not None else -self._infer_n
+                self._trace.event(
+                    stage="server_infer", seq=seq, client_seq=cseq, infer_n=self._infer_n,
+                    t_mono=time.monotonic(), infer_ms=float(infer_ms), total_ms=total_ms,
+                    domain_id=int(domain_id), prompt=str(prompt), chunk_h=int(H),
+                    proprio_source=("pred" if (self._proprio_fb and self._pred_proprio is not None
+                                               and state20 is not state20_sensed) else "sensed"),
+                    state14=state14.tolist(), state20=state20.tolist(),
+                    out20_min=float(acts.min()), out20_max=float(acts.max()),
+                    world16_xyzL_h0=out16[0, 0:3].tolist(), world16_xyzR_h0=out16[0, 8:11].tolist(),
+                    quat_norm_h0=[float(np.linalg.norm(out16[0, 3:7])),
+                                  float(np.linalg.norm(out16[0, 11:15]))],
+                    img_sizes={k: list(v.shape) for k, v in _trace_imgs.items()},
+                )
+                self._trace.save_arrays(seq, state14=state14, state20=state20, raw20=acts, world16=out16)
+                for slot, hwc in _trace_imgs.items():
+                    self._trace.save_image(seq, slot, hwc)
+            except Exception as e:  # noqa: BLE001
+                logger.warning("[trace] server record failed: %s", e)
+
         return {
             "actions": out16,
             "action_kind": "ee",
-            "server_timing": {"infer_ms": float(infer_ms),
-                              "total_ms": float((time.monotonic() - t0) * 1000.0)},
+            "server_timing": {"infer_ms": float(infer_ms), "total_ms": total_ms},
         }
 
     def reset(self) -> None:
