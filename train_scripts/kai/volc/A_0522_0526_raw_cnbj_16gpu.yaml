@@ -16,7 +16,9 @@ TaskName: "a-0522-0526-raw-cnbj-16gpu"
 Description: "Exp-1b 不裁对照 (raw): JAX 2-host 16 H20, mixed_1_clean init, 40k"
 Tags: []
 
-ImageUrl: "dvs-cr-cn-beijing.cr.volces.com/vis_robot/kai:kai0-gf1"
+# Image + CacheType matched to PROVEN cnbj 16-GPU multinode template (gf3_cluster_smoke_16gpu.yaml,
+# 实测可工作 2026-05-21 X-VLA Stage1). kai0-gf1 image caused "Logging error" crash at JAX multi-host init.
+ImageUrl: "visincept-cn-beijing.cr.volces.com/grasp/h2r:1.0"
 ResourceQueueName: "Robot-North-H20"
 Framework: "PyTorch"          # gives MLP_WORKER_0_HOST / MLP_ROLE_INDEX / MLP_WORKER_NUM
 
@@ -34,7 +36,7 @@ Storages:
     MountPath: "/vePFS-North-E/vis_robot"
     SubPath: "/vis_robot"
 
-CacheType: ""
+CacheType: "Cloudfs"
 
 Envs:
   - Name: HF_HUB_OFFLINE
@@ -69,8 +71,8 @@ Entrypoint: |
   nvidia-smi -L
 
   cd /vePFS-North-E/vis_robot/workspace/deepdive_kai0/kai0
+  ls -la .venv/bin/python
   source .venv/bin/activate
-  apt-get update 2>&1 | tail -1 && apt-get install -y ffmpeg 2>&1 | tail -1 || echo "ffmpeg best-effort"
   python -c "import jax; print(f'jax {jax.__version__} devs={len(jax.devices())}')"
 
   # cnbj paths (CLI-override repo_id + init, config 内是 cnsh 路径)
