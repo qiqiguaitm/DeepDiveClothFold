@@ -31,9 +31,10 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-# ---- constants ----
-VIS_BASE = Path("/vePFS/tim/workspace/deepdive_kai0/kai0/data/Task_A/vis_base")
-DST_ROOT = Path("/vePFS/tim/workspace/deepdive_kai0/kai0/data/Task_A/self_built")
+# ---- constants ---- (REPO_ROOT overridable via env KAI0_REPO_ROOT for cross-cluster, e.g. cnbj)
+_REPO = os.environ.get("KAI0_REPO_ROOT", "/vePFS/tim/workspace/deepdive_kai0")
+VIS_BASE = Path(f"{_REPO}/kai0/data/Task_A/vis_base")
+DST_ROOT = Path(f"{_REPO}/kai0/data/Task_A/self_built")
 DATES = ["2026-05-22-v2", "2026-05-26-v2"]
 CAMERAS = ("observation.images.top_head", "observation.images.hand_left", "observation.images.hand_right")
 CAM_DIRS = {"observation.images.top_head": "top_head",
