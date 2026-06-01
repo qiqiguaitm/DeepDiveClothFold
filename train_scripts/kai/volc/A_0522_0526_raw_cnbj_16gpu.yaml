@@ -1,0 +1,101 @@
+# data_root_cause_probe Exp-1b — 不裁对照 (raw), 华北北京 16 GPU (2-host H20)
+#
+#   Config:   pi05_flatten_fold_A_0522_0526_raw  (CLI-override repo_id + init → cnbj paths)
+#   Plan:     docs/training/future_plans/plans/data_root_cause_probe_experiments.md Exp-1b
+#   Data:     A_0522_0526_raw (~200 ep, 不裁投放, ~337k frames) — Exp-1 的对照
+#   Init:     mixed_1_clean (TOS→cnbj vePFS, 与 Exp-1 同 init = 控制变量)
+#   Spec:     2-host × 8 H20 = 16 GPU FSDP, batch 128, 40k step
+#
+#   ⚠️ 与 Exp-1 (no_release, 沪) 唯一变量 = 数据裁不裁投放。同 init / 同 step / 同 hparams。
+#
+# PREREQUISITE: dataset built on cnbj + norm_stats + init synced. 见 plan §1.10.
+#
+# Submit (from gf3): source /root/.volc/credentials && python submit_yaml.py <this>
+
+TaskName: "a-0522-0526-raw-cnbj-16gpu"
+Description: "Exp-1b 不裁对照 (raw): JAX 2-host 16 H20, mixed_1_clean init, 40k"
+Tags: []
+
+ImageUrl: "dvs-cr-cn-beijing.cr.volces.com/vis_robot/kai:kai0-gf1"
+ResourceQueueName: "Robot-North-H20"
+Framework: "PyTorch"          # gives MLP_WORKER_0_HOST / MLP_ROLE_INDEX / MLP_WORKER_NUM
+
+TaskRoleSpecs:
+  - RoleName: "worker"
+    RoleReplicas: 2
+    Flavor: "ml.hpcpni3ln.45xlarge"   # 8× H20-SXM5-96GB per host × 2 = 16 GPU
+
+ActiveDeadlineSeconds: 172800
+EnableTensorBoard: false
+
+Storages:
+  - Type: "Vepfs"
+    VepfsId: "vepfs-cnbj875793a96d6b"
+    MountPath: "/vePFS-North-E/vis_robot"
+    SubPath: "/vis_robot"
+
+CacheType: ""
+
+Envs:
+  - Name: HF_HUB_OFFLINE
+    Value: "1"
+  - Name: TRANSFORMERS_OFFLINE
+    Value: "1"
+  - Name: TOKENIZERS_PARALLELISM
+    Value: "false"
+  - Name: NCCL_DEBUG
+    Value: "WARN"
+  - Name: OMP_NUM_THREADS
+    Value: "8"
+  - Name: XLA_PYTHON_CLIENT_MEM_FRACTION
+    Value: "0.85"
+  - Name: JAX_COMPILATION_CACHE_MIN_ENTRY_SIZE_BYTES
+    Value: "-1"
+  - Name: JAX_COMPILATION_CACHE_MIN_COMPILE_TIME_SECS
+    Value: "1"
+  - Name: JAX_ENABLE_EMPTY_ARRAYS
+    Value: "true"
+
+Entrypoint: |
+  set -uo pipefail
+  STAMP=$(date -u +%Y%m%d_%H%M%S)
+  LOG_DIR=/vePFS-North-E/vis_robot/logs
+  mkdir -p "$LOG_DIR"
+  LOG="$LOG_DIR/A_0522_0526_raw_${STAMP}_node${MLP_ROLE_INDEX:-0}.log"
+  exec >> "$LOG" 2>&1
+  echo "=== entrypoint start $(date) node=${MLP_ROLE_INDEX:-0}/${MLP_WORKER_NUM:-1} ==="
+  set -ex
+  echo "[multinode] host0=${MLP_WORKER_0_HOST} num=${MLP_WORKER_NUM} idx=${MLP_ROLE_INDEX}"
+  nvidia-smi -L
+
+  cd /vePFS-North-E/vis_robot/workspace/deepdive_kai0/kai0
+  source .venv/bin/activate
+  apt-get update 2>&1 | tail -1 && apt-get install -y ffmpeg 2>&1 | tail -1 || echo "ffmpeg best-effort"
+  python -c "import jax; print(f'jax {jax.__version__} devs={len(jax.devices())}')"
+
+  # cnbj paths (CLI-override repo_id + init, config 内是 cnsh 路径)
+  TRAIN=/vePFS-North-E/vis_robot/workspace/deepdive_kai0/kai0/data/Task_A/self_built/A_0522_0526_raw
+  INIT=/vePFS-North-E/vis_robot/shared_ckpt/Task_A/mixed_1_clean/params
+  [ -f "$TRAIN/meta/episodes.jsonl" ] || { echo "FATAL: train data missing $TRAIN" >&2; exit 13; }
+  [ -f "$TRAIN/norm_stats.json" ]     || { echo "FATAL: norm_stats missing $TRAIN/norm_stats.json" >&2; exit 13; }
+  [ -f "$INIT/_METADATA" ]            || { echo "FATAL: mixed_1_clean init missing $INIT" >&2; exit 13; }
+  echo "[$(date)] data + norm_stats + init verified"
+
+  # JAX multinode env (固定 port 15830)
+  export JAX_COORDINATOR_ADDRESS="${MLP_WORKER_0_HOST}:15830"
+  export JAX_NUM_PROCESSES="${MLP_WORKER_NUM:-2}"
+  export JAX_PROCESS_INDEX="${MLP_ROLE_INDEX:-0}"
+
+  # Launch JAX FSDP=16, CLI-override repo_id + init to cnbj
+  exec python -u scripts/train.py pi05_flatten_fold_A_0522_0526_raw \
+    --exp-name A_0522_0526_raw_cnbj \
+    --data.repo_id "$TRAIN" \
+    --weight-loader.params-path "$INIT" \
+    --no-wandb-enabled \
+    --resume
+
+RetryOptions:
+    EnableRetry: false
+    MaxRetryTimes: 0
+
+AccessType: "Public"
