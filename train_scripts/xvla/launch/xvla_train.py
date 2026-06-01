@@ -148,6 +148,19 @@ CONFIGS = {
         batch_size_per_gpu=8,
         vlm_lr_scale=0.1,
     ),
+    "X3C_smooth800_100k": dict(
+        # §0.NEW.5: X3.C vis-only 延长到 100k step (≈7 epoch) 验证 X-VLA 是否欠训。
+        # 与 X3C_smooth800 完全相同, 仅 steps 30k→100k (cosine decay 自动拉到 100k)。
+        datasets=[
+            dict(root=f"{SB}/A_new_smooth_800", domain_id=20, prompt=PROMPT, weight=1.0),
+        ],
+        steps=100_000,
+        lr=5e-5,
+        warmup_steps=500,
+        freeze_steps=1000,
+        batch_size_per_gpu=8,
+        vlm_lr_scale=0.1,
+    ),
     "X3B_smooth800": dict(
         # X3.B: kai(base+dagger) + smooth_800(vis ×7).
         datasets=[
