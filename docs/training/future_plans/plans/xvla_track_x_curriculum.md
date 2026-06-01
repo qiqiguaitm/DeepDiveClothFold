@@ -148,6 +148,49 @@ X3.C 自身 MAE (EE6D 20D, final, 1000 窗口):
 - §0.NEW 用 smooth_800 重训, 重点是 **真机可部署 + 真机终判**, 不只看 offline fit。
 - 两版可对比 "vis 数据选择 (A_0423_0527 vs smooth_800) 对 X3 域贡献结论是否稳健"。
 
+### §0.NEW.5 ⭐ X3.C 100K 步延长训练 (待启) — 验证 X-VLA 是否欠训
+
+> **动机**: §0.NEW.2.5 (a.2) 训练曲线显示 X3.C 30k **MAE 全程严格单调下降、final=best、无过拟合回弹** —— 末段仍在降 (24k→30k @1 还有 -4%)。30k step 仅 ≈ **2.1 epoch** (eff batch 64 × 30k / ~901k windows)。对比: pi05 smooth_800 跑 50k step (≈ 3.4 epoch 等效) 才 plateau。**X-VLA 0.9B 可能只是欠训, 而非架构上限**。延长到 100K (≈ 7 epoch) 验证: action fidelity 能否继续逼近 pi05 (§0.NEW.2.5 b 的 5× gap 是否部分来自欠训)。
+
+**配置 (与 30k 版完全相同, 仅改 steps)**:
+
+| 项 | 值 | 说明 |
+|---|---|---|
+| config | `X3C_smooth800_100k` (新增, 复制 `X3C_smooth800` 仅改 steps) | `train_scripts/xvla/launch/xvla_train.py` |
+| 数据 | 仅 `A_new_smooth_800` (vis-only, domain_id=20) | 同 30k 版, 不变 |
+| **steps** | **100_000** (原 30_000) | **唯一改动** |
+| lr | 5e-5 | 同 (cosine schedule, decay 自动拉到 100k → lr 衰减更慢) |
+| warmup_steps | 500 | 同 |
+| freeze_steps | 1000 | 同 |
+| batch_size_per_gpu | 8 (eff batch 64 @ 8 GPU) | 同 |
+| vlm_lr_scale | 0.1 | 同 |
+| ckpt save | 每 2000 step (与 30k 版一致, 共 50 个) | 便于画 100k 曲线 |
+| 节点 | uc01 8× A800 (或空闲节点) | torchrun |
+| output_dir | `/data/shared/ubuntu/local_ckpts/xvla_x3c_smooth800_100k` | 不覆盖 30k 版 |
+| ETA | ≈ 15h (30k 用 ~4.5h, 线性外推 100k ≈ 15h) | 单节点 |
+| epoch | ≈ 7.0 (100k × 64 / 901k) | 30k 版 ≈ 2.1 |
+
+> ⚠️ **cosine schedule 注意**: launch script 用 `get_cosine_schedule_with_warmup(num_training_steps=steps)`。改 steps=100k 后 lr 从 5e-5 余弦衰减到 0 的长度自动拉到 100k → **后期 lr 比 30k 版同 step 处更高**, 这是延长训练的预期行为 (更慢退火)。不需额外改 lr。
+
+**实施步骤**:
+
+| Step | 内容 | ETA |
+|---|---|---:|
+| L1 | launch script 加 `X3C_smooth800_100k` dict (steps=100_000, 余同 X3C_smooth800) | 5min |
+| L2 | uc01 起训 (torchrun 8 GPU, ckpt 每 2k) | ~15h |
+| L3 | 全 ckpt MAE 曲线 eval (同 `eval_xvla_ee6d.py`, 同 1000 val 窗口, 与 30k 曲线对齐画图) | ~1h |
+| L4 | 判定 (见下) | — |
+
+**判定标准**:
+
+| 100k 结果 | 结论 |
+|---|---|
+| @1 继续降 (如 30k 0.0149 → 100k ≤ 0.010) | ✅ **X-VLA 欠训确认**, 5× gap 部分是 step 数不足。后续 X3.A/B 也应跑 100k |
+| @1 在 ~30-50k 后 plateau (≈ 0.014) | ❌ 30k 已够, gap 是架构/容量上限, 非欠训 → 加 step 无用, Track X 降权 (D3/D4) |
+| @1 先降后 **回弹** (过拟合) | ⚠️ 901k windows / 7 epoch 触及过拟合点, 记录回弹起始 step 作为该数据集上限 |
+
+> **为何只延 X3.C**: X3.C 是 vis-only 干净 baseline, 步数-性能关系最干净 (无跨域混合干扰)。先用它定位 "X-VLA 欠训 vs 架构上限", 再决定 X3.A/B 是否值得 100k (省算力)。
+
 ---
 
 ## §0. 控制变量 X3 三件套 (2026-05-29, A_0423_0527) — ⬇️ 降为对照, 由 §0.NEW 取代
