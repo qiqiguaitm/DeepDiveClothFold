@@ -53,12 +53,20 @@
 - config `inline_eval_val_root` 路径 stale (如数据迁移后没更新) → `train.py` 防御捕获为 warning, 训练继续但**这些 step 无 MAE** (silent eval=0)。
 - 提交前 verify val 路径存在 (YAML pre-flight 加 `[ -f "$VAL/meta/episodes.jsonl" ] || exit 13`)。
 - 补救: 对 kept ckpt offline eval 重建曲线 (`eval_val_action_mse.py`, 记得带正确 prompt 见 §6)。
+- ⚠️ **数据集被还原成 LFS 指针残桩**: offline eval 报 `FileNotFoundError: episode_0000XX.parquet` 但文件"存在"——`stat` 显示 ~112B(parquet)/ ~119B(mp4)= **git-LFS 指针 stub, 非真数据**。训练时是真数据, 之后被 `git reset --hard`(cron 同步)还原成仓库里 commit 的 LFS 指针。**判据**: `stat -c %s` 整套 parquet 都 112B / mp4 都 119B = 全被 stub。**修复**: 从有真数据的副本(如 uc01 NFS)relay 回来覆盖, `head -c4 *.parquet` 应为 `PAR1`。(2026-06-02 vis_v2_merged_val 实例)
 
 ## 8. config 必须先 commit+push (gf3/uc cron pull) ⚠️
 
 - gf3 + uc01/02/03 由 1-min cron `reset --hard origin/main` 镜像 main。改 config/代码后**必须在 gf0 `git push`**, 等 ~1min 目标机 pull 到再提交。
 - 别直接在 gf3/uc 改代码 (下次 reset 覆盖)。验证: `ssh <host> "cd repo && git log --oneline -1"` 看 HEAD 是否含你的 commit。
 - 提交 volc 报 `Config 'X' not found` = 目标集群 vePFS checkout stale, pull 一下。
+
+## 9. 多机训练 ckpt 必须落到所有节点可见的同一共享盘 ⚠️ (多机专属, 单机无此坑)
+
+- 多机 orbax `CheckpointManager` 要求**所有进程写同一个物理共享目录**: primary(proc0)建 `array_metadatas` 等目录, 其余进程跨盘等它出现。若 ckpt-base-dir 解析到**各节点本地盘**(每台一块不同物理盘), proc1 永远等不到 proc0 的目录 → `Timed out waiting for array_metadatas base directory creation (timeout=600s)` → `Shutdown barrier` → 全崩, **无任何 finalized ckpt**。
+- 典型陷阱: `kai0/checkpoints` 在某些机器是 **symlink → 节点本地 SSD**(为单机加速, 见 uc `local_ckpts` / sim01 `/data1`)。**单机训练正好要这个本地盘; 多机训练这恰恰是致命的**。
+- **修复**: 多机一律显式 `--checkpoint-base-dir <真共享 FS>`(uc: workspace NFS `/data/shared/ubuntu/workspace/multinode_ckpts`; volc: vePFS 本就是共享, 默认 `kai0/checkpoints` 即可)。
+- **稳定判据(关键)**: `Step N: loss` 同步下降**只证明 NCCL/前反向通, 不证明能落盘**。多机真正过关 = **熬过第一次 ckpt save**(看到 finalized `<step>/` 目录、非 `*.orbax-checkpoint-tmp-*`, 且训练继续)。详见 [`uc_cluster_jobs.md §12.11 坑 9`](uc_cluster_jobs.md)。
 
 ---
 
