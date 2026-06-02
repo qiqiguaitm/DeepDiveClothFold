@@ -126,6 +126,8 @@ X3.C 自身 MAE (EE6D 20D, final, 1000 窗口):
 
 **结论**: 在 smooth_800 同源数据、同 1000 val 窗口、同 EE6D 20D 标尺下, **pi05 的动作预测保真度约为 X3.C XVLA 的 5 倍 (@1 0.0025 vs 0.0146), 且位置/朝向/夹爪三组维度全面领先**。X3.C 自身训练健康 (无塌缩), 但 action fidelity 显著不及成熟 pi0.5。
 
+> 🔴 **真机差的根因分析 (2026-06-01)**: 见 [`../../analysis/xvla_vs_official_gap_rootcause.md`](../../analysis/xvla_vs_official_gap_rootcause.md) — 逐行对比官方 X-VLA / lerobot port / 我们的代码, 定位 4 层根因: **R1 训练全程缺 ImageNet 图像归一化** (主因, 代码坐实: `xvla_train.py:330` 绕过 lerobot processor, dataset 只 /255) → base ckpt 输入域错位; **R2 EE6D→IK 真机执行链** (pi05 直出 joint 无此链, offline 测不到); R3 欠训 (30k vs 官方 50k); R4 架构容量 (0.9B vs pi05 2.2B)。**P0: 先修 R1 (纯代码零数据成本) 重训对照。**
+
 **Caveat (诚实标注)**:
 1. **action-fit 保真度, 非真机成功率** — 两者 held-out 均来自训练分布 (fit 非泛化)。MAE 低 ≠ 真机一定好, 但证明 pi05 动作精度远高于 X3.C。
 2. **FK 对 pi05 中性偏不利** — pi05 在 joint 空间训练, FK 转 EE6D 会**放大** joint 误差 (几何链式传导), 按理 pi05 应吃亏; 它仍大幅领先 → 真实优势比表面数字更大。
