@@ -247,6 +247,13 @@ X3.C 自身 MAE (EE6D 20D, final, 1000 窗口):
 
 > ⚠️ **使用铁律**: P0 ckpt 真机推理**必须** `--imagenet_norm` (train/serve parity); 旧 30k ckpt 用 `--no-imagenet_norm` 且勿再用现 eval (已归一化 → mismatch)。详见 rootcause.md §6.1。
 
+### §0.NEW.6.5 数据集审计 + D5 候选 (P0 之后)
+
+数据集对齐审计 ([`../../analysis/xvla_dataset_vs_official.md`](../../analysis/xvla_dataset_vs_official.md)): 我们 vis EE6D (`A_new_smooth_800`) vs 官方 X-VLA Agilex handler 逐项对比, 实测 806 ep:
+- ✅ **全对齐无致命错**: action 20D EE6D absolute、xyz 米级、rot6d 正交归一 (col 模长 1.000/点积 0.000)、gripper 二值同阈值、loss scale (XYZ×500/ROT×10/grip×1)、无归一化 (靠 loss scale)、proprio=action[0]、action chunk = 真实未来轨迹 (标签语义正确, pi05 同数据 work 佐证)。
+- 🟡 **D5 (唯一实质差异) — action chunk 时间窗口**: 我们连续 30 帧 = **1.0s** (33ms/点); 官方 qdur=2.0s 插值 30 点 = **2.0s** (67ms/点)。对叠衣慢长程任务, 短规划窗口可能加重长程走停 (但主因仍 R1)。
+- **D5 候选** (P0 后): 若 P0 (R1) 真机仍长程走停, 改 `multi_domain_dataset` 采样为 2 秒窗口 linspace 插值 (对齐官方); 需训练+推理节奏一致, **不进 P0** (单变量), 留作独立实验。
+
 ---
 
 ## §0. 控制变量 X3 三件套 (2026-05-29, A_0423_0527) — ⬇️ 降为对照, 由 §0.NEW 取代
