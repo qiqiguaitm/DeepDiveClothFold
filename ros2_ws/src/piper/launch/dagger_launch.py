@@ -17,11 +17,12 @@ GUI viz competes for GPU + adds latency; use playback_launch later to inspect).
 
 Toggle: /dagger/takeover (Bool) — True=master→slave teleop (drag), False=slave→master mirror.
 """
+import glob
 import os
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, TimerAction
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, SetEnvironmentVariable, TimerAction
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
@@ -41,6 +42,32 @@ def _find_project_root():
 
 _PROJECT_ROOT = _find_project_root()
 _CONFIG_DIR = os.path.join(_PROJECT_ROOT, 'config')
+_KAI0_ROOT = os.path.join(_PROJECT_ROOT, 'kai0')
+
+# Inject kai0/.venv site-packages onto PYTHONPATH for the dagger-only nodes
+# (master_servo / dagger_recorder / pedal). These run under /usr/bin/python3
+# (node shebang), which has rclpy but NOT `av` (PyAV) — and dagger_recorder
+# imports web/data_manager/backend/app/dataset_writer, which needs av to encode
+# episode mp4s. autonomy_launch.py sets this same PYTHONPATH, but only inside
+# its own (included) scope, so it does NOT reach the dagger-scope nodes — hence
+# dagger_recorder was dying with `ModuleNotFoundError: No module named 'av'`,
+# never publishing /dagger/state, and the web UI hung at "Infra starting up…".
+# Mirror autonomy_launch.py's exact computation (venv site-packages + .pth dirs
+# + kai0/src). .pth files aren't auto-processed under PYTHONPATH, so expand them.
+_VENV_LIB = os.path.join(_KAI0_ROOT, '.venv', 'lib')
+_VENV_PYDIR = sorted(glob.glob(os.path.join(_VENV_LIB, 'python3.*')))
+_VENV = os.path.join(_VENV_PYDIR[-1], 'site-packages') if _VENV_PYDIR else os.path.join(_VENV_LIB, 'python3.12', 'site-packages')
+_PTH_DIRS = []
+for _pth in sorted(glob.glob(os.path.join(_VENV, '*.pth'))):
+    with open(_pth) as _f:
+        for _line in _f:
+            _line = _line.strip()
+            if not _line or _line.startswith('#') or _line.startswith('import '):
+                continue
+            _resolved = _line if os.path.isabs(_line) else os.path.join(_VENV, _line)
+            if os.path.isdir(_resolved):
+                _PTH_DIRS.append(_resolved)
+_PYTHONPATH = ':'.join([_VENV] + _PTH_DIRS + [os.path.join(_KAI0_ROOT, 'src')])
 
 # Master CAN names — leader/follower arms wired separately from slaves
 import yaml
@@ -167,7 +194,16 @@ def generate_launch_description():
     # Pedal can come up immediately — it doesn't need CAN/cameras/policy.
     pedal_delayed        = TimerAction(period=2.0,  actions=[pedal_node])
 
+    # Set PYTHONPATH at dagger scope BEFORE the dagger nodes so they (esp.
+    # dagger_recorder → dataset_writer → av) can import from kai0/.venv. The
+    # included autonomy_launch.py re-sets its own PYTHONPATH inside its scope,
+    # so this is additive, not conflicting.
+    existing_py = os.environ.get('PYTHONPATH', '')
+    set_py = SetEnvironmentVariable(
+        'PYTHONPATH', _PYTHONPATH + ':' + existing_py if existing_py else _PYTHONPATH)
+
     return LaunchDescription([
+        set_py,
         record_task_arg, record_prompt_arg, record_subset_arg, record_inference_arg,
         autonomy,  # includes mode_arg/gpu_arg/config_arg/ckpt_arg/etc. transitively
         master_left_delayed,

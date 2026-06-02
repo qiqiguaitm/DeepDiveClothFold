@@ -65,6 +65,7 @@ from typing import Optional
 
 import numpy as np
 import rclpy
+from rcl_interfaces.msg import ParameterDescriptor
 from rclpy.node import Node
 from rclpy.qos import QoSDurabilityPolicy, QoSHistoryPolicy, QoSProfile, QoSReliabilityPolicy
 from sensor_msgs.msg import Image, JointState
@@ -207,8 +208,14 @@ class DaggerRecorder(Node):
         # Form C dual-dataset toggle. When false, the policy-rollout (inference/)
         # side is fully disabled: no inference episode is opened/written and no
         # <task>/inference/<date-v2>/ dir is created — only dagger/ is recorded.
-        # String-typed so it flows cleanly through shell→launch→param.
-        self.declare_parameter("record_inference", "true")
+        # dynamic_typing: shell→launch passes `record_inference:=false`, which
+        # launch_ros serializes into the params YAML as an *unquoted* scalar →
+        # rclpy loads it as BOOL, not STRING. A static STRING default would then
+        # raise InvalidParameterTypeException and kill the node at startup. Allow
+        # either type; the str()-coercion below normalizes bool or string alike.
+        self.declare_parameter(
+            "record_inference", "true",
+            ParameterDescriptor(dynamic_typing=True))
 
         ckpt_dir = self.get_parameter("checkpoint_dir").value or ""
         task_p = self.get_parameter("task_name").value or ""
