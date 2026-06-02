@@ -27,14 +27,29 @@ disown
 ```
 
 ### 1.2 replay-only (只 replay, slim, 推荐)
+
+replay 现由 `start_autonomy.sh --replay` 统一管理 (`start_replay_stack.sh` 已是
+转发 shim, 仅保留 `stop` 子命令)。`--replay` 必须配合 `--episode`:
+
 ```bash
 cd /home/tim/workspace/deepdive_kai0
-./start_scripts/kai/start_replay_stack.sh              # 前台
-nohup ./start_scripts/kai/start_replay_stack.sh > /tmp/replay.log 2>&1 &  # 后台
-disown
-# 停 (干净):
+
+# 一键起栈 + 加载 episode + 自动下发 (auto_execute=true, 仅节点内 S4 对齐预检):
+./start_scripts/kai/start_autonomy.sh --replay --episode Task_A/base/<date>-v2/0
+./start_scripts/kai/start_autonomy.sh --replay --sim --episode Task_A/base/<date>-v2/0  # 仿真, 不驱动真机
+
+# ⭐ 单脚本 · 手动确认版 (起 idle 栈 → 等就绪 → [y/N] 确认 → 进度 → 退出自动拆栈):
+./start_scripts/kai/start_replay_confirm.sh Task_A/base/<date>-v2/0        # 1.0x
+./start_scripts/kai/start_replay_confirm.sh Task_A/base/<date>-v2/0 0.8    # 0.8x 慢放
+
+# 停 (start_replay_stack.sh 仍可用作收尾):
 ./start_scripts/kai/start_replay_stack.sh stop
 ```
+
+> ⚠️ **episode 路径里日期目录带 `-v2` 后缀** (`2026-05-19-v2`), 漏写会 `parquet not found`。
+> `auto_execute=true` 的 `--replay --episode` 落地即自动下发到真机, 无人工确认; 想要
+> [y/N] 确认 + 慢放, 用 `start_replay_confirm.sh` (内部 `auto_execute:=false` 起 idle 栈
+> 再走 `start_replay_test.sh`)。
 
 ### 1.3 data_collect (采集 + UI)
 ```bash
@@ -160,6 +175,8 @@ backend `/api/replay/preflight` 返回的字段:
 | arm 跑 2 秒就停 | publisher_conflict / fps 错 (老 bug, 已修) | 升级 |
 | 起点偏 68°, replay 拒绝 | aligned=false, auto_home 关了 | `replay_auto_home=true` (默认开), 或手动 home |
 | `./run.sh start backend` 拉起整个 stack | run.sh 不接 service 过滤 | 加 `SKIP_ARMS=1 SKIP_CAMERAS=1 SKIP_PEDAL=1 SKIP_DEPS=1` |
+| 节点起了、replay_mode=replay 也成功, 但臂不动、`frame 0/N execute=False` 卡住 | `pub --once /policy/execute` 在 DDS 发现未完成时发出即丢 (尤其紧跟 `ros2 daemon stop/start` 之后) | daemon 刷新放到"等节点 + param set + pub"**之前**, 别紧挨 pub --once; 看 `/tmp/replay_stack.log` 确认 `execute → ON` |
+| `parquet not found: .../<date>/...` | 日期目录漏了 `-v2` 后缀 | 用 `Task_A/base/<date>-v2/<ep>` |
 
 ## 6. 验证健康
 
@@ -247,7 +264,8 @@ SKIP_ARMS=1 SKIP_CAMERAS=1 SKIP_PEDAL=1 SKIP_DEPS=1 ./run.sh start backend
 | `start_scripts/kai/start_autonomy.sh` | autonomy 启动 + 写 marker=autonomy |
 | `start_scripts/kai/start_replay_stack.sh` | slim 启动 + 写 marker=replay + stop 子命令 |
 | `start_scripts/start_data_collect.sh` | data_collect 启动 + 写 marker=teleop / stop 删 marker |
-| `start_scripts/kai/start_replay_test.sh` | CLI 端到端测试 (auto-detect 节点) |
+| `start_scripts/kai/start_replay_test.sh` | CLI 端到端测试 (auto-detect 节点; 需栈已起) |
+| `start_scripts/kai/start_replay_confirm.sh` | 单脚本封装: 起 idle 栈 → 等就绪 → start_replay_test.sh ([y/N]+慢放+进度) → 退出自动拆栈 |
 | `ros2_ws/src/piper/scripts/replay_node.py` | slim replay 节点 (无 JAX) |
 | `ros2_ws/src/piper/scripts/policy_inference_node.py` | 完整 policy + replay 节点 |
 | `ros2_ws/src/piper/launch/replay_launch.py` | slim 栈 launch |
