@@ -2,8 +2,9 @@
 
 > **目的**: 用一系列**最小变量**的训练实验, 逐个证实/证伪 A_0423_0527 / 后期数据真机失败 (走停/犹豫/cloth loop + 拉取松手) 的数据侧假设。每个实验只改一个数据维度, 真机表现为终判 (offline MAE 不可信, 见下)。
 >
-> **状态**: 🔄 进行中 (Exp-1 待启)
+> **状态**: 🔄 进行中 (Exp-1 训练+MAE ✅ 完成; Exp-1b 训练中; H1 终判待真机)
 > **建立**: 2026-06-01
+> **结果记录** ⭐: [`../../history/experiments/data_root_cause_probe_results.md`](../../history/experiments/data_root_cause_probe_results.md) — Exp-1 完整 MAE + best ckpt 打包 + Exp-1b 状态
 > **关联**:
 > - 根因分析: [`../../history/experiments/A_0423_0527_run_a_b_results.md`](../../history/experiments/A_0423_0527_run_a_b_results.md) §3.5 (offline SOTA 但真机差)
 > - 反证 (纯后期单训也犯病): [`../../history/experiments/task_a_vis_curated_subset_experiments.md`](../../history/experiments/task_a_vis_curated_subset_experiments.md) (vis_5day_recent 单独训练同样真机 fail)
