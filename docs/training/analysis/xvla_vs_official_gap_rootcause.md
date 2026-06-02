@@ -4,6 +4,7 @@
 >
 > **建立**: 2026-06-01
 > **方法**: 逐行对比 ① 官方 X-VLA repo (`xvla/X-VLA/`, THU-AIR) ② lerobot port (`lerobot/policies/xvla/`, 实际训练用) ③ 我们的训练/推理代码 (`train_scripts/xvla/`, `kai0/scripts/serve_policy_xvla.py`)。
+> **真机实证**: [`x3c_realrobot_trace_20260601.md`](x3c_realrobot_trace_20260601.md) — 一次真机执行 trace 证实任务失败 = EE 预测高频震荡 (lag1 自相关 −0.34) + IK 放大 (EE↔joint 相关仅 0.47) + 折返比 9~13× + 夹爪 16 次开合, 与 R1/R2 吻合。
 > **关联**: [`xvla_vs_official_gap_rootcause`] · pi05 同标尺对比 (xvla_track_x_curriculum §0.NEW.2.5b: pi05 EE6D MAE ≈ X3.C 的 1/5)
 
 ---
