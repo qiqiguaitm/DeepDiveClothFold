@@ -10,7 +10,7 @@
 #   kai0/.venv/bin/python train_scripts/kai/volc/submit_yaml.py train_scripts/kai/volc/smooth800_dagger_full_cnbj_16gpu.yaml
 
 TaskName: "smooth800-dagger-full-cnbj-16gpu"
-Description: "dagger Exp-A smooth800+dagger 1033ep: cnbj 16 H20
+Description: "dagger Exp-A smooth800+dagger full (1033ep): JAX 2-host 16 H20, mixed_1_clean init, 50k"
 Tags: []
 
 ImageUrl: "visincept-cn-beijing.cr.volces.com/grasp/h2r:1.0"

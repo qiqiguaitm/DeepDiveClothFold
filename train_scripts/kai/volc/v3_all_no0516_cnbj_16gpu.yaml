@@ -10,7 +10,7 @@
 #   kai0/.venv/bin/python train_scripts/kai/volc/submit_yaml.py train_scripts/kai/volc/v3_all_no0516_cnbj_16gpu.yaml
 
 TaskName: "v3-all-no0516-cnbj-16gpu"
-Description: "Exp-C 全v3排5-16 1940ep: cnbj 16 H20
+Description: "Exp-C 全v3排5-16 (1940ep): JAX 2-host 16 H20, mixed_1_clean init, 50k"
 Tags: []
 
 ImageUrl: "visincept-cn-beijing.cr.volces.com/grasp/h2r:1.0"
