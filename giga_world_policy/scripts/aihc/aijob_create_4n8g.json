@@ -17,7 +17,7 @@
       { "name": "CONFIG", "value": "world_action_model.configs.visrobot01_fold_aihc.config" },
       { "name": "CUDA_DEVICE_MAX_CONNECTIONS", "value": "1" },
       { "name": "LOG_COLLECTION", "value": "true" },
-      { "name": "NCCL_DEBUG", "value": "WARN" },
+      { "name": "NCCL_DEBUG", "value": "INFO" },
       { "name": "NCCL_IB_DISABLE", "value": "0" }
     ],
     "enableRDMA": true,

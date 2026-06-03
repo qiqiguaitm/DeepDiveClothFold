@@ -14,10 +14,12 @@ config = copy.deepcopy(_base)
 config["project_dir"] = "runs/visrobot01_fold_aihc"
 config["models"]["view_dir"] = "runs/visrobot01_fold_aihc"
 config["dataloaders"]["train"]["batch_size_per_gpu"] = 2
-config["dataloaders"]["train"]["num_workers"] = 8
+# num_workers 是 per-rank;每节点 8 rank × 124 核 → 每 rank ~12(×8≈96/节点,留余量给主进程+VAE)。
+# 设 32-48/rank 会 256-384 进程/节点严重超核 → 反而更慢。根治在 #1 latent 缓存(读小 latent 而非解 mp4)。
+config["dataloaders"]["train"]["num_workers"] = 12
 config["train"].update(
     dict(
-        max_steps=100000,
+        max_steps=50000,
         checkpoint_interval=2000,        # 每 2000 步落一个 → eval-agent 触发一次评估
         checkpoint_total_limit=15,
         checkpoint_safe_serialization=True,
