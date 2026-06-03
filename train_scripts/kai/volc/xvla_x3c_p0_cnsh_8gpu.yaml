@@ -1,0 +1,76 @@
+# XVLA X3C_p0 (vis = A_new_smooth_800_xvla) — cnsh 单节点 8 GPU (A100)
+#   Env:  vePFS-local relocated venv (uc X-VLA-env → cnsh, repoint cp3.10.20), 镜像仅作容器
+#   Plan: docs/training/future_plans/plans/xvla_track_x_curriculum.md §0.NEW.6.6
+#   Data: A_new_smooth_800_xvla (vePFS) | Init: xvla_ckpts (vePFS)
+# Submit: source ~/.volc_creds && kai0/.venv/bin/python train_scripts/kai/volc/submit_yaml.py train_scripts/kai/volc/xvla_x3c_p0_cnsh_8gpu.yaml
+TaskName: "xvla-x3c-p0-cnsh-8gpu"
+Description: "X3C_p0 vis=smooth800_xvla: torch DDP 单节点 8 A100, 60k, vePFS venv"
+Tags: []
+
+ImageUrl: "visincept-cn-shanghai.cr.volces.com/grasp/h2r:1.0"
+ResourceQueueName: "robot-task"
+Framework: "PyTorch"
+
+TaskRoleSpecs:
+  - RoleName: "worker"
+    RoleReplicas: 1
+    Flavor: "ml.hpcpni2.28xlarge"   # 8× A100-80G single node
+
+ActiveDeadlineSeconds: 259200
+EnableTensorBoard: false
+
+Storages:
+  - Type: "Vepfs"
+    VepfsId: "vepfs-cnsh075262e1f815"
+    SubPath: ""
+    MountPath: "/vePFS"
+
+CacheType: "Cloudfs"
+
+Envs:
+  - Name: HF_HUB_OFFLINE
+    Value: "1"
+  - Name: TRANSFORMERS_OFFLINE
+    Value: "1"
+  - Name: TOKENIZERS_PARALLELISM
+    Value: "false"
+  - Name: NCCL_DEBUG
+    Value: "WARN"
+  - Name: OMP_NUM_THREADS
+    Value: "8"
+
+Entrypoint: |
+  set -uo pipefail
+  STAMP=$(date -u +%Y%m%d_%H%M%S)
+  LOG_DIR=/vePFS/tim/workspace/deepdive_kai0/logs
+  mkdir -p "$LOG_DIR"
+  LOG="$LOG_DIR/xvla_x3c_p0_${STAMP}.log"
+  exec >> "$LOG" 2>&1
+  echo "=== entrypoint start $(date) ==="
+  set -x
+  nvidia-smi -L
+  VENV=/vePFS/tim/workspace/deepdive_kai0/xvla/X-VLA-env/.venv
+  XVLA_SB_DIR=/vePFS/tim/workspace/deepdive_kai0/xvla/data/self_built
+  INIT=/vePFS/tim/workspace/deepdive_kai0/xvla/xvla_ckpts
+  OUT=/vePFS/tim/workspace/deepdive_kai0/xvla/ckpts/xvla_x3c_smooth800_p0
+  mkdir -p "$OUT"
+  export XVLA_SB="$XVLA_SB_DIR"
+  export XVLA_CKPT_INIT="$INIT"
+
+  # preflight: venv works in image + data/init present
+  "$VENV/bin/python" -c "import torch; from lerobot.policies.xvla.modeling_xvla import XVLAPolicy; print('venv OK torch', torch.__version__, 'cuda', torch.cuda.is_available(), 'ngpu', torch.cuda.device_count())"
+  [ -f "$XVLA_SB_DIR/A_new_smooth_800_xvla/norm_stats.json" ] || { echo "FATAL: data missing" >&2; exit 13; }
+  [ -f "$INIT/config.json" ]                                  || { echo "FATAL: init missing" >&2; exit 13; }
+  echo "[$(date)] preflight OK"
+
+  cd /vePFS/tim/workspace/deepdive_kai0/train_scripts/xvla/launch
+  exec "$VENV/bin/python" -m torch.distributed.run --standalone --nproc_per_node=8 xvla_train.py \
+    --config X3C_smooth800_p0 \
+    --output_dir "$OUT" \
+    --workers 4
+
+RetryOptions:
+    EnableRetry: false
+    MaxRetryTimes: 0
+
+AccessType: "Public"

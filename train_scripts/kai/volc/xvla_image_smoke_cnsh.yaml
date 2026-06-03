@@ -1,0 +1,45 @@
+# Smoke: does cnsh h2r:1.0 image have X-VLA deps natively? (torch + lerobot.policies.xvla + transformers)
+# Submit: source ~/.volc_creds && kai0/.venv/bin/python train_scripts/kai/volc/submit_yaml.py train_scripts/kai/volc/xvla_image_smoke_cnsh.yaml
+TaskName: "xvla-image-smoke-cnsh"
+Description: "check if h2r:1.0 has lerobot-xvla deps"
+Tags: []
+
+ImageUrl: "visincept-cn-shanghai.cr.volces.com/grasp/h2r:1.0"
+ResourceQueueName: "robot-task"
+Framework: "PyTorch"
+
+TaskRoleSpecs:
+  - RoleName: "worker"
+    RoleReplicas: 1
+    Flavor: "ml.hpcpni2.28xlarge"
+
+ActiveDeadlineSeconds: 600
+EnableTensorBoard: false
+
+Storages:
+  - Type: "Vepfs"
+    VepfsId: "vepfs-cnsh075262e1f815"
+    SubPath: ""
+    MountPath: "/vePFS"
+
+CacheType: ""
+
+Entrypoint: |
+  set -uo pipefail
+  LOG=/vePFS/tim/workspace/deepdive_kai0/logs/xvla_image_smoke.log
+  mkdir -p /vePFS/tim/workspace/deepdive_kai0/logs
+  exec > "$LOG" 2>&1
+  echo "=== xvla image smoke $(date) ==="
+  which python; python --version
+  python -c "import torch; print('OK torch', torch.__version__, 'cuda', torch.cuda.is_available())" || echo "MISS torch"
+  python -c "import transformers; print('OK transformers', transformers.__version__)" || echo "MISS transformers"
+  python -c "import lerobot; print('OK lerobot')" || echo "MISS lerobot"
+  python -c "from lerobot.policies.xvla.modeling_xvla import XVLAPolicy; print('XVLA_DEPS_OK — image has X-VLA')" || echo "MISS XVLAPolicy"
+  python -c "import av, torchvision; print('OK av+torchvision')" || echo "MISS av/torchvision"
+  echo "=== smoke done $(date) ==="
+
+RetryOptions:
+    EnableRetry: false
+    MaxRetryTimes: 0
+
+AccessType: "Public"

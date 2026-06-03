@@ -49,7 +49,34 @@ def main() -> int:
         default="OpenDriveLab-org/Kai0",
         help="Hugging Face dataset repo id (default: OpenDriveLab-org/Kai0)",
     )
+    parser.add_argument(
+        "--mirror",
+        action="store_true",
+        help="Use https://hf-mirror.com (faster from cn-beijing / blocked-from-HF networks).",
+    )
+    parser.add_argument(
+        "--max-workers",
+        type=int,
+        default=16,
+        help="Parallel file downloads (default 16; raises throughput on small-file repos).",
+    )
+    parser.add_argument(
+        "--no-hf-transfer",
+        action="store_true",
+        help="Disable hf_transfer multi-part backend. Default enabled for ~3-5x speed.",
+    )
     args = parser.parse_args()
+
+    # Speed knobs.
+    if args.mirror:
+        os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
+    if not args.no_hf_transfer:
+        try:
+            import hf_transfer  # noqa: F401
+            os.environ.setdefault("HF_HUB_ENABLE_HF_TRANSFER", "1")
+        except ImportError:
+            print("[warn] hf_transfer not installed; falling back to single-stream "
+                  "download. Install: pip install hf_transfer", file=sys.stderr)
 
     try:
         from huggingface_hub import snapshot_download  # type: ignore
@@ -79,6 +106,7 @@ def main() -> int:
             local_dir=str(local_dir),
             local_dir_use_symlinks=False,
             allow_patterns=allow_patterns,
+            max_workers=args.max_workers,
         )
 
     proc = Process(target=_worker)

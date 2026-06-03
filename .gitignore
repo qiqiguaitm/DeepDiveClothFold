@@ -73,3 +73,8 @@ node_modules/
 
 # ===== scratch / 本地产物 (eval 探针, 部署包, soup ckpt 等) =====
 /_*
+
+# X-VLA env + init (large, vePFS-local)
+xvla/X-VLA-env/
+xvla/xvla_ckpts/
+xvla/ckpts/
