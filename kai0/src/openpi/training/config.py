@@ -1580,6 +1580,60 @@ _CONFIGS = [
         inline_eval_every=4,
     ),
 
+    # Exp-B: v3 5-18~5-28 窗口 (8 日, 955 ep, 已裁 v3) — cnbj 16卡 (路径=cnbj vePFS)
+    TrainConfig(
+        name="pi05_flatten_fold_v3_0518_0528",
+        model=pi0_config.Pi0Config(pi05=True),
+        data=LerobotAgilexDataConfig(
+            repo_id="/vePFS-North-E/vis_robot/workspace/deepdive_kai0/kai0/data/Task_A/self_built/A_v3_0518_0528",
+            default_prompt="Flatten and fold the cloth.",
+            use_delta_joint_actions=False,
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader(
+            "/vePFS-North-E/vis_robot/shared_ckpt/Task_A/mixed_1_clean/params"
+        ),
+        lr_schedule=_optimizer.CosineDecaySchedule(
+            warmup_steps=1_000, peak_lr=1.5e-5, decay_steps=50_000, decay_lr=1.5e-6,
+        ),
+        ema_decay=0.9999,
+        num_train_steps=50_000,
+        keep_period=10_000,
+        save_interval=2_000,
+        num_workers=16,
+        batch_size=128,
+        fsdp_devices=8,
+        inline_eval_val_root="/vePFS-North-E/vis_robot/workspace/deepdive_kai0/kai0/data/Task_A/self_built/vis_v2_merged_val",
+        inline_eval_n_frames=200,
+        inline_eval_every=4,
+    ),
+
+    # Exp-C: 全 v3 排 5-16 (1940 ep) — cnbj 16卡, Exp-B 完成后手动提交
+    TrainConfig(
+        name="pi05_flatten_fold_v3_all_no0516",
+        model=pi0_config.Pi0Config(pi05=True),
+        data=LerobotAgilexDataConfig(
+            repo_id="/vePFS-North-E/vis_robot/workspace/deepdive_kai0/kai0/data/Task_A/self_built/A_v3_all_no0516",
+            default_prompt="Flatten and fold the cloth.",
+            use_delta_joint_actions=False,
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader(
+            "/vePFS-North-E/vis_robot/shared_ckpt/Task_A/mixed_1_clean/params"
+        ),
+        lr_schedule=_optimizer.CosineDecaySchedule(
+            warmup_steps=1_000, peak_lr=1.5e-5, decay_steps=50_000, decay_lr=1.5e-6,
+        ),
+        ema_decay=0.9999,
+        num_train_steps=50_000,
+        keep_period=10_000,
+        save_interval=2_000,
+        num_workers=16,
+        batch_size=128,
+        fsdp_devices=8,
+        inline_eval_val_root="/vePFS-North-E/vis_robot/workspace/deepdive_kai0/kai0/data/Task_A/self_built/vis_v2_merged_val",
+        inline_eval_n_frames=200,
+        inline_eval_every=4,
+    ),
+
     # Dataset = 4-23~5-27 EXCEPT 5-16/18/19/20/21 (校准漂移期, v7 发现).
     # 13 dates / ~1059 ep (排 Class C 107 + End-snap 5 截尾).
     # 用 build_A_0423_0527.py 生成数据, 同 hparams 双 init 对照:
