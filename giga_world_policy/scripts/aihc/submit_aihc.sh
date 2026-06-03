@@ -12,9 +12,12 @@
 #      字段名以控制台 OpenAPI 为准,先 --dry 核对再去掉。
 set -e
 HERE="$(cd "$(dirname "$0")" && pwd)"
-SPEC="${1:-$HERE/aijob_visrobot01_fold.json}"
+DRY=0; SPEC="$HERE/aijob_visrobot01_fold.json"
+for a in "$@"; do
+    if [ "$a" = "--dry" ]; then DRY=1; else SPEC="$a"; fi
+done
 
-if [ "$2" = "--dry" ] || [ "$1" = "--dry" ]; then
+if [ "$DRY" = 1 ]; then
     echo "[submit] DRY — 将提交以下 spec(请核对资源池/镜像/PFS/命令):"
     cat "$SPEC"
     echo; echo "[submit] 提交命令(去掉 --dry 执行):"
