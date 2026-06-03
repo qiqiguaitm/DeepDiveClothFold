@@ -79,10 +79,17 @@ class CasualWATrainer(Trainer):
 
     def forward_step(self, batch_dict):
         transformer = functools.partial(self.model, 'transformer')
-        images = batch_dict['images']
-        bs = images.shape[0]
+        # latent 缓存模式:batch 直接带 visual_latents/ref_latents(跳过 mp4 解码 + VAE 编码)
+        use_latent_cache = 'visual_latents' in batch_dict
+        if use_latent_cache:
+            visual_latents = batch_dict['visual_latents'].to(self.dtype)
+            _bs, _ndim = visual_latents.shape[0], visual_latents.ndim
+        else:
+            images = batch_dict['images']
+            _bs, _ndim = images.shape[0], images.ndim
+        bs = _bs
         prompt_embeds = batch_dict['prompt_embeds']
-        timestep, sigma = self.get_timestep_and_sigma(images.shape[0], images.ndim)
+        timestep, sigma = self.get_timestep_and_sigma(_bs, _ndim)
         action = batch_dict['action']
         state = batch_dict['state']
         self.vae_decode(action=action, sign='input_action')
@@ -91,7 +98,8 @@ class CasualWATrainer(Trainer):
         if self.action_repeats > 1:
             action = action.repeat(1, self.action_repeats, 1)
         # inputs
-        visual_latents = self.forward_vae(images)
+        if not use_latent_cache:
+            visual_latents = self.forward_vae(images)
         self.vae_decode(latents=visual_latents, sign='input_visual')
         visual_noise = torch.randn_like(visual_latents)
         visual_target = visual_noise - visual_latents
@@ -125,8 +133,11 @@ class CasualWATrainer(Trainer):
                 num_latent_frames = visual_latents.shape[2]
                 latent_height = visual_latents.shape[-2]
                 latent_width = visual_latents.shape[-1]
-                ref_images = batch_dict['ref_images'][:, :1]
-                ref_latents = self.forward_vae(ref_images)
+                if use_latent_cache:
+                    ref_latents = batch_dict['ref_latents'].to(self.dtype)
+                else:
+                    ref_images = batch_dict['ref_images'][:, :1]
+                    ref_latents = self.forward_vae(ref_images)
                 first_frame_mask = torch.ones(
                     bs, 1, num_latent_frames, latent_height, latent_width, dtype=visual_latents.dtype, device=visual_latents.device
                 )
