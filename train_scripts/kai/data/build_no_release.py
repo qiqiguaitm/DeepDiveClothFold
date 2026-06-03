@@ -316,6 +316,8 @@ def main():
         merge_dates = DATES
         src_root = VIS_BASE
         dst = DST_ROOT / ("A_0522_0526_no_release" if trim else "A_0522_0526_raw")
+    # v3 per-date dirs store videos under feature-key dirs (observation.images.*); v2 uses bare cam names (CAM_DIRS).
+    src_feat_dirs = bool(args.merge_dates and args.merge_src == "v3")
 
     if not args.dry_run:
         if dst.exists():
@@ -366,7 +368,7 @@ def main():
 
                 # --- videos: 3 RGB cams ---
                 for cam in CAMERAS:
-                    sv = src / "videos" / "chunk-000" / CAM_DIRS[cam] / f"episode_{old_id:06d}.mp4"
+                    sv = src / "videos" / "chunk-000" / (cam if src_feat_dirs else CAM_DIRS[cam]) / f"episode_{old_id:06d}.mp4"
                     dv = dst / "videos" / "chunk-000" / cam / f"episode_{new_idx:06d}.mp4"  # feature-key dir
                     if trim:
                         video_jobs.append((str(sv), str(dv), cut, new_len))  # deferred to pool
