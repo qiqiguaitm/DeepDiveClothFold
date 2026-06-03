@@ -126,3 +126,6 @@ venv.bak/
 gmon.out
 **tmp**
 3rdparty
+
+# WAM finetune scratch (logs, ad-hoc scripts)
+.wam_run/

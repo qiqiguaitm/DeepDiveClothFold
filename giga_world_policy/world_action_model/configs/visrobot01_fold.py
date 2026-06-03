@@ -37,6 +37,10 @@ def _entry(emb):
         embodiment=emb,  # 本体标识 → WAM 路由 norm_stats / delta_mask
         delta_info={"action": num_frames},
         delta_frames={k: image_frame_offsets for k in view_keys},
+        # timestamp 经 regularize 后为 frame_index/30 的 float32,相邻 diff 因 float32 量化在
+        # 0.0332~0.0334 间抖动(±~1.2e-4),超过 lerobot 默认 tolerance 1e-4 会报 timestamps
+        # violate tolerance。设 1e-3:> float32 量化噪声、<< 半帧距 0.0167s,既过检查又不会取错帧。
+        tolerance_s=1e-3,
     )
 
 
