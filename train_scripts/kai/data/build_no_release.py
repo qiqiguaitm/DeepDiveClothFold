@@ -272,6 +272,14 @@ def main():
     ap.add_argument("--action-dim", type=int, default=32, help="norm_stats action_dim to pad to (pi0/pi05=32)")
     ap.add_argument("--no-norm-stats", action="store_true",
                     help="skip auto norm_stats after build (default: auto-(re)compute from the built dataset)")
+    ap.add_argument("--merge-dates", nargs="+", metavar="DATE",
+                    help="generalized merge: merge these date dirs into ONE self_built dataset "
+                         "(e.g. 2026-05-18-v3 2026-05-19-v3 ...). Requires --merge-out + --mode. "
+                         "trim per --mode (use raw for already-trimmed v3 sources).")
+    ap.add_argument("--merge-src", choices=["v2", "v3"], default="v2",
+                    help="source root for --merge-dates: v2 (raw vis_base/v2) or v3 (trimmed vis_base/v3)")
+    ap.add_argument("--merge-out", metavar="NAME",
+                    help="output dataset name under self_built/ for --merge-dates")
     args = ap.parse_args()
 
     # ---- per-date v3 mode ----
@@ -293,10 +301,21 @@ def main():
         return
 
     if not args.mode:
-        sys.exit("must pass either --mode {raw,no_release} (legacy merge) or --per-date DATE... (v3)")
+        sys.exit("must pass --mode {raw,no_release} (optionally with --merge-dates) or --per-date DATE... (v3)")
 
     trim = (args.mode == "no_release")
-    dst = DST_ROOT / ("A_0522_0526_no_release" if trim else "A_0522_0526_raw")
+    if args.merge_dates:
+        if not args.merge_out:
+            sys.exit("--merge-dates requires --merge-out NAME")
+        merge_dates = args.merge_dates
+        src_root = V3_ROOT if args.merge_src == "v3" else VIS_BASE
+        dst = DST_ROOT / args.merge_out
+        print(f"merge: {len(merge_dates)} dates from vis_base/{args.merge_src} → self_built/{args.merge_out} "
+              f"(trim={trim})", flush=True)
+    else:
+        merge_dates = DATES
+        src_root = VIS_BASE
+        dst = DST_ROOT / ("A_0522_0526_no_release" if trim else "A_0522_0526_raw")
 
     if not args.dry_run:
         if dst.exists():
@@ -314,9 +333,9 @@ def main():
     cut_report = []
     video_jobs = []  # (src_mp4, dst_mp4, cut, new_len) for parallel trim
 
-    for date in DATES:
-        src = VIS_BASE / date
-        src_eps = {json.loads(l)["episode_id"]: json.loads(l)
+    for date in merge_dates:
+        src = src_root / date
+        src_eps = {(json.loads(l).get("episode_id", json.loads(l).get("episode_index"))): json.loads(l)
                    for l in (src / "meta" / "episodes.jsonl").open()}
         parquets = sorted((src / "data" / "chunk-000").glob("episode_*.parquet"))
         print(f"[{date}] {len(parquets)} episodes")
