@@ -197,7 +197,17 @@ class LeRobotDataset(BaseDataset):
             fi = int(fi.item() if hasattr(fi, "item") else fi)
             ep = self._lat_cache.get(ei)
             if ep is None:
-                ep = torch.load(os.path.join(self.latent_dir, f"episode_{ei:06d}.pt"), map_location="cpu")
+                _lp = os.path.join(self.latent_dir, f"episode_{ei:06d}.pt")
+                ep = torch.load(_lp, map_location="cpu")
+                # 根治 page-cache OOM:latent 是 episode-grouped、每集只读一次,读后丢弃其 page cache,
+                # 否则读 ~315GB latent 累积的 page cache 计入容器 cgroup memory.usage → 撑满 limit → OOM-kill。
+                # (实测:训练 procRSS 平稳 ~75G 不爬,只有 cpu_mem(含 page cache)线性爬到 OOM。)
+                try:
+                    _fd = os.open(_lp, os.O_RDONLY)
+                    os.posix_fadvise(_fd, 0, 0, os.POSIX_FADV_DONTNEED)
+                    os.close(_fd)
+                except Exception:
+                    pass
                 self._lat_cache[ei] = ep
                 self._lat_order.append(ei)
                 if len(self._lat_order) > self.latent_cache_size:
