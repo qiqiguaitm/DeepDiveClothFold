@@ -399,8 +399,18 @@ class Trainer:
             checkpoints = os.listdir(self.model_dir)
             checkpoints = [d for d in checkpoints if d.startswith('checkpoint')]
             checkpoints = sorted(checkpoints, key=lambda x: int(x.split('_')[-1]))
-            if len(checkpoints) > 0:
-                checkpoint = os.path.join(self.model_dir, checkpoints[-1])
+            # Skip checkpoints that crashed mid-save: resume needs the full accelerate
+            # state, and ``custom_checkpoint_0.pkl`` is written last in save_state, so
+            # its presence marks a complete checkpoint. This keeps resume corruption-safe
+            # (a partial max-step dir won't crash-loop). Fall back to plain step order
+            # only when no checkpoint carries custom state (configs without it).
+            complete = [d for d in checkpoints if os.path.exists(os.path.join(self.model_dir, d, 'custom_checkpoint_0.pkl'))]
+            usable = complete if len(complete) > 0 else checkpoints
+            if len(usable) > 0:
+                skipped = [d for d in checkpoints if d not in usable]
+                if skipped:
+                    self.logger.warning('Skipping incomplete checkpoint(s) %s; resuming from %s', skipped, usable[-1])
+                checkpoint = os.path.join(self.model_dir, usable[-1])
             else:
                 return None
         if not isinstance(checkpoint, list):
