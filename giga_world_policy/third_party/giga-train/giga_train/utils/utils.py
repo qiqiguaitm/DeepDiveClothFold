@@ -127,6 +127,26 @@ def get_cpu_memory(unit: str = 'GB') -> str:
     return msg
 
 
+def get_mem_detail() -> str:
+    """OOM 排查用:本进程树 RSS / /dev/shm 用量 / CUDA 显存(区分内存爬在 CPU-RSS / 共享内存 / GPU)。"""
+    import shutil
+    g = 1024 ** 3
+    try:
+        proc = psutil.Process()
+        rss = sum(p.memory_info().rss for p in [proc] + proc.children(recursive=True)) / g
+    except Exception:
+        rss = -1
+    try:
+        shm = shutil.disk_usage('/dev/shm').used / g
+    except Exception:
+        shm = -1
+    try:
+        ca, cr = torch.cuda.memory_allocated() / g, torch.cuda.memory_reserved() / g
+    except Exception:
+        ca = cr = -1
+    return f', procRSS: {rss:.1f}G, shm: {shm:.2f}G, cuda: {ca:.1f}/{cr:.1f}G'
+
+
 def load_state_dict(weight_path: str, weights_only: bool = True):
     """Load a model state dictionary from a file or directory.
 

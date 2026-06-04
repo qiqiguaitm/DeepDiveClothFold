@@ -43,6 +43,6 @@ config = dict(
     schedulers=dict(type='WarmupCosineScheduler', warmup_steps=2000, decay_steps=50000),
     train=dict(resume=True, max_epochs=0, max_steps=50000, gradient_accumulation_steps=1, mixed_precision='bf16',
                checkpoint_interval=1000, checkpoint_total_limit=20, checkpoint_safe_serialization=True,
-               with_ema=True, activation_checkpointing=True, log_with='tensorboard', log_interval=10),
+               with_ema=False, activation_checkpointing=True, log_with='tensorboard', log_interval=10),  # 关 EMA:排查 OOM(训练侧每步~0.1G爬,数据侧已洗清) + eval 用 raw 不需要 EMA;平滑权重可事后离线平均 ckpt
     test=dict(),
 )

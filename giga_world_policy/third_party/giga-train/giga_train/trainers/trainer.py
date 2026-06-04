@@ -895,6 +895,7 @@ class Trainer:
             msg += ' eta: %s, time: %.3f, speed: %.3f, lr: %.3e' % (eta_str, time_cost, speed, lr)
             if self.log_cpu_memory:
                 msg += ', cpu_mem: %s' % utils.get_cpu_memory()
+                msg += utils.get_mem_detail()   # OOM 排查:procRSS/shm/cuda
             if self.mixed_precision == 'fp16':
                 if self.accelerator.scaler is not None and self.accelerator.scaler.is_enabled():
                     grad_scale = self.accelerator.scaler.get_scale()
