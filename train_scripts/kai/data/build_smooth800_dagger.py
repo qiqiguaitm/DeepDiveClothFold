@@ -130,13 +130,16 @@ def build(mode, out_name, seed, dry_run, compute_norm, action_dim, symlink_video
             f.write(json.dumps(r) + "\n")
     shutil.copy(SMOOTH / "meta" / "tasks.jsonl", dst / "meta" / "tasks.jsonl")
     info = json.loads((SMOOTH / "meta" / "info.json").read_text())
-    info["total_episodes"] = len(all_eps)
+    # use new_idx (episodes actually written) NOT len(all_eps) — broken-video eps are skipped,
+    # so the pre-skip count would leave phantom trailing indices that make lerobot's file-exists
+    # assert fail → it then queries the HF hub for a "safe version" and crashes under HF_HUB_OFFLINE.
+    info["total_episodes"] = new_idx
     info["total_frames"] = total_frames
-    info["total_videos"] = len(all_eps) * len(CAMERAS)
+    info["total_videos"] = new_idx * len(CAMERAS)
     info["total_chunks"] = 1
-    info["splits"] = {"train": f"0:{len(all_eps)}"}
+    info["splits"] = {"train": f"0:{new_idx}"}
     (dst / "meta" / "info.json").write_text(json.dumps(info, indent=2))
-    print(f"done → {dst}  ({len(all_eps)} ep, {total_frames} frames)", flush=True)
+    print(f"done → {dst}  ({new_idx} ep kept / {len(all_eps)} requested, {total_frames} frames)", flush=True)
     _maybe_norm_stats(dst, compute_norm, action_dim)
 
 
