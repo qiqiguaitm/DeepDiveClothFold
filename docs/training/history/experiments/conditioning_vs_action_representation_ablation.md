@@ -20,12 +20,16 @@
 
 |  | **No Conditioning** | **Action Head Cond (Track C, 方案 A)** |
 |---|---|---|
-| **Absolute joint** (14D, kai/vis joints + grippers) | **E3.6**: `xvla_e3_6_per_ds_norm_no_cond` (kai+vis × 7 balanced, per-DS norm) | **Track C abs**: `xvla_actcond_single_stage_joint` (kai+vis × 7 balanced) |
+| **Absolute joint** (14D, kai/vis joints + grippers) | **E3.6**: `xvla_e3_6_single_norm_no_cond` (kai+vis, **vis×1, 单一 norm**) | **Track C abs**: `xvla_actcond_single_stage_joint` (kai+vis × 7 balanced) |
 | **Delta joint** (12 joint delta + 2 gripper abs, `make_bool_mask(6,-1,6,-1)`) | **pi05 delta**: `pi05_flatten_fold_task_a_base_delta` (kai0_base 3055 only, single-source) | **Action Cond × delta**: `xvla_actcond_single_stage_joint_delta` (kai+vis × 7 balanced) |
 
-> ⚠️ **不严格对称**: 左下 cell (pi05 delta) 训练数据是 kai0_base 3055 ep 单源, 没有走 kai+vis × 7 balanced datasets_yaml — 因为 vanilla pi05 不需要 domain conditioning, 没必要走平衡采样。这是 baseline for "delta 在 kai 单源能否收敛"。其他三个 cell 均用 kai+vis × 7 balanced。
+> ⚠️ **不严格对称**: 左下 cell (pi05 delta) 训练数据是 kai0_base 3055 ep 单源, 没有走 datasets_yaml。这是 baseline for "delta 在 kai 单源能否收敛"。
 >
-> 后续如果需要严格 2×2 同数据 ablation, 可以补一个 "no-cond delta on kai+vis × 7" 的 cell。
+> ⚠️ **2026-06-04 更正 (重要)**: 本文档此前多处把 **E3.6 标为 "kai+vis × 7 balanced + per-DS norm"——这是错的**。核查代码后确认:
+> 1. E3.6 实际用 `e3_6_no_cond_kai_vis_joint.yaml` = **vis×1**(无 ×7 过采样);
+> 2. **per-DS norm 在代码里根本不存在** —— `transform_dataset` (data_loader.py:340) 对整个 ConcatDataset 套**单一** norm (kai0_base 的)。原 config 名 `xvla_e3_6_per_ds_norm_no_cond` 是误导,已更名 `xvla_e3_6_single_norm_no_cond`。
+> 3. **这反而强化结论**: 连 vis×1 也崩 → 凶手是 **`datasets_yaml`/ConcatDataset 路径本身**,与过采样、per-DS-norm 都无关。
+> 详见 [`../../analysis/pi05_cross_embodiment_training_deep_dive.md`](../../analysis/pi05_cross_embodiment_training_deep_dive.md) 与 [`../../future_plans/plans/corrected_plan_a_conditioning_premerge.md`](../../future_plans/plans/corrected_plan_a_conditioning_premerge.md)。下方表格中关于 E3.6 的 "×7 / per-DS norm" 字样均以本更正为准。
 
 ### 1.1 共享超参 (全 4 cell 一致)
 
@@ -165,8 +169,8 @@
 3 个 collapsed cells 共有特征: **kai+vis × 7 balanced via `datasets_yaml`**. Conditioning + action representation 都不是因。
 
 **新 candidate root causes** (待诊断):
-1. **Per-DS norm 错配** — E3.6 显式启用 per-DS norm, balanced yaml 里 vis × 7 重复 entry 可能导致 norm_stats 计算出错
-2. **ConcatDataset balanced sampling 反映 random shuffling** — 单 batch 内 kai/vis 混杂, joint scale 差异巨大 → 模型学到 "all 0 / mean" 是最低 loss 局部最小值
+1. ~~**Per-DS norm 错配** — E3.6 显式启用 per-DS norm~~ **(2026-06-04 已排除)**: per-DS norm **从未实现**, E3.6 与其他 cell 一样是**单一 norm (kai0_base)**;且 E3.6 是 vis×1 (无 ×7)。所以"per-DS norm 计算出错"不成立。real candidate 见下方 §结论更新。
+2. **ConcatDataset 路径本身** — 连 E3.6 (vis×1, 单一 norm, 无 cond) 都崩, 说明问题在 `datasets_yaml`→`_create_concat_torch_dataset` 这条**代码路径**, 而非过采样。对照: 物理预合并单数据集 (Hard Prompt `xvla_exp1_hard_merged`) 同样 kai+vis 混训却**健康** (vis ~0.008)。**最强候选**: ConcatDataset 路径下 inline-eval 的 norm/denorm 不一致, 或多源 batch 把优化推向 predict-mean 局部最优 (需实跑诊断)
 3. **InjectDatasetId 与 model 期望不匹配** — datasets_yaml 注入 dataset_id 进 obs, 但 vanilla pi05 (no cond) 不消费, 是否 transform chain 改写了 action target?
 4. **Asset_id 解析错** — datasets_yaml 模式下 asset_id 取 first repo, norm_stats load 路径可能错位
 

@@ -1,6 +1,9 @@
-# E3.6: per-dataset norm + no conditioning. kai+vis joint, all domain_id=0
-# (no domain distinction — naive single model, but per-source norm via dataloader).
-# Replicates "mixed_pure2_1800 with per-dataset norm fix" hypothesis (§3.5.5).
+# E3.6: NO conditioning, kai+vis joint, vis×1, all domain_id=0.
+# ⚠️ CORRECTION (2026-06-04): there is NO per-source/per-dataset norm in the dataloader.
+# transform_dataset (data_loader.py:340) applies a SINGLE norm_stats (kai0_base's, via the
+# config's repo_id) to the whole ConcatDataset. The earlier "per-source norm via dataloader"
+# claim was false — that mechanism was never implemented. This run COLLAPSED (MAE 0.47),
+# confirming the datasets_yaml/ConcatDataset path itself is broken (even at vis×1, no oversampling).
 roots:
   - {root: /vePFS/tim/workspace/deepdive_kai0/kai0/data/Task_A/kai0_base, domain_id: 0}
   - {root: /vePFS/tim/workspace/deepdive_kai0/kai0/data/Task_A/kai0_dagger, domain_id: 0}

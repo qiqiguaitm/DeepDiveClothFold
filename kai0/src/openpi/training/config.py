@@ -1189,16 +1189,23 @@ _CONFIGS = [
     ),
 
     # ===================================================================================
-    # E3.6 — per-dataset norm + NO conditioning (2026-05-22).
-    # Replicates "mixed_pure2_1800 failure hypothesis fix" §3.5.5: per-DS norm alone
-    # might rescue cross-embodiment training without needing soft/action-cond.
-    # paper ablation E3.6 (vs E3.5 naive joint norm, vs E3.7 +Soft, vs E3.8 +Action Cond).
+    # E3.6 — NO conditioning, kai+vis joint via datasets_yaml (2026-05-22; renamed 2026-06-04).
+    # ⚠️ MISNOMER FIX: previously named `xvla_e3_6_per_ds_norm_no_cond`, but per-dataset
+    # norm DOES NOT EXIST in the code path. `transform_dataset` (data_loader.py:340) applies
+    # a SINGLE norm_stats (loaded from repo_id=kai0_base, config.py:351) to the whole
+    # ConcatDataset; InjectDatasetId only stamps domain_id, never switches norm. The original
+    # intent ("per-DS norm rescues cross-embodiment training") was never actually tested.
+    # Result: COLLAPSE (val MAE@1=0.4706 predict-zero), same as the conditioning cells — the
+    # culprit is the datasets_yaml/ConcatDataset path itself, NOT conditioning or norm scale.
+    # See docs/training/history/experiments/conditioning_vs_action_representation_ablation.md
+    # and docs/training/analysis/pi05_cross_embodiment_training_deep_dive.md.
+    # Old job/ckpt: t-20260522201522-s72th (traceability).
     # ===================================================================================
     TrainConfig(
-        name="xvla_e3_6_per_ds_norm_no_cond",
+        name="xvla_e3_6_single_norm_no_cond",
         model=pi0_config.Pi0Config(pi05=True),  # no soft prompt, no action cond
         data=LerobotAgilexDataConfig(
-            # repo_id used only for norm_stats discovery; actual data flows via datasets_yaml.
+            # repo_id only sets the SINGLE norm_stats asset (kai0_base); data flows via datasets_yaml.
             repo_id="/vePFS/tim/workspace/deepdive_kai0/kai0/data/Task_A/kai0_base",
             datasets_yaml="/vePFS/tim/workspace/deepdive_kai0/xvla/data/e3_6_no_cond_kai_vis_joint.yaml",
             default_prompt="Flatten and fold the cloth.",
