@@ -53,7 +53,7 @@
     "enableRDMA": true,
     "hostNetwork": true
   },
-  "faultTolerance": false,
+  "faultTolerance": true,
   "priority": "normal",
   "datasources": [
     {

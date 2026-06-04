@@ -126,19 +126,59 @@ def build_window_indices(val_root: str, coverage: str, stride: int, action_chunk
                                推理误差(默认 8→~3.7万窗口~33min/ckpt;RTC 16/V1 12 更省)。
       coverage='frames'(B):  stride=1                 → 每帧一窗口,全量(~29 万,仅终评 ~4h)。
     起始上限取 L-action_chunk(保证有完整 action_chunk 步未来 GT,不触发 padding)。
-    返回 (sorted global indices, gs_total) —— gs_total 应等于 len(val_ds)。
+    返回 (idxs, gs_total, info):info[gi]=(episode_index, frame_in_episode) —— 用于按 episode 排序
+    (解码局部性)+ 从 episode 帧缓存取帧。gs_total 应等于 len(val_ds)。
     """
     eps = [json.loads(l) for l in open(os.path.join(val_root, "meta", "episodes.jsonl")) if l.strip()]
     eps = sorted(eps, key=lambda e: int(e["episode_index"]))  # jsonl 顺序即 dataset 帧顺序
     _auto = {"episode": action_chunk, "exec": exec_horizon, "frames": 1}.get(coverage, exec_horizon)
     st = stride if stride and stride > 0 else _auto
-    idxs, gs = [], 0
+    idxs, gs, info = [], 0, {}
     for e in eps:
-        L = int(e["length"])
+        ei = int(e["episode_index"]); L = int(e["length"])
         last = max(1, L - action_chunk)            # 需要 action_chunk 步未来
-        idxs.extend(gs + s for s in range(0, last, st))
+        for s in range(0, last, st):
+            gi = gs + s; idxs.append(gi); info[gi] = (ei, s)
         gs += L
-    return idxs, gs
+    return idxs, gs, info
+
+
+# ----------------------------- per-episode 帧缓存(消除随机seek解码瓶颈) -----------------------------
+class EpisodeFrameCache:
+    """每个 episode 的 3 路 mp4 **顺序解码一次**(h264 顺序解码快、无 seek),缓存全部帧(LRU),
+    供该集所有窗口按帧索引。把 ~5s/窗口的随机seek解码摊销成 ~0.1s/窗口 → eval 转为 GPU-bound。
+    需配合「按 (episode,frame) 排序窗口」让每集只解一次。"""
+    def __init__(self, val_root, view_keys, cache_size=2):
+        self.root = val_root; self.vk = view_keys; self.cap = max(1, int(cache_size))
+        self.cache = {}; self.order = []
+        self._vdir = os.path.join(val_root, "videos")
+
+    def _vpath(self, cam, ep):
+        for chunk in sorted(glob.glob(os.path.join(self._vdir, "*"))):
+            p = os.path.join(chunk, cam, f"episode_{ep:06d}.mp4")
+            if os.path.isfile(p):
+                return p
+        return None
+
+    def get(self, ep):
+        if ep in self.cache:
+            return self.cache[ep]
+        import av
+        frames = {}
+        for cam in self.vk:
+            p = self._vpath(cam, ep)
+            c = av.open(p)
+            frames[cam] = np.stack([f.to_ndarray(format="rgb24") for f in c.decode(video=0)])  # [L,H,W,C] uint8
+            c.close()
+        self.cache[ep] = frames; self.order.append(ep)
+        if len(self.order) > self.cap:
+            self.cache.pop(self.order.pop(0), None)
+        return frames
+
+
+def _hwc_to_chw01(fr: np.ndarray) -> torch.Tensor:
+    """缓存帧 [H,W,C] uint8 -> CHW float[0,1](build_ref_image 期望)。"""
+    return torch.from_numpy(fr).permute(2, 0, 1).float() / 255.0
 
 
 # ----------------------------- checkpoint discovery -----------------------------
@@ -158,10 +198,12 @@ def list_checkpoints(output_dir: str):
 
 
 # ----------------------------- one checkpoint eval -----------------------------
-def eval_checkpoint(transformer_dir, args, val_ds, clip_idxs, norm, t5, lpips_fn, delta_mask, device, dtype):
+def eval_checkpoint(transformer_dir, args, val_ds, clip_idxs, info, framecache, norm, t5, lpips_fn, delta_mask, device, dtype):
     """评 clip_idxs(全局窗口索引列表)上的全部指标,返回 (sums, counts, n_done):
     sums[metric]=Σ value、counts[metric]=#samples(逐指标,horizon 因 L 不同可能缺项)。
     上层(单机或聚合器)用 Σ/Σcount 得均值 —— 这样分片可无损合并。
+    图像帧走 framecache(每集顺序解码一次),val_ds 只取 state/action(skip_video_decoding,快)。
+    info[gi]=(episode, frame_in_episode)。clip_idxs 已按 (episode,frame) 排序 → 帧缓存每集只解一次。
     """
     from world_action_model.models.transformer_wa_casual import CasualWorldActionTransformer
     from world_action_model.pipeline.wa_pipeline import WAPipeline
@@ -178,15 +220,15 @@ def eval_checkpoint(transformer_dir, args, val_ds, clip_idxs, norm, t5, lpips_fn
     view_keys = ["observation.images.cam_high", "observation.images.cam_left_wrist", "observation.images.cam_right_wrist"]
     sums, counts = {}, {}
     import numpy as _np
+    ck = args.action_chunk
+    gt_offsets = [0, ck // 4, ck // 2, 3 * ck // 4, ck]      # GT 帧相对窗口起点(=训练 delta_frames)
     for i, gi in enumerate(clip_idxs):
-        d = val_ds[int(gi)]
-
-        def _chw01(t):  # 原始帧 -> CHW [0,1](build_ref_image 期望;若为 [0,255] 则归一)
-            t = t.float()
-            return t / 255.0 if float(t.max()) > 1.5 else t
-
-        # 首帧 3 视角拼接成 ref(PIL,768x192)喂给 pipe
-        ref = build_ref_image(images={k: _chw01(d[k][0]) for k in view_keys},
+        d = val_ds[int(gi)]                                 # state + action chunk(skip_video_decoding,无解码)
+        ep, f = info[int(gi)]
+        ep_frames = framecache.get(ep)                      # {cam:[L,H,W,C] uint8},每集顺序解码一次
+        Lf = ep_frames[view_keys[0]].shape[0]
+        # 首帧(窗口起点 f)3 视角拼成 ref(PIL,768x192)喂给 pipe
+        ref = build_ref_image(images={k: _hwc_to_chw01(ep_frames[k][f]) for k in view_keys},
                               dst_size=(args.width, args.height), crop_mode="center")
         state = d["observation.state"].float().unsqueeze(0).to(device)   # norm 张量在 cuda,state 须同设备
         nstate = normalize_state(state, norm, mode="zscore").to(device=device, dtype=dtype)
@@ -196,12 +238,11 @@ def eval_checkpoint(transformer_dir, args, val_ds, clip_idxs, norm, t5, lpips_fn
                                 num_inference_steps=args.steps, image=ref, action_only=False,
                                 return_dict=False, prompt_embeds=t5.unsqueeze(0).to(device=device, dtype=torch.float32))
         pred_t = _to_thwc_gpu(imgs[0], device)          # (T,H,W,C) float[0,255] 留 GPU
-        # GT: 逐帧把 3 视角拼成 768x192(与 pred 同空间,PIL 保证与 pred 对齐),堆 (T,H,W,C) uint8 → 推 GPU
-        nf = d[view_keys[0]].shape[0]
-        import numpy as _np
-        gt = _np.stack([_np.array(build_ref_image(images={k: _chw01(d[k][f]) for k in view_keys},
-                                                  dst_size=(args.width, args.height), crop_mode="center"))
-                        for f in range(nf)], axis=0)
+        # GT: 在 f+gt_offsets 处把 3 视角拼成 768x192(与 pred 同空间),堆 (T,H,W,C) uint8 → 推 GPU
+        gt = _np.stack([_np.array(build_ref_image(
+                            images={k: _hwc_to_chw01(ep_frames[k][min(f + off, Lf - 1)]) for k in view_keys},
+                            dst_size=(args.width, args.height), crop_mode="center"))
+                        for off in gt_offsets], axis=0)
         gt_t = torch.from_numpy(gt).to(device=device, dtype=torch.float32)
         m = video_metrics_gpu(pred_t, gt_t, lpips_fn=lpips_fn, device=device)   # PSNR/SSIM/temporal 全 GPU
         # action:反归一化 + add_state(与 inference_server 一致)-> 真实单位,再算逐 horizon MAE
@@ -370,14 +411,14 @@ def main():
         print("SMOKE_OK"); return
 
     from giga_datasets import load_dataset
-    # val_root 指向 visrobot01_val(已是自洽重编号的 held-out 200 集),无需 episodes= 子集。
+    view_keys = ["observation.images.cam_high", "observation.images.cam_left_wrist", "observation.images.cam_right_wrist"]
+    # val_ds 只取 state/action(skip_video_decoding=True,不解 mp4 → 快);图像帧改走 EpisodeFrameCache
+    # (每集顺序解码一次)。消除原 ~5s/窗口的随机seek解码瓶颈,eval 转为 GPU-bound。
     val_entry = dict(_class_name="LeRobotDataset", data_path=args.val_root,
-                     delta_info={"action": args.action_chunk},
-                     delta_frames={k: [0, args.action_chunk // 4, args.action_chunk // 2,
-                                       3 * args.action_chunk // 4, args.action_chunk]
-                                   for k in ["observation.images.cam_high", "observation.images.cam_left_wrist", "observation.images.cam_right_wrist"]},
+                     delta_info={"action": args.action_chunk}, skip_video_decoding=True,
                      embodiment="visrobot01", tolerance_s=1e-3)
     val_ds = load_dataset([val_entry])
+    framecache = EpisodeFrameCache(args.val_root, view_keys, cache_size=2)
     stats = load_stats(args.stats_path)
     norm = extract_normalization_tensors(stats, device=device, state_dim=args.state_dim, action_dim=args.action_dim)
     t5 = load_t5_embedding_from_pkl(args.t5_pkl, target_len=args.t5_len).to(device=device, dtype=torch.float32)
@@ -386,21 +427,30 @@ def main():
     assert delta_mask.numel() == args.action_dim, f"delta_mask {delta_mask.numel()} != action_dim {args.action_dim}"
 
     # ---- 构建窗口索引(coverage 决定 stride),按需取本 shard ----
-    all_idxs, gs_total = build_window_indices(args.val_root, args.coverage, args.stride,
-                                              args.action_chunk, args.exec_horizon)
+    all_idxs, gs_total, info = build_window_indices(args.val_root, args.coverage, args.stride,
+                                                    args.action_chunk, args.exec_horizon)
     if gs_total != len(val_ds):
         print(f"[eval] WARNING: cum-length {gs_total} != len(val_ds) {len(val_ds)} (索引映射可能错位)")
     if args.coverage == "sample":     # 便宜单卡监控:跨全集均匀取 n_clips 个
         n = min(args.n_clips, len(all_idxs))
         all_idxs = [all_idxs[i] for i in np.unique(np.linspace(0, len(all_idxs) - 1, n).astype(int))]
-    my_idxs = all_idxs[args.shard_id::args.num_shards] if args.num_shards > 1 else all_idxs
+    # 分片按 **episode** 分配(非按窗口轮询):每片拿若干完整 episode → 帧缓存每集只解一次,
+    # 解码摊销到该集全部窗口(~5s/集 / ~56窗口 ≈ 0.09s/窗口)。轮询窗口会打散 episode、毁掉缓存。
+    if args.num_shards > 1:
+        eps_all = sorted({info[gi][0] for gi in all_idxs})
+        my_eps = set(eps_all[args.shard_id::args.num_shards])
+        my_idxs = [gi for gi in all_idxs if info[gi][0] in my_eps]
+    else:
+        my_idxs = list(all_idxs)
+    my_idxs = sorted(my_idxs, key=lambda gi: info[gi])     # 按 (episode,frame) 排序 → 帧缓存每集只解一次
     print(f"[eval] coverage={args.coverage} total_windows={len(all_idxs)} "
-          f"shard {args.shard_id}/{args.num_shards} -> {len(my_idxs)} windows")
+          f"shard {args.shard_id}/{args.num_shards} -> {len(my_idxs)} windows "
+          f"({len({info[gi][0] for gi in my_idxs})} episodes)")
 
     # ---- worker 模式:只评一个 ckpt 的本 shard,写 partial(sums/counts/n),由聚合器合并 ----
     if args.ckpt_subdir is not None:
         t0 = time.time()
-        sums, counts, n = eval_checkpoint(args.ckpt_subdir, args, val_ds, my_idxs,
+        sums, counts, n = eval_checkpoint(args.ckpt_subdir, args, val_ds, my_idxs, info, framecache,
                                           norm, t5, lpips_fn, delta_mask, device, dtype)
         sp = _shard_path(args.output_dir, args.step, args.shard_id)
         os.makedirs(os.path.dirname(sp), exist_ok=True)
@@ -434,7 +484,7 @@ def main():
             t0 = time.time()
             print(f"[eval] step {step}: {subdir}")
             try:
-                sums, counts, n = eval_checkpoint(subdir, args, val_ds, my_idxs, norm, t5, lpips_fn, delta_mask, device, dtype)
+                sums, counts, n = eval_checkpoint(subdir, args, val_ds, my_idxs, info, framecache, norm, t5, lpips_fn, delta_mask, device, dtype)
             except Exception as e:
                 print(f"[eval] step {step} FAILED: {e}"); done.add(step); continue
             write_record(args.output_dir, step, ckdir, _means(sums, counts),
