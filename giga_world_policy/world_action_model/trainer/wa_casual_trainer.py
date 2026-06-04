@@ -23,6 +23,10 @@ class CasualWATrainer(Trainer):
         self.action_repeats = model_config.get("action_repeats", 1)
         self.state_repeats = model_config.get("state_repeats", 1)
         self.action_dim = int(model_config.get("action_dim", 14))
+        # 双监督权重 ℒ=λ_video·ℒ_video+λ_action·ℒ_action(官方 GigaWorld-Policy 后训练 λ_action=5,λ_video=1,
+        # "emphasizing action prediction";默认 1:1 向后兼容)。见 docs/gigaworld_policy_recipe_vs_experiment.md
+        self.lambda_video = float(model_config.get("lambda_video", 1.0))
+        self.lambda_action = float(model_config.get("lambda_action", 1.0))
         self.view_interval = 50
         self.view_dir = model_config.view_dir
         model = dict()
@@ -184,10 +188,13 @@ class CasualWATrainer(Trainer):
         visual_loss = ((visual_pred.float() - visual_target.float()) * first_frame_mask) ** 2
         visual_loss = visual_loss.mean()
         action_loss = (action_pred.float() - action_target.float()) ** 2
-        action_loss = action_loss.mean() 
+        action_loss = action_loss.mean()
+        # 加权(λ_video/λ_action):backward 的 total=sum(dict) 即 ℒ_all=λ_v·ℒ_video+λ_a·ℒ_action。
+        # 注意:日志里打印的是**加权后**的值(λ_action=5 时 action_loss 显示≈5×真实 velocity-MSE,
+        # 监控真实收敛需 ÷λ_action)。
         loss = {
-            'visual_loss': visual_loss,
-            'action_loss': action_loss,
+            'visual_loss': visual_loss * self.lambda_video,
+            'action_loss': action_loss * self.lambda_action,
         }
         return loss
 
