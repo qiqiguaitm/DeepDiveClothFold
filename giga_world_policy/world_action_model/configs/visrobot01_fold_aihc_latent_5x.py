@@ -17,7 +17,7 @@ norm_path = ["./assets_visrobot01/norm_stats_vis.json", "./assets_visrobot01/nor
 def _entry(emb, data_path):
     return dict(_class_name="LeRobotDataset", data_path=data_path, data_size=None, embodiment=emb,
                 delta_info={"action": num_frames}, tolerance_s=1e-3,
-                skip_video_decoding=True, latent_dir=f"{data_path}/vae_latent", latent_cache_size=6)
+                skip_video_decoding=True, latent_dir=f"{data_path}/vae_latent", latent_cache_size=3)  # 6->3 缓解内存
 
 
 data_or_config = [_entry("visrobot01", f"{DATA}/visrobot01_train")] * 3 + [_entry("kairobot01", f"{DATA}/kairobot01")]
@@ -29,7 +29,7 @@ config = dict(
                 deepspeed_config=dict(deepspeed_config_file='accelerate_configs/zero2.json'), until_completion=True),
     dataloaders=dict(train=dict(
         data_or_config=data_or_config,
-        batch_size_per_gpu=2, num_workers=8, prefetch_factor=6, persistent_workers=True,
+        batch_size_per_gpu=2, num_workers=6, prefetch_factor=3, persistent_workers=True,  # 8/6->6/3 缓解内存爬升
         transform=dict(type='WATransformsLerobot', robotype_to_embed_id={"visrobot01": 0, "kairobot01": 1},
                        dst_size=dst_size, num_frames=num_frames, is_train=True, norm_path=norm_path,
                        model_action_dim=action_dim, num_views=3, t5_len=64, view_keys=view_keys,
@@ -41,7 +41,7 @@ config = dict(
                 lambda_action=5.0, lambda_video=1.0),   # ← 官方后训练权重 5:1
     optimizers=dict(type='CAME8Bit', lr=2 ** (-13.5), weight_decay=1e-2),
     schedulers=dict(type='WarmupCosineScheduler', warmup_steps=2000, decay_steps=50000),
-    train=dict(resume=False, max_epochs=0, max_steps=50000, gradient_accumulation_steps=1, mixed_precision='bf16',
+    train=dict(resume=True, max_epochs=0, max_steps=50000, gradient_accumulation_steps=1, mixed_precision='bf16',
                checkpoint_interval=1000, checkpoint_total_limit=20, checkpoint_safe_serialization=True,
                with_ema=True, activation_checkpointing=True, log_with='tensorboard', log_interval=10),
     test=dict(),

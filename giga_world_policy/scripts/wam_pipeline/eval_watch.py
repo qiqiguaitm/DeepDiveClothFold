@@ -257,6 +257,18 @@ def eval_checkpoint(transformer_dir, args, val_ds, clip_idxs, info, framecache, 
         for h in horizons:                                  # mae@h:第 h 步(1-indexed)所有维均值
             if h <= L:
                 m[f"mae@{h}"] = float(ae[h - 1].mean())
+        # 运动维指标(全维 MAE 被近静止维主导/误导 → 只看 GT 真有运动的维;见 traj 诊断结论)
+        st_np = state[0, :14].detach().float().cpu().numpy()
+        mv = np.abs(gt_act[:L] - gt_act[:1]).max(axis=0)    # [14] 每维相对起点的运动幅度
+        move = mv > 0.05                                     # 运动维阈 0.05 rad
+        if bool(move.any()):
+            stay_ae = np.abs(st_np[None, :] - gt_act[:L])    # stay-put(原地不动)误差
+            m["mae_move"] = float(ae[:, move].mean())                                          # 运动维 MAE
+            m["beat_stay_move"] = float((ae[:, move].mean(0) < stay_ae[:, move].mean(0)).mean())  # 运动维优于stayput比例
+            cs = [float(np.corrcoef(pred_act[:L, dd], gt_act[:L, dd])[0, 1])
+                  for dd in np.where(move)[0] if pred_act[:L, dd].std() > 1e-4 and gt_act[:L, dd].std() > 1e-4]
+            if cs:
+                m["shape_corr_move"] = float(np.mean(cs))                                       # 运动维 pred-GT 形状相关
         for k, v in m.items():
             sums[k] = sums.get(k, 0.0) + float(v)
             counts[k] = counts.get(k, 0) + 1

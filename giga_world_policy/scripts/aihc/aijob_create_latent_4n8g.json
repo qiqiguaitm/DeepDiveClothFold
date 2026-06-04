@@ -54,6 +54,8 @@
     "hostNetwork": true
   },
   "faultTolerance": true,
+  "unconditionalFaultToleranceLimit": 8,
+  "faultToleranceLimit": 8,
   "priority": "normal",
   "datasources": [
     {
