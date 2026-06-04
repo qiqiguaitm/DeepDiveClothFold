@@ -17,25 +17,32 @@
 
 ### 0.2 ⭐ 核心问题 (本文档主线)
 **如何在 pi05 模型基础上, 让模型同时:**
-1. **学到 KAI0 官方数据中复杂的操作知识** —— 复杂多步叠衣、丰富场景 (KAI0 base+dagger ~6.5k ep 的真正价值);
-2. **保留 vis 数据对部署本体动作的良好适配性** —— vis 的 D405 相机 + 该本体关节映射 + R 腕 21° 姿态 (部署本体的**低层动作保真**)。
+1. **学到 KAI0 官方数据中复杂的操作技能** —— 复杂多步叠衣、丰富抓取/折叠策略 (KAI0 base+dagger ~6.5k ep 的真正价值);
+2. **在部署本体 (vis) 上正确感知与抓取** —— 关键瓶颈是 **vis 相机 (D405) 与 kai0 (D435) 图像不一致** (FOV 87° vs 69°、wrist flange 安装高度/角度、min depth 7 vs 28cm)。
 
-> **本质 = 「知识 vs 本体」解耦**:
-> - KAI0 的价值在**高层任务/视觉/语义知识** —— 主要落在 **VLM / representation**。
-> - vis 的价值在**低层本体动作映射** —— 主要落在 **action expert + 输出动作分布**。
-> - 直接 naive 混训会因 kai/vis **同观测下 action 双峰** (21° 腕姿配对偏移, §1.3 / §2.1) 制造真机抖动。
-> - 所以要 **decouple**: **知识层吃 kai+vis, 本体层只认 vis**。
+> **⚠️ 2026-06-04 实测修正 (用户反馈, 推翻原"知识 vs 本体"框架)**:
+> - **纯 kai0 数据训的模型在 vis 真机能跑通** —— 动作能执行 → **motor/关节映射 OK** (印证 §2.1 norm 仅差 0.5σ, 本体动作不是瓶颈);
+> - **但抓取位置不精确 → 衣服无法进入下一阶段** (抓不准衣角);
+> - **最大 setting 差异 = 摄像机图像不一致** (D435→D405 wrist)。
+> → **真正瓶颈是「感知 (perception / 相机)」, 不是「动作 (motor / 本体)」。** 模型有 kai0 技能, 但用 D435 训出的视觉编码器去看 D405 图像 → 把衣角看错位置 → 抓偏。
 
-### 0.3 候选路线 (pi05 上, 非 prompt)
-| 路线 | 做法 | 解耦机制 | 文档 |
+> **本质 = 「技能 vs 感知」解耦** (修正版):
+> - KAI0 的价值在**高层操作技能** (怎么抓、怎么多步折) —— 但其感知绑死在 **D435**。
+> - vis 的价值在**部署相机 (D405) 的正确感知 + 抓取定位精度** —— 落在 **视觉编码器 / VLM 感知端**。
+> - **绑定约束在视觉编码器, 不在 action expert。** 修复必须作用在**感知端** (适配 D405), 用 kai0 技能, 但让感知学 vis。
+
+### 0.3 候选路线 (围绕「相机 / 感知 gap」)
+| 路线 | 做法 | 针对 | 文档 |
 |---|---|---|---|
-| **R1 数据两阶段** | 预合并 kai+vis co-train (vis 加权) → **轻量 vis-only finetune** | 末段 vis-only 把策略 re-snap 回本体分布, 压掉残余双峰 | [`corrected_plan_a_conditioning_premerge.md`](../../training/future_plans/plans/corrected_plan_a_conditioning_premerge.md) |
-| **R2 模块冻结解耦** ⭐ | Stage1 co-train kai+vis (VLM 学知识); Stage2 **冻 VLM, 只训 action expert on vis** | knowledge insulation: kai 的 action 模式被 Stage2 从 motor 端擦掉, VLM 保留 kai 知识 | §5.4 (待建 plan) |
-| **R3 Action Head Cond** (Track C) | action expert 端 domain token 区分 kai/vis, 推理固定 vis | 显式 token 拆双峰, 推理走 vis 模式 | §5.3 + corrected_plan_a |
-| **R4 数据筛选** | 只取 kai0 里 vis 缺的**复杂任务** ep, 去掉与 vis 重复的简单动作 | 减少 action 冲突, 只保留新知识 | §5.5 |
-| (R0 SSL visual) | kai+vis+xvla 进 visual SSL (无 action loss) → 喂 pi05 backbone | 视觉知识 embodiment-invariant, 完全不碰 action | [`ssl_phase_pretrain_pipeline.md`](../../training/future_plans/plans/ssl_phase_pretrain_pipeline.md) |
+| **P2 相机对齐 (诊断+快修)** ⭐先做 | 推理时把 D405 center-crop/resize 到 ~D435 FOV (或训练时反向模拟 D405); 先验证抓不准是否**纯 FOV/几何** | 隔离 appearance vs 视角/外参 gap | §5.6 |
+| **P1 视觉增强 co-train** ⭐ | kai+vis 预合并 co-train + 激进 FOV/crop/color/distortion 增强 → 视觉编码器 camera-robust; vis 提供 D405 抓取监督 | 跨相机鲁棒感知 + 学 D405 抓取定位 | §5.6 |
+| **P3 vis grasp DAgger** | 针对"抓不准"的具体 config 采 vis 示范, 直接监督 D405 下正确抓取定位 | 直接补抓取精度 | [dagger plan](../../training/future_plans/plans/dagger_validity_and_finetune_comparison.md) |
+| **R1' 两阶段 (修正)** | co-train kai+vis → vis finetune, **finetune 解冻视觉/VLM 适配 D405 感知** (≠ 冻 VLM) | 末段把感知 snap 到 D405 | corrected_plan_a |
+| **R0 SSL camera-invariant** | kai+vis(+xvla) visual SSL + view-conditioned token + RandomResizedCrop → camera-invariant 视觉特征 | 最 principled 的跨相机不变表示 | [`ssl_phase_pretrain_pipeline.md`](../../training/future_plans/plans/ssl_phase_pretrain_pipeline.md) |
+| ~~R2 模块冻结 (冻 VLM 训 action expert)~~ | — | ❌ **已试, 不理想** —— 冻的正是要改的**感知层 (VLM)**, 抓取仍不准 (见 §5.4) | — |
+| R3 Action Head Cond / R4 数据筛选 | (motor 端 / 数据侧) | 对相机感知 gap **无直接帮助**, 降为可选叠加 | §5.3/5.5 |
 
-> **关系**: R1/R2 是数据/训练流程解耦 (最直接); R3 是模型端显式区分 (可与 R1/R2 叠加); R4 是数据侧降冲突 (可与任意叠加); R0 是上游表示预训练 (独立大工程, 单独 plan)。**优先 R2 (最贴"知识 vs 本体") + R4 (低成本降冲突)**, R1 作 baseline, R3 作可选增强。
+> **关键转向 (2026-06-04)**: 瓶颈是相机/感知 → 修复作用在**视觉编码器/感知端**, 而非 motor。**路径: 先 P2 诊断 (便宜, 看是不是纯 FOV) → 据结果上 P1 (视觉增强 co-train) 或 P3 (vis grasp DAgger)**; R0 SSL 是长线解。R2 (冻 VLM) 已证此路不通 (冻错了层)。
 
 ---
 
@@ -220,9 +227,11 @@ B/A motion range: median 1.07, mean 1.11, [0.88, 1.48]
 
 ---
 
-### 5.4 ⭐ R2 — 模块冻结解耦 (知识 vs 本体, 最贴核心问题)
+### 5.4 R2 — 模块冻结解耦 (冻 VLM 训 action expert) ❌ 已试, 不理想
 
-**思路**: pi05 = VLM backbone (paligemma, 感知/语义/任务知识) + action expert (flow-matching, 本体动作映射)。把两者**分阶段、分数据**训练:
+> ⛔ **2026-06-04 实测结论 (用户反馈)**: R2 **不解决问题**。原假设"gap 在 motor/本体"被推翻 (§0.2): 纯 kai0 模型在 vis 能跑通 (motor OK), 真瓶颈是**相机/感知** (抓取不准)。R2 **冻住 VLM** —— 而 VLM 正是承载感知、需要适配 D405 的那一层 —— 所以冻错了层, 抓取依然不准。**保留本节作记录, 修复转向 §5.6 感知端。**
+
+**(原思路, 已证不适用)**: pi05 = VLM backbone (paligemma, 感知/语义/任务知识) + action expert (flow-matching, 本体动作映射)。把两者**分阶段、分数据**训练:
 
 | Stage | 数据 | 训练谁 | 冻结谁 | 作用 |
 |---|---|---|---|---|
@@ -248,6 +257,28 @@ kai0 6.5k ep 里, 与 vis 重叠的**简单动作** (平移、对折) 是 action
 - **收益**: 同样吸收 kai 复杂知识, 但减少同观测下的 action 模式冲突 → 降低对 S2/conditioning 的依赖。
 - **可与 R1/R2/R3 任意叠加**。低成本预处理, 不改模型。
 - ⚠️ 复杂度打分方式 (action 方差 / 轨迹长度 / 任务阶段数 / 视觉新颖度) 待定, 需小实验标定。
+
+---
+
+### 5.6 ⭐ 相机 / 感知 gap 修复路线 (P1-P3, 2026-06-04 新主线)
+
+> 真瓶颈 = D435→D405 wrist 相机不一致致**抓取定位不准** (§0.2)。修复作用在**视觉编码器 / 感知端**。
+
+**P2 — 相机对齐 (先做, 诊断 + 可能快修, 最便宜)**
+- D405 (FOV 87°, min 7cm) 比 D435 (69°, 28cm) **更宽更近**。推理时把 D405 wrist 图 **center-crop + resize 到 ~D435 FOV**, 让模型看到"D435-like"视野 → 若抓取立刻变准, 说明 gap 主要是 **FOV/几何**, 一个固定 crop 即低成本解。
+- ⚠️ 历史 §8 风险3 曾否决"D405 crop 到 D435 FOV"(理由: 丢周边信息 + 双向维护)。但作为**诊断 + 抓取阶段的快修**值得重测 (中央视野对抓取够用)。
+- **若 crop 后仍不准** → gap 不只是 FOV, 含**视角/外参** (flange 高度角度差) 或 **appearance** → 必须走 P1/P3 用 vis 数据学。
+
+**P1 — 视觉增强 co-train (主力)**
+- kai+vis **预合并 co-train** (绕开 datasets_yaml), 对图像加**激进增强**: RandomResizedCrop (scale 0.5-1.0 模拟 FOV 差)、color/exposure jitter、轻微透视/distortion → 逼视觉编码器学**跨相机鲁棒**特征。
+- vis (D405) 样本提供**部署相机的抓取定位监督**; kai0 提供技能。增强让 kai0 的 D435 感知不至于 overfit 到 D435。
+- 关键: 这是让**感知端**吃 kai+vis (与 R2 相反 —— R2 冻感知, P1 主动训感知)。
+
+**P3 — vis grasp DAgger (直接补精度)**
+- 部署中"抓不准衣角"的具体场景, 采 vis (D405) 纠错示范, 直接监督正确抓取定位 → 最直接补 D405 感知-抓取闭环。
+- 与现有 dagger 流程复用 (`dagger_validity_and_finetune_comparison.md`), 但目标聚焦**抓取精度** (非动作平滑)。
+
+**建议执行序**: **P2 诊断 (1 天)** → 若纯 FOV 则 P2 即解; 否则 **P1 视觉增强 co-train** 为主 + **P3 vis grasp DAgger** 补具体失败点; **R0 SSL camera-invariant** 作长线 principled 解。R3/R4 (motor/数据侧) 对感知 gap 无直接帮助。
 
 ---
 
