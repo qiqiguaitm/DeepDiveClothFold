@@ -189,7 +189,7 @@ def list_checkpoints(output_dir: str):
         if not m:
             continue
         sub = None
-        for cand in ("transformer_ema", "transformer"):
+        for cand in ("transformer", "transformer_ema"):   # 优先 raw:EMA(decay 0.9999 动态)中途严重滞后→评估失真
             if os.path.isdir(os.path.join(d, cand)) and glob.glob(os.path.join(d, cand, "*.safetensors")) + glob.glob(os.path.join(d, cand, "*.bin")):
                 sub = os.path.join(d, cand); break
         if sub:
