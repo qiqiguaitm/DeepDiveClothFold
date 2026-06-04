@@ -83,3 +83,6 @@ xvla/ckpts/
 giga_world_policy/runs/
 giga_world_policy/_tmp/
 giga_world_policy/scripts/aihc/workspace/
+
+# τ₀-WM 项目目录(11G, 含 checkpoints/figures — 产物, 不入 git)
+tau-0-wm/
