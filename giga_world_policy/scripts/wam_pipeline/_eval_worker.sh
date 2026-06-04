@@ -15,7 +15,7 @@ STATS_PATH=${STATS_PATH:-assets_visrobot01/norm_stats_vis.json}
 VAL_ROOT=${VAL_ROOT:-../kai0/data/wam_fold_v1/visrobot01_val}
 T5_PKL=${T5_PKL:-../kai0/data/wam_fold_v1/visrobot01_val/t5_embedding/episode_000000.pt}
 COVERAGE=${COVERAGE:-exec}
-EXEC_HORIZON=${EXEC_HORIZON:-8}
+EXEC_HORIZON=${EXEC_HORIZON:-16}
 # 仅 shard 0 存几条并排 mp4,其余 shard 关掉(n_mp4=0 → 不存)
 NMP4=3; [ "$SHARD" != "0" ] && NMP4=0
 

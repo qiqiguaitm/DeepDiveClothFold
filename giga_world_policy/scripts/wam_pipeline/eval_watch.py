@@ -117,7 +117,7 @@ def video_metrics_gpu(pred_thwc: torch.Tensor, gt_thwc: torch.Tensor, lpips_fn=N
 
 
 # ----------------------------- window-index enumeration -----------------------------
-def build_window_indices(val_root: str, coverage: str, stride: int, action_chunk: int, exec_horizon: int = 8):
+def build_window_indices(val_root: str, coverage: str, stride: int, action_chunk: int, exec_horizon: int = 16):
     """枚举 held-out 全部 episode 的窗口全局索引(与 LatentEpisodeSampler/dataset 同一映射:
     global_idx = 累计长度 gs + 集内起始 s)。集内起始按 stride 取,stride 由 coverage 决定:
       coverage='episode'(A): stride=action_chunk(48)  → 非重叠块,全集覆盖(~6k 窗口,~5min/ckpt)。
@@ -333,9 +333,9 @@ def main():
     ap.add_argument("--coverage", choices=["episode", "exec", "frames", "sample"], default="exec",
                     help="C=exec(默认,部署RTC执行步长16采样~1.8万窗口~16min); A=episode(非重叠块~6k~5min); "
                          "B=frames(每帧~29万,仅终评~4h); sample=跨全集均匀取 n_clips 个(便宜单卡监控)")
-    ap.add_argument("--exec_horizon", type=int, default=8,
-                    help="coverage=exec 的采样步长=部署实际执行步长(默认 8;RTC execute_horizon 16/V1 12,"
-                         "min_smooth_steps=8。取 8 更细→~3.7万窗口~33min/ckpt)")
+    ap.add_argument("--exec_horizon", type=int, default=16,
+                    help="coverage=exec 的采样步长=部署 RTC 实际执行步长(默认 16=session_launch rtc_execute_horizon;"
+                         "→~1.8万窗口,约为 8 的一半评估量)")
     ap.add_argument("--stride", type=int, default=0,
                     help="集内窗口步长(0=按 coverage 自动:episode→48, exec→exec_horizon, frames→1)")
     ap.add_argument("--n_clips", type=int, default=200,

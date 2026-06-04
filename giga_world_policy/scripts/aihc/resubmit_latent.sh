@@ -11,19 +11,24 @@ cd "$REPO"; source env.sh >/dev/null 2>&1 || true
 SPEC=scripts/aihc/aijob_create_latent_4n8g.json
 POOL=aihc-serverless; QUEUE=aihcq-z4v1apdppzwy
 RETRY=${RETRY:-5}
+CONFIG_NAME=${CONFIG_NAME:-}      # 可选:覆盖 spec 的 CONFIG env(如换 warmup 配置)
 : "${AIHC_IMG_PASSWORD:?set AIHC_IMG_PASSWORD (image pull password) in env}"
 
 TMP=$(mktemp /tmp/aijob_latent.XXXXXX.json)
 trap 'shred -u "$TMP" 2>/dev/null || rm -f "$TMP"' EXIT
-python - "$SPEC" "$TMP" "$AIHC_IMG_PASSWORD" <<'PY'
+python - "$SPEC" "$TMP" "$AIHC_IMG_PASSWORD" "$CONFIG_NAME" <<'PY'
 import json,sys
-spec,out,pw=sys.argv[1],sys.argv[2],sys.argv[3]
+spec,out,pw,cfg=sys.argv[1],sys.argv[2],sys.argv[3],sys.argv[4]
 d=json.load(open(spec))
 def setpw(o):
     if isinstance(o,dict):
         if 'imageConfig' in o and isinstance(o['imageConfig'],dict): o['imageConfig']['password']=pw
+        if 'envs' in o and isinstance(o['envs'],list) and cfg:
+            for e in o['envs']:
+                if e.get('name')=='CONFIG': e['value']=cfg
         for v in o.values(): setpw(v)
 setpw(d); json.dump(d,open(out,'w'),ensure_ascii=False,indent=2)
+print('CONFIG =', cfg or '(spec default)')
 PY
 echo "[resubmit] creating job (fault-tolerance retry=$RETRY) from $SPEC"
 aihc job create -f "$TMP" -p "$POOL" -q "$QUEUE" \
