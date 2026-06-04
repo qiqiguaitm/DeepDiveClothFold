@@ -250,7 +250,8 @@ def build_per_date_v3(date_v2: str, dry_run: bool = False, compute_norm: bool = 
     info["total_frames"] = total_frames
     info["total_videos"] = len(parquets) * len(CAMERAS)
     info["total_chunks"] = 1
-    info["splits"] = {"train": f"0:{len(parquets)}"}
+    info["chunks_size"] = max(1000, len(parquets))   # single chunk-000 layout → chunks_size must be ≥ N,
+    info["splits"] = {"train": f"0:{len(parquets)}"}  # else lerobot ep//1000 expects chunk-001 → file-assert → offline HF crash
     info["features"].pop("observation.depth.top_head", None)   # v3 drops depth
     info.pop("depth_path", None)
     (dst / "meta" / "info.json").write_text(json.dumps(info, indent=2))
@@ -431,6 +432,7 @@ def main():
     info["total_frames"] = total_frames
     info["total_videos"] = new_idx * len(CAMERAS)
     info["total_chunks"] = 1
+    info["chunks_size"] = max(1000, new_idx)   # single chunk-000 → chunks_size ≥ N (else ep//1000 → chunk-001 → assert fail)
     info["splits"] = {"train": f"0:{new_idx}"}
     # drop depth feature + depth_path (not carried)
     info["features"].pop("observation.depth.top_head", None)

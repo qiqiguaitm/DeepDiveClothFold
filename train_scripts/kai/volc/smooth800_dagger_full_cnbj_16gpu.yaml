@@ -82,14 +82,6 @@ Entrypoint: |
   [ -f "$INIT/_METADATA" ]            || { echo "FATAL: mixed_1_clean init missing $INIT" >&2; exit 13; }
   echo "[$(date)] data + norm_stats + init verified"
 
-  # warm per-node Cloudfs metadata cache before train.py: the fast-deploy image races the lazy
-  # cache so a cold worker can transiently see ENOENT on dataset files → lerobot file-exists assert
-  # fails → get_safe_version → HF hub → OfflineModeIsEnabled crash. stat-only (metadata, no read).
-  # find -L follows the bandwidth-saving video symlinks to warm their targets too.
-  echo "[$(date)] warming dataset file-stat cache (node $NODE)..."
-  find -L "$TRAIN/data" "$TRAIN/videos" -type f -print0 2>/dev/null | xargs -0 -r -P16 stat >/dev/null 2>&1 || true
-  echo "[$(date)] cache warm done (node $NODE)"
-
   export JAX_COORDINATOR_ADDRESS="${MLP_WORKER_0_HOST}:15830"
   export JAX_NUM_PROCESSES="${MLP_WORKER_NUM:-2}"
   export JAX_PROCESS_INDEX="${MLP_ROLE_INDEX:-0}"

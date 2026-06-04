@@ -142,7 +142,7 @@ alias vlog='ssh gf0"mlp job logs --follow --instance-name worker-0 --id"'  # vlo
 | **robot-task** | `q-20251204185107-fvnpx` | cn-shanghai / cn-shanghai-a | `vepfs-cnsh075262e1f815` (`/vePFS`) | `visincept-cn-shanghai.cr.volces.com/grasp/h2r:1.0` |
 | **Robot-East-H20** | `q-20260516104437-2ml4v` | cn-shanghai (gf0 所在华东 H20) | — | — |
 
-> **镜像规则 (2026-06-04 起)**: **beijing(Robot-North-H20)统一用 `dvs-cr-cn-beijing.cr.volces.com/vis_robot/kai:kai0-gf1`**(该区已缓存→秒级部署;旧 `visincept-cn-beijing.../grasp/h2r:1.0` 没缓存→冷拉 wedge staging,弃用)。**shanghai(robot-task)仍用 `visincept-cn-shanghai.cr.volces.com/grasp/h2r:1.0`**(该区已缓存)。kai0-gf1 是 cn-beijing registry 专用,勿跨区。多机大数据集 beijing 任务记得加 cache-warm 预热(见 [volc_ml_platform.md §V2](volc_ml_platform.md))。
+> **镜像规则 (2026-06-04 起)**: **beijing(Robot-North-H20)统一用 `dvs-cr-cn-beijing.cr.volces.com/vis_robot/kai:kai0-gf1`**(该区已缓存→秒级部署;旧 `visincept-cn-beijing.../grasp/h2r:1.0` 没缓存→冷拉 wedge staging,弃用)。**shanghai(robot-task)仍用 `visincept-cn-shanghai.cr.volces.com/grasp/h2r:1.0`**(该区已缓存)。kai0-gf1 是 cn-beijing registry 专用,勿跨区。(>1000 ep 数据集另见 chunks_size 坑 [pitfalls §3](training_pitfalls_common.md)。)
 
 使用方式 (在 gf0 上):
 ```bash

@@ -137,6 +137,7 @@ def build(mode, out_name, seed, dry_run, compute_norm, action_dim, symlink_video
     info["total_frames"] = total_frames
     info["total_videos"] = new_idx * len(CAMERAS)
     info["total_chunks"] = 1
+    info["chunks_size"] = max(1000, new_idx)   # single chunk-000 → chunks_size ≥ N (else ep//1000 → chunk-001 → assert fail → offline HF crash)
     info["splits"] = {"train": f"0:{new_idx}"}
     (dst / "meta" / "info.json").write_text(json.dumps(info, indent=2))
     print(f"done → {dst}  ({new_idx} ep kept / {len(all_eps)} requested, {total_frames} frames)", flush=True)

@@ -186,7 +186,7 @@ python train_scripts/kai/volc/submit_yaml.py train_scripts/kai/volc/gf3_cluster_
 ### V2. 镜像缓存决定部署速度 (换镜像有代价) ⚠️
 
 - **kai0-gf1 镜像** (`dvs-cr-cn-beijing.cr.volces.com/vis_robot/kai:kai0-gf1`) — ⭐ **cnbj(beijing)标准镜像,以后 beijing 任务都用它**: cnbj 节点**已缓存** → 部署秒级 (canary submit→Running **20s**)。**2026-06-04 实测 Exp-B 多机过 Step 0**——此前"distributed.initialize Logging error 崩"的结论**未复现,作废**。
-  - ⚠️ **代价 = 部署太快跑赢 Cloudfs 懒加载**: 冷 worker 首访数据集文件可能瞬时 `ENOENT` → lerobot 文件存在 assert 失败 → `get_safe_version` 打 HF hub → `OfflineModeIsEnabled` 崩(常只崩 worker-1,数据其实完整)。**多机 / 大数据集务必在 entrypoint 加 stat-only cache-warm 预热**: `find -L "$TRAIN/data" "$TRAIN/videos" -type f -print0 | xargs -0 -P16 stat >/dev/null`(见 `v3_all_no0516` / `smooth800_dagger_full` yaml)。旧 h2r 的 30min 慢拉恰好掩盖了这个 race。
+  - ✅ 部署本身干净(秒级)。注意: 换了快镜像后这些任务**第一次真正跑到 data-load**, 暴露了一个**与镜像无关的数据 bug**——`chunks_size` 坑(>1000 ep 数据集单 chunk-000 布局, 见 [pitfalls §3](training_pitfalls_common.md))。别把它误判成镜像/缓存问题(我一开始按"Cloudfs 冷缓存 race"加 cache-warm 预热, **无效**, 真因是 chunks_size)。
 - **h2r 镜像** (`visincept-cn-beijing.../grasp/h2r:1.0`): cnbj 节点**没缓存** → 冷拉把 **2 节点 gang staging wedge 死**(2026-06-04 卡 1h22m 不报错不前进,见 [pitfalls §10](training_pitfalls_common.md))。**cnbj 弃用**。
 - → **beijing: `kai:kai0-gf1` + cache-warm 预热; shanghai(cnsh): 仍用 `visincept-cn-shanghai.../grasp/h2r:1.0`**(cn-shanghai registry 该区已缓存,单机几秒起,无需换)。kai0-gf1 是 **cn-beijing registry 专用**,别拿到 cnsh 用(跨区拉取慢)。
 - 镜像 URL 拼写: `cn-beijing` 别写成 `bejing` (DNS 不解析 → 卡 Deploying 25min+ 自动失败)。`curl -sI https://<cr>/v2/` 应返回 401 = endpoint 存在。
