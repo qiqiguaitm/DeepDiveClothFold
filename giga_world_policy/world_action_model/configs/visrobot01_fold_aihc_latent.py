@@ -40,7 +40,7 @@ config = dict(
     optimizers=dict(type='CAME8Bit', lr=2 ** (-14.5), weight_decay=1e-2),
     schedulers=dict(type='ConstantScheduler'),
     train=dict(resume=True, max_epochs=0, max_steps=50000, gradient_accumulation_steps=1, mixed_precision='bf16',
-               checkpoint_interval=2000, checkpoint_total_limit=15, checkpoint_safe_serialization=True,
+               checkpoint_interval=1000, checkpoint_total_limit=20, checkpoint_safe_serialization=True,
                with_ema=True, activation_checkpointing=True, log_with='tensorboard', log_interval=10),
     test=dict(),
 )

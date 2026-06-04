@@ -203,8 +203,12 @@ class LeRobotDataset(BaseDataset):
                 if len(self._lat_order) > self.latent_cache_size:
                     self._lat_cache.pop(self._lat_order.pop(0), None)
             j = ep["starts"].index(fi)
-            data_dict["visual_latents"] = ep["visual"][j]
-            data_dict["ref_latents"] = ep["ref"][j]
+            # CPU-RAM 泄漏修复:ep["visual"][j] 是对整集 ~63MB tensor 的 view,共享底层 storage。
+            # DataLoader(worker→main)会把整个 base storage 搬进 /dev/shm(本 job 为 Memory-backed
+            # emptydir,计入 RAM);persistent_workers+prefetch 每步扫新 episode → 段累积 → ~120MB/step
+            # 线性涨到 OOM。.clone() 让每个样本只持有自身 ~110KB 紧凑副本,不再 pin 整集 storage。
+            data_dict["visual_latents"] = ep["visual"][j].clone()
+            data_dict["ref_latents"] = ep["ref"][j].clone()
         return data_dict
 
 class FastLeRobotDataset(_LeRobotDataset):
