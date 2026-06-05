@@ -407,8 +407,10 @@ def _parse_args():
     p.add_argument("--dtype", type=str, default="float32", choices=["float32", "bfloat16", "float16"])
     p.add_argument("--default_prompt", type=str, default=None)
     p.add_argument("--default_dataset_id", type=int, default=None)
-    p.add_argument("--gripper_open_value", type=float, default=0.06557999688386917)
-    p.add_argument("--gripper_close_value", type=float, default=-0.0054700000174343586)
+    # 对齐 vis Piper 物理行程 [0, 0.08] m (非 SoftFold-Agilex 默认 open=0.0656/close=-0.00547):
+    # open=0.0656 只到 82% 行程夹爪开不满; close 负值在 arm_reader_node 会被夹成 0。
+    p.add_argument("--gripper_open_value", type=float, default=0.08)
+    p.add_argument("--gripper_close_value", type=float, default=0.0)
     p.add_argument("--binarize_gripper", action=argparse.BooleanOptionalAction, default=True)
     p.add_argument("--seed", type=int, default=42,
                    help="flow-matching 确定性采样种子 (固定→连续 chunk 一致, 减卡顿); -1=随机重采")

@@ -243,9 +243,11 @@ class C_PiperRosNode(Node):
             self.piper.MotionCtrl_2(0x01, 0x00, 50)
             self.piper.EndPoseCtrl(x, y, z, rx, ry, rz)
             gripper = round(pos_data.gripper * 1000 * 1000)
-            if pos_data.gripper > 80000:
+            # clamp 微单位行程 [0, 80000] (= [0, 0.08] m)。注意比较的是 scale 后的 gripper,
+            # 不是 pos_data.gripper(米); 旧代码误用米值 >80000 永不成立, 上限 clamp 是死代码。
+            if gripper > 80000:
                 gripper = 80000
-            if pos_data.gripper < 0:
+            if gripper < 0:
                 gripper = 0
             if self.gripper_exist:
                 self.piper.GripperCtrl(abs(gripper), 1000, 0x01, 0)
