@@ -27,7 +27,19 @@
 | **训练** | warmup2000 + 前 1000 步冻 VLM/core; 加权采样 (DATA_WEIGHTS); 图像 Resize224 + ColorJitter + ImageNet norm | train.py:115-172, dataset.py:63-70 |
 | **PEFT** | LoRA r=8 (~9M, 1% 参数), 接近全量 finetune | peft_train.py:197-206 |
 
-**核心卖点**: soft prompt 以极少参数吸收跨本体异质性, flow-matching + 标准 Transformer 简单可扩展; 0.9B 在 6 sim benchmark + 3 真机 SOTA; 290K episode / 7 平台 / 5 robot 预训练且**未饱和**。
+**核心卖点**: soft prompt 以极少参数吸收跨本体异质性, flow-matching + 标准 Transformer 简单可扩展; 0.9B 在 6 sim benchmark + 3 真机 SOTA; 290K episode / 7 平台 / 5 robot 预训练且**未饱和**。**X-VLA-Pt foundation ckpt 已开源** (HF `2toINF/X-VLA-Pt`), 官方定位"让用户微调而非从头预训练"。
+
+### 1.1 X-VLA 如何处理"异 camera"(及其局限 = 创新空间)
+X-VLA **不专门处理相机**, 而是把相机差异当 domain 异质性的一部分**塞进 per-domain soft prompt 一锅端**:
+1. **Per-domain soft prompt 吸收 (主力)**: 每数据源 32 token + 专属 DomainLinear, "encode domain-specific **hardware configurations**" (robot+camera+env 捆成一个**原子** domain 身份)。相机不同 = 不同 domain prompt, 隐式学进去。§5.3: prompt 落共享空间, "leverage cross-embodiment similarities" (非 one-hot)。
+2. **ColorJitter(0.2)** 轻外观鲁棒 (dataset.py:65), **无几何/相机参数增强**。
+3. **共享 VLM (Florence)** 处理多 view, 但论文自承 (App C) "**limited multi-view perception**", 代码只 view-0 进 VLM、其余平展 aux token (粗糙)。
+
+**局限 (正是创新点所在)**:
+- 只覆盖**训练时见过的相机 setup**; prompt 迁移到新/少数据相机会掉 (Fig 9: "domain gap limits final performance")。
+- prompt **原子化, 无法 disentangle "同 robot 异 camera"** → kai/vis 要么当**一个** domain (相机冲突=抓不准) 要么当**两个** (不共享技能 + vis 欠训), 都浪费"同机器人"信息。
+- 相机差异落在**共享 VLM 感知**上的那部分 **prompt 管不到** (prompt 在 action 端, VLM 所有 domain 共享)。
+- → 我们的 delta = **prompt 里 camera 从 robot 解耦 (compositional robot⊗sensor)** + **主动适配共享 VLM 感知到 D405** (见 [`../future_plans/plans/xvla_camera_robust_grasp_final.md`](../future_plans/plans/xvla_camera_robust_grasp_final.md) §3.6 / §6)。
 
 ---
 

@@ -58,16 +58,39 @@
 ### 3.4 对照矩阵 (真机抓取精度为终判)
 | 组 | init | 数据/方法 | 测什么 |
 |---|---|---|---|
-| B0 | pi05/xvla-base | vis-only | baseline (部署相机原生) |
+| B0 | xvla-base | vis-only | baseline (部署相机原生) |
 | B1 | base | kai-only | 复现"跑通但抓不准" (motor OK perception 错) |
-| A1 | base | 预合并 + **P1 外观增强** | 外观适配是否修抓取 |
-| A2 | base | A1 + **camera-conditioned prompt** | sensor-prompt 增益 (创新点) |
+| **A0 (skeptic baseline)** ⚠️ | base | 预合并, **vis 当独立 domain + vanilla X-VLA recipe** (原子 prompt + ColorJitter) | **X-VLA 现成机制够不够?** (必须设这组, 见 §3.6) |
+| A1 | base | A0 + **P1 标定外观增强** (replace ColorJitter) | 外观适配是否修抓取 |
+| **A2 (创新)** ⭐ | base | A1 + **compositional robot⊗sensor prompt** | sensor-prompt 解耦增益 |
 | A3 | base | A1 + **衣角 keypoint 辅助** | grasp 定位辅助增益 |
 
 ### 3.5 评估 (填论文 gap)
 - **新提 grasp precision metric** (论文 G2 缺): 抓取点与衣角真值的像素/3D 偏差 + 抓取成功率 + 进入下一阶段率。
 - **cross-camera 协议**: train-on-D435 / deploy-on-D405 成功率掉多少, P1/prompt 修回多少。
 - 真机为终判 (offline 只看健康 + 收敛)。
+
+### 3.6 ⭐ 创新 vs X-VLA: delta 与必须打赢的 baseline
+
+**X-VLA 如何处理异 camera (背景)**: 不专门处理, 把相机当 domain 异质性塞进 **per-domain 原子 soft prompt** (robot+camera+env 捆死) + ColorJitter + 共享 VLM (论文自承 multi-view 弱)。详见 [`../../analysis/xvla_innovation_directions.md`](../../analysis/xvla_innovation_directions.md) §1.1。
+
+**我们的 delta (按新颖度诚实分级)**:
+| # | 改动 | 相对 X-VLA 的新颖度 | 说明 |
+|---|---|---|---|
+| ① **compositional prompt** = robot ⊗ sensor 双因子 | ⭐ **真创新** | X-VLA prompt 原子化 (robot+camera 捆死); 拆成 robot(kai+vis 共享, 大数据) ⊗ sensor(只学相机 delta, 小数据) → "同 robot 异 camera"**数据高效迁移**, 扩展 §5.3 "cross-embodiment similarities" 到 cross-**camera** within embodiment |
+| ② 标定外观增强 (P1) | 半增量 | X-VLA 只 ColorJitter(0.2); 我们按实测 2× contrast/sharpness 差标定 + RandomResizedCrop。工程改进, 非论文级 |
+| ③ 共享 VLM 主动适配 D405 | 半创新 | 论文 VLM multi-view 弱却没解; 我们让视觉编码器在 vis 主动适配 |
+| ④ 受控 dual-camera 叠衣 benchmark + grasp-precision metric | 贡献物 | X-VLA "domain" 把相机和别的混在一起, 无受控 camera ablation, 无 grasp metric (G2) |
+
+> ⚠️ **诚实红线 (写死进实验)**: 怀疑者会说"X-VLA 把 vis 当一个 domain + 多点 ColorJitter 不就行?" —— 所以 **A0 (vis-as-domain vanilla X-VLA) 是必设 baseline**。**只有 A2 (compositional) > A1 (外观增强) > A0 (X-VLA 原生) 才证明 delta 真有增益**; 若 A0 已够好, 说明 X-VLA 原机制足够, 创新①不成立, 据实记录。
+
+### 3.7 compositional prompt 的实现 (① 的代码改法)
+- X-VLA domain 身份载体 (已实测): `soft_prompt_hub.weight (num_domains, 32*1024)` + `action_encoder/decoder` 的 DomainLinear `.fc/.bias (num_domains, ·)`。
+- **改法**: 把单一 `domain_id` 索引换成 **(robot_id, sensor_id) 两个 embedding 相加/拼接**:
+  - 新增 `robot_prompt_hub = Embed(num_robots, 32*1024)` + `sensor_prompt_hub = Embed(num_sensors, 32*1024)`, soft prompt = robot[r] + sensor[s] (或 concat 后投影)。
+  - kai0=(robot=agilex, sensor=D435), vis=(robot=agilex, **sensor=D405**) → robot 因子共享, 仅 sensor 不同。
+  - 部署固定 (agilex, D405)。
+- ⚠️ 需核对参数 path 命名 + 兼容 X-VLA-Pt 权重加载 (robot 因子可用原 agilex domain 槽 warm-init, 见 [`xvla_domain_slot_init_ablation.md`](xvla_domain_slot_init_ablation.md))。
 
 ---
 
@@ -92,6 +115,21 @@
 - [ ] **S5** 训 B0/B1/A1/A2/A3, offline 健康闸门
 - [ ] **S6** 真机 grasp precision + cross-camera 协议评估
 - [ ] **S7** (条件) 重启 wrist D405 depth 采集 → 解锁 Direction B
+
+---
+
+## 6. 是否需要从头预训练 + compute 预算
+
+**结论: 不需要从头预训练。** 直接微调开源 **X-VLA-Pt** (官方就是这么设计的; 论文证明 LoRA 9M(1%)≈全量, 10 demo→91%)。本方案 (P1 + compositional prompt + keypoint) **全是微调 / 小改架构级**, 无一需从头预训练。
+
+| 路线 | 卡 | 时间 | 建议 | 备注 |
+|---|---|---|---|---|
+| **从头预训练 (像 X-VLA)** | 64 GPU | 1–2 周 + 数据后勤 | ❌ **不做** | 估 **~1–2 万 GPU-h** (官方未披露; 锚 OpenVLA-7B=64×A100×14d≈2.15万 A100-h, X-VLA 0.9B 更小同量级)。还要下载/清洗/存几十 TB 跨本体数据 (Droid/RoboMind/Agibot)。**赢不了它的数据规模, 无收益** |
+| **continual / 域适应续训** | 16–32 GPU | 几天 | ⚠️ 仅当加大量新数据/新模态 | = Track X 的 X3 跑法 |
+| **微调 X-VLA-Pt (本方案主路径)** ✅ | **16 GPU** | **~半天/次** | ✅ **走这个** | A0/A1/A2/A3 各一次, 全在 uc01/02/03 + Volc 资源内 |
+
+> **锚点对照**: 你现有 X-VLA 微调 ≈ 16 GPU × ~12h(30k step)/次; **从头预训练 ≈ 一次微调的 50–100×**。把卡省下来多跑几组对照 + 真机评估, 远比烧 1–2 万 GPU-h 重训一个赢不了的 base 划算。
+> ⚠️ compositional prompt(§3.7)新增的 robot/sensor 因子是**少量新参数**, 从 X-VLA-Pt warm-init (robot 因子借 agilex 槽) 后**微调即可**, 不触发预训练需求。
 
 ---
 
