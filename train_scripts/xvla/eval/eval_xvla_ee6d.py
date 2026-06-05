@@ -36,7 +36,7 @@ from multi_domain_dataset import LeRobotEE6DDataset  # noqa: E402
 from lerobot.policies.xvla.modeling_xvla import XVLAPolicy  # noqa: E402
 from transformers import AutoTokenizer  # noqa: E402
 
-CKPT_INIT = "/data/shared/ubuntu/workspace/xvla_ckpts"
+CKPT_INIT = os.environ.get("XVLA_CKPT_INIT", "/data/shared/ubuntu/workspace/xvla_ckpts")  # base arch; override for cnsh vePFS
 PROMPT = "Flatten and fold the cloth."
 GEN_SEED = 12345
 N_HELDOUT_EP = 50
@@ -44,7 +44,7 @@ HORIZONS = [1, 10, 25, 30]
 
 
 def build_collate():
-    tok = AutoTokenizer.from_pretrained("facebook/bart-large")
+    tok = AutoTokenizer.from_pretrained(os.environ.get("XVLA_BART_TOK", "facebook/bart-large"))
     cached_tokens = tok(
         [PROMPT], padding="max_length", max_length=50, truncation=True,
         return_tensors="pt",
