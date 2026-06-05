@@ -539,6 +539,12 @@ class PolicyInferenceNode(Node):
         # ③ EE 控制后端: 'firmware'=发 PosCmd → 固件 EndPoseCtrl 做笛卡尔 IK (上游同款, 无主机 IK
         # → 无延迟/分支翻转/rate-limit 接缝踢, 丝滑); 'joint'=主机 PiperDHIK 反解到关节 (旧路径, 备用)。
         self.declare_parameter('ee_ctrl', 'firmware')
+        # ③ EE 夹爪 re-binarize: server 端夹爪是二值的 {0=闭, open_m=张}, 但 stream_buffer 的
+        # chunk 重叠平滑会把它线性混成中段值 (实测 0.076/0.077 等)。中段夹爪命令 = 物理上
+        # "half-grasp 抓了又放" (见 _publish_action L2704 注释)。发 PosCmd 前 snap 回 {0, open_m}
+        # 消除中段。阈值 = open_m/2。连续夹爪模型请置 False (默认 True: 当前 EE 仅 X-VLA, 二值)。
+        self.declare_parameter('ee_gripper_binarize', True)
+        self.declare_parameter('ee_gripper_open_m', 0.08)   # 张开物理行程 (m), 与 server gripper_open_value 对齐
 
         # ── Replay mode params (P1) ──
         # 'inference' = call policy.infer() (default, existing path)
@@ -570,6 +576,8 @@ class PolicyInferenceNode(Node):
         self._rtc_execute_horizon = int(self.get_parameter('rtc_execute_horizon').value)
         self._rtc_max_guidance_weight = float(self.get_parameter('rtc_max_guidance_weight').value)
         self.gripper_offset = self.get_parameter('gripper_offset').value
+        self._ee_grip_binarize = bool(self.get_parameter('ee_gripper_binarize').value)
+        self._ee_grip_open_m = float(self.get_parameter('ee_gripper_open_m').value)
         # P2 Step 1+2: fast obs pipeline (skip JPEG + CvBridge + cvtColor)
         self._fast_obs_pipeline = _to_bool(self.get_parameter('fast_obs_pipeline').value)
         if self._fast_obs_pipeline:
@@ -2860,6 +2868,13 @@ class PolicyInferenceNode(Node):
         简单安全护栏: 相对上次命令 xyz 跳变 > 8cm 则丢弃该帧 (防异常目标突跳)。"""
         if self.pub_pos_left is None:
             return
+        # ③ re-binarize 夹爪: 撤掉 stream_buffer 线性平滑在二值夹爪上引入的中段值, snap 回
+        # {0=闭, open_m=张} (阈值 open_m/2), 防 half-grasp。in-place 改 act → 调用方存的
+        # _last_published_action 也是 snap 后的值, 一致。连续夹爪模型 ee_gripper_binarize=False 跳过。
+        if self._ee_grip_binarize:
+            thr = self._ee_grip_open_m * 0.5
+            act[6] = self._ee_grip_open_m if act[6] > thr else 0.0
+            act[13] = self._ee_grip_open_m if act[13] > thr else 0.0
         prev = self._last_published_action
         if prev is not None and len(prev) >= 14:
             dL = float(np.linalg.norm(np.asarray(act[0:3]) - np.asarray(prev[0:3])))

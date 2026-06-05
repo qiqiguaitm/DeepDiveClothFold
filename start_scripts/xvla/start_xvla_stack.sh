@@ -28,6 +28,17 @@ DEFAULT_CKPT="/data1/DATA_IMP/checkpoints/ckpt_xvla/xvla_x3c_smooth800_step_fina
 CKPT="${1-}"; [ "$#" -gt 0 ] && shift || true
 [ -z "$CKPT" ] && CKPT="$DEFAULT_CKPT"
 
+# 本脚本自己处理 pipeline trace (XVLA_TRACE / XVLA_TRACE_DIR, 见下)。--trace 是给本
+# 脚本的开关, 必须在这里消费掉, 否则会漏进 "$@" 转发给 `ros2 launch` 报 unrecognized。
+_FWD=()
+for _a in "$@"; do
+  case "$_a" in
+    --trace) XVLA_TRACE=1 ;;
+    *)       _FWD+=("$_a") ;;
+  esac
+done
+set -- "${_FWD[@]+"${_FWD[@]}"}"
+
 LOG_DIR="${KAI0_XVLA_LOG_DIR:-/tmp/xvla_stack}"
 mkdir -p "$LOG_DIR"
 SERVER_LOG="$LOG_DIR/server.log"
