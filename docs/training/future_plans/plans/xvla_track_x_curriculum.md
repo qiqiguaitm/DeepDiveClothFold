@@ -134,6 +134,34 @@ X3.C 自身 MAE (EE6D 20D, final, 1000 窗口):
 3. **差距主因 = 架构/预训练** — 同 smooth_800 同 vis 域; 差异来自 pi0.5 (成熟 flow-matching VLA) vs X-VLA-base (0.9B lerobot port)。
 4. 唯一不严格处: pi05 horizon=50 取前 30 对齐 X3.C chunk=30 (已处理); gripper 量纲在 FK 后两者均二值化, 公平。
 
+#### (c) ⭐ P0 修复后实测 + 真机 gripper 部署 bug (2026-06-05)
+
+P0 版 ckpt `xvla_x3c_smooth800_p0/step_058000` 训练完成后实测 (Claude 离线诊断, A100; bart 真 token + 14D→EE6D 在线转换, held-out 末50ep strided 256 窗口, 同 `joint_to_ee6d.py` FK 标尺):
+
+**(c1) P0 把位置 MAE 砍掉一半 (R1 ImageNet 修复见效)**:
+
+| | xyz MAE@1 | @10 | @25 | @30 |
+|---|---:|---:|---:|---:|
+| pi05 (FK→EE6D, 参考) | **0.0027** | — | — | — |
+| X3.C **P0 前** (§(b)) | 0.0122 | — | — | — |
+| **X3.C P0 (step58000) 实测** | **0.0052** | 0.0113 | 0.0251 | 0.0295 |
+
+- P0 (ImageNet 归一化) 把 xyz MAE@1 从 **0.0122 → 0.0052 (~2.3× 改善)**, 坐实 R1 是主因。但仍 **~2× pi05 (0.0027)** —— 剩余差距 = R4 容量 (0.9B vs 2.2B) + R3 欠训, **继续训不划算** (MAE ~30k 后 plateau)。
+- gripper 二值: 稳定帧 **>99% 正确** (与 §(b) 一致); 仅抓取过渡帧约 77% (难帧, 正常)。**模型 gripper 信号无塌缩。**
+
+**(c2) 🔴 真机"抓不到 + 夹爪状态异常"的根因 = 部署端 gripper 米值映射错配 (配置 bug, 非模型)**:
+
+| | vis Piper 真实行程 (A_0423_0527 实测) | 部署常量 (`serve_policy_xvla.py:410-411`) |
+|---|---|---|
+| 闭 (closed) | ~**0.0003 m** (正, 近 0) | `g_close = **-0.0055 m**` (负!) |
+| 开 (open) | ~**0.079 m** | `g_open = 0.0656 m` |
+
+- 部署用的是 **SoftFold 域默认值**, 不是 vis Piper 行程。模型输出二值方向正确 (sig>0.5→闭), 但 serve 把"闭"映射成 **负米值 -0.0055** → 夹爪命令异常/闭合不到位 → **抓不到布**。
+- ⚠️ bringup `xvla_inference_bringup.md` **R3 早预警过** ("SoftFold 默认值, 负 close 可能被硬件 clip, 需 `--gripper_open_value/--gripper_close_value` 覆盖"), 部署时未覆盖。
+- **修复**: 部署加 `--gripper_close_value 0.0`(或 0.0003)`--gripper_open_value 0.08`, 对齐 vis Piper; 并核对机器人 gripper 命令单位/方向。**先改这个再上真机。**
+
+> **小结**: P0 训练健康 (xyz 0.0052, gripper 无塌缩); 真机失败主因是**部署 gripper 映射 bug** (与 MAE 高低无关)。XVLA 位置 MAE 比 pi05 高 ~2× 是 0.9B 容量固有差距, 不是 bug。诊断脚本在 gitignored `_xvla_gripper_debug/`。
+
 ### §0.NEW.3 实施步骤
 
 | Step | 内容 | ETA | 状态 |
