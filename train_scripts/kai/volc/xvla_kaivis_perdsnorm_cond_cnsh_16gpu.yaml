@@ -1,0 +1,96 @@
+# Cross-embodiment per-DS-norm + Action-Head conditioning — cnsh 2-host 16 A100, 50k
+#   Config: xvla_kaivis_perdsnorm_cond (config.py)
+#   Data:   kai_vis_merged (kai0_base+kai0_dagger=domain0 6512ep, A_smooth800_dagger_full=domain1/vis 1033ep)
+#   per-DS norm (DomainNormalize) + domain token (2域) + 1:1 加权采样(domain_weights=(1,6.305))
+#   Init:   pi05_base (config 内置)
+# Submit: source ~/.volc_creds && kai0/.venv/bin/python train_scripts/kai/volc/submit_yaml.py train_scripts/kai/volc/xvla_kaivis_perdsnorm_cond_cnsh_16gpu.yaml
+
+TaskName: "xvla-kaivis-perdsnorm-cond-cnsh-16gpu"
+Description: "per-DS-norm + cond kai+vis merged: JAX 2-host 16 A100, pi05_base init, 50k"
+Tags: []
+
+ImageUrl: "visincept-cn-shanghai.cr.volces.com/grasp/h2r:1.0"
+ResourceQueueName: "robot-task"
+Framework: "PyTorch"
+
+TaskRoleSpecs:
+  - RoleName: "worker"
+    RoleReplicas: 2
+    Flavor: "ml.hpcpni2.28xlarge"   # 8× A100-80G per host × 2 = 16 GPU
+
+ActiveDeadlineSeconds: 172800
+EnableTensorBoard: false
+
+Storages:
+  - Type: "Vepfs"
+    VepfsId: "vepfs-cnsh075262e1f815"
+    SubPath: ""
+    MountPath: "/vePFS"
+
+CacheType: "Cloudfs"
+
+Envs:
+  - Name: HF_HUB_OFFLINE
+    Value: "1"
+  - Name: TRANSFORMERS_OFFLINE
+    Value: "1"
+  - Name: TOKENIZERS_PARALLELISM
+    Value: "false"
+  - Name: NCCL_DEBUG
+    Value: "WARN"
+  - Name: OMP_NUM_THREADS
+    Value: "8"
+  - Name: XLA_PYTHON_CLIENT_MEM_FRACTION
+    Value: "0.85"
+  - Name: JAX_COMPILATION_CACHE_MIN_ENTRY_SIZE_BYTES
+    Value: "-1"
+  - Name: JAX_COMPILATION_CACHE_MIN_COMPILE_TIME_SECS
+    Value: "1"
+  - Name: JAX_ENABLE_EMPTY_ARRAYS
+    Value: "true"
+
+Entrypoint: |
+  STAMP=$(date -u +%Y%m%d_%H%M%S)
+  NODE=${MLP_ROLE_INDEX:-0}
+  LOG_DIR=/vePFS/tim/workspace/deepdive_kai0/logs
+  mkdir -p "$LOG_DIR"
+  LOG="$LOG_DIR/xvla_kaivis_perdsnorm_cond_${STAMP}_node${NODE}.log"
+  exec >> "$LOG" 2>&1
+  echo "=== entrypoint start $(date) node=$NODE/${MLP_WORKER_NUM:-1} ==="
+  set -ex
+  echo "[multinode] host0=${MLP_WORKER_0_HOST} num=${MLP_WORKER_NUM} idx=${MLP_ROLE_INDEX}"
+  nvidia-smi -L
+
+  KAI0=/vePFS/tim/workspace/deepdive_kai0/kai0
+  if [ ! -x "$HOME/.local/bin/uv" ]; then curl -LsSf https://astral.sh/uv/install.sh | sh; fi
+  export PATH="$HOME/.local/bin:$PATH"
+  uv python install 3.11.15 2>&1 | tail -2
+  mkdir -p /home/tim/.local/share && ln -sfn /root/.local/share/uv /home/tim/.local/share/uv
+  cd "$KAI0"
+  source .venv/bin/activate
+  python -c "import jax; print(f'jax {jax.__version__} devs={len(jax.devices())}')"
+
+  # PRE-FLIGHT
+  TRAIN=/vePFS/tim/workspace/deepdive_kai0/kai0/data/Task_A/self_built/kai_vis_merged
+  INIT=/vePFS/tim/workspace/openpi_cache/openpi-assets/checkpoints/pi05_base/params
+  [ -f "$TRAIN/meta/episodes.jsonl" ]                || { echo "FATAL: train data missing $TRAIN" >&2; exit 13; }
+  [ -f "$TRAIN/norm_domain0_kai/norm_stats.json" ]   || { echo "FATAL: kai norm missing" >&2; exit 13; }
+  [ -f "$TRAIN/norm_domain1_vis/norm_stats.json" ]   || { echo "FATAL: vis norm missing" >&2; exit 13; }
+  [ -f "$TRAIN/norm_stats.json" ]                    || { echo "FATAL: single norm missing" >&2; exit 13; }
+  [ -f "$INIT/_METADATA" ]                           || { echo "FATAL: pi05_base init missing $INIT" >&2; exit 13; }
+  echo "[$(date)] data + per-domain norm + init verified"
+
+  export JAX_COORDINATOR_ADDRESS="${MLP_WORKER_0_HOST}:15830"
+  export JAX_NUM_PROCESSES="${MLP_WORKER_NUM:-2}"
+  export JAX_PROCESS_INDEX="${MLP_ROLE_INDEX:-0}"
+
+  exec python -u scripts/train.py xvla_kaivis_perdsnorm_cond \
+    --exp-name xvla_kaivis_perdsnorm_cond_cnsh \
+    --no-wandb-enabled \
+    --overwrite
+
+RetryOptions:
+    EnableRetry: true
+    MaxRetryTimes: 1
+
+AccessType: "Public"

@@ -1024,7 +1024,7 @@ _CONFIGS = [
             repo_id="/vePFS/tim/workspace/deepdive_kai0/kai0/data/Task_A/self_built/kai_vis_merged",
             default_prompt="Flatten and fold the cloth.",
             use_delta_joint_actions=False,
-            domain_weights=(1.0, 6.305),  # kai 6512 : vis 1033 → ~1:1 by sampling probability
+            domain_weights=(1.0, 3.970),  # FRAME-level 1:1: kai 5.78M frames / vis 1.46M frames = 3.970 (NOT ep ratio 6.30; kai eps longer)
         ),
         weight_loader=weight_loaders.CheckpointWeightLoader(
             "/vePFS/tim/workspace/openpi_cache/openpi-assets/checkpoints/pi05_base/params"
