@@ -211,6 +211,63 @@ class Normalize(DataTransformFn):
 
 
 @dataclasses.dataclass(frozen=True)
+class ReadDatasetIdFromTaskIndex(DataTransformFn):
+    """Single pre-merged multi-domain dataset: domain varies PER-FRAME, so the constant
+    InjectDatasetId doesn't apply. Domain is carried in the standard `task_index` column
+    (guaranteed to reach the frame dict); map it -> obs.dataset_id.
+
+    Insert FIRST in repack_transforms.inputs so RepackTransform preserves `dataset_id`
+    (see passthrough at the top of RepackTransform). mapping is task_index->domain_id;
+    identity when None (e.g. kai task_index=0->domain0, vis task_index=1->domain1).
+    """
+    mapping: dict | None = None
+
+    def __call__(self, data: DataDict) -> DataDict:
+        # Inference/serve build obs with dataset_id set directly (and no task_index) -> no-op there.
+        # Only acts during training, where the merged frame carries task_index but no dataset_id yet.
+        if "dataset_id" in data or "task_index" not in data:
+            return data
+        ti = int(np.asarray(data["task_index"]).reshape(-1)[0])
+        did = ti if self.mapping is None else int(self.mapping.get(ti, ti))
+        data["dataset_id"] = np.int32(did)
+        return data
+
+
+@dataclasses.dataclass(frozen=True)
+class DomainNormalize(DataTransformFn):
+    """Per-dataset (per-domain) normalization on a single pre-merged multi-domain dataset.
+    Selects norm_stats by `data['dataset_id']` (set upstream by ReadDatasetIdFromTaskIndex),
+    so kai frames use kai stats and vis frames use vis stats — without the broken
+    datasets_yaml/ConcatDataset path. Same quantile/z-score math as Normalize.
+    """
+    domain_norm_stats: dict  # {domain_id(int): {feature: NormStats}}
+    use_quantiles: bool = False
+    strict: bool = False
+
+    def __call__(self, data: DataDict) -> DataDict:
+        if not self.domain_norm_stats:
+            return data
+        did = int(np.asarray(data["dataset_id"]).reshape(-1)[0]) if "dataset_id" in data else None
+        stats = self.domain_norm_stats.get(did)
+        if stats is None:  # unknown/missing domain -> fall back to first available (fail-safe, never skip norm)
+            stats = self.domain_norm_stats[next(iter(self.domain_norm_stats))]
+        return apply_tree(
+            data, stats,
+            self._normalize_quantile if self.use_quantiles else self._normalize,
+            strict=self.strict,
+        )
+
+    def _normalize(self, x, stats: NormStats):
+        mean, std = stats.mean[..., : x.shape[-1]], stats.std[..., : x.shape[-1]]
+        return (x - mean) / (std + 1e-6)
+
+    def _normalize_quantile(self, x, stats: NormStats):
+        assert stats.q01 is not None and stats.q99 is not None
+        q01, q99 = stats.q01[..., : x.shape[-1]], stats.q99[..., : x.shape[-1]]
+        return (x - q01) / (q99 - q01 + 1e-6) * 2.0 - 1.0
+
+
+@dataclasses.dataclass(frozen=True)
 class Unnormalize(DataTransformFn):
     norm_stats: at.PyTree[NormStats] | None
     # If true, will use quantile normalization. Otherwise, normal z-score normalization will be used.

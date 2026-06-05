@@ -92,6 +92,14 @@ class DataConfig:
     asset_id: str | None = None
     # Contains precomputed normalization stats. If None, normalization will not be performed.
     norm_stats: dict[str, _transforms.NormStats] | None = None
+    # Per-domain (per-dataset) norm for a single PRE-MERGED multi-domain dataset: {domain_id: {feature: NormStats}}.
+    # When set, transform_dataset uses DomainNormalize (picks norm by obs.dataset_id) instead of the single Normalize.
+    # This is the healthy per-DS-norm path (single LeRobotDataset, NOT the broken datasets_yaml/ConcatDataset).
+    domain_norm_stats: dict | None = None
+    # Per-domain training sample weights for a single pre-merged dataset, {domain_id: weight}. When set,
+    # create_torch_data_loader uses a domain-weighted sampler so e.g. kai:vis can be balanced to ~1:1 by
+    # probability (no disk copy). dataset_id per frame derived from task_index (ReadDatasetIdFromTaskIndex).
+    domain_sample_weights: dict | None = None
 
     # Used to adopt the inputs from a dataset specific format to a common format
     # which is expected by the data transforms.
@@ -632,6 +640,41 @@ class LerobotAgilexDataConfig(DataConfigFactory):
         )
 
 @dataclasses.dataclass(frozen=True)
+class KaiVisMergedDataConfig(LerobotAgilexDataConfig):
+    """Per-DS-norm + domain-conditioning on a single PRE-MERGED kai+vis dataset.
+
+    Healthy single-source path (one LeRobotDataset, NOT the broken datasets_yaml/ConcatDataset).
+    Domain is carried per-frame via `task_index` (kai=0, vis=1) → ReadDatasetIdFromTaskIndex →
+    obs.dataset_id, which drives (a) DomainNormalize (per-DS norm: kai frames kai-norm, vis frames
+    vis-norm) and (b) the action-head domain token. `domain_weights` → domain_sample_weights gives a
+    probability-balanced sampler (e.g. kai:vis → 1:1) with NO disk copy.
+    """
+    domain_weights: tuple = ()  # (w_dom0, w_dom1, ...); empty → uniform (no weighted sampler)
+
+    @override
+    def create(self, assets_dirs: pathlib.Path, model_config: _model.BaseModelConfig) -> DataConfig:
+        base = super().create(assets_dirs, model_config)
+        root = self.repo_id
+        domain_norm_stats = {
+            0: _normalize.load(_download.maybe_download(f"{root}/norm_domain0_kai")),
+            1: _normalize.load(_download.maybe_download(f"{root}/norm_domain1_vis")),
+        }
+        # prepend ReadDatasetIdFromTaskIndex so dataset_id is set per-frame (RepackTransform then preserves it)
+        repack = _transforms.Group(
+            inputs=[_transforms.ReadDatasetIdFromTaskIndex(), *base.repack_transforms.inputs]
+        )
+        domain_sample_weights = (
+            {i: float(w) for i, w in enumerate(self.domain_weights)} if self.domain_weights else None
+        )
+        return dataclasses.replace(
+            base,
+            repack_transforms=repack,
+            domain_norm_stats=domain_norm_stats,
+            domain_sample_weights=domain_sample_weights,
+        )
+
+
+@dataclasses.dataclass(frozen=True)
 class LerobotARXDataConfig(DataConfigFactory):
     """
     Configuration for the Agilex robot dataset.
@@ -967,6 +1010,39 @@ class TrainConfig:
 
 # Use `get_config` if you need to get a config by name in your code.
 _CONFIGS = [
+    # ===== Cross-embodiment: per-DS-norm + Action-Head conditioning (2026-06-05) =====
+    # Single PRE-MERGED kai+vis dataset `kai_vis_merged` (kai0_base+kai0_dagger=domain0 6512ep,
+    # A_smooth800_dagger_full=domain1/vis 1033ep) → healthy single-source path (NOT datasets_yaml).
+    #  • per-DS norm: DomainNormalize picks kai/vis norm by obs.dataset_id (task_index-derived)
+    #  • domain token: action_head_cond_num_domains=2 (infer fixed vis=1)
+    #  • 1:1 balance by probability (domain_weights), NO disk copy (DomainWeightedSampler)
+    # Health gate: vis inline MAE must be ~0.008 量级, NOT ≈0.47 (that = collapse path).
+    TrainConfig(
+        name="xvla_kaivis_perdsnorm_cond",
+        model=pi0_config.Pi0Config(pi05=True, action_head_cond_num_domains=2),
+        data=KaiVisMergedDataConfig(
+            repo_id="/vePFS/tim/workspace/deepdive_kai0/kai0/data/Task_A/self_built/kai_vis_merged",
+            default_prompt="Flatten and fold the cloth.",
+            use_delta_joint_actions=False,
+            domain_weights=(1.0, 6.305),  # kai 6512 : vis 1033 → ~1:1 by sampling probability
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader(
+            "/vePFS/tim/workspace/openpi_cache/openpi-assets/checkpoints/pi05_base/params"
+        ),
+        lr_schedule=_optimizer.CosineDecaySchedule(warmup_steps=1_000, peak_lr=1.5e-5, decay_steps=50_000, decay_lr=1.5e-6),
+        ema_decay=0.9999,
+        num_train_steps=50_000,
+        keep_period=10_000,
+        save_interval=2_000,
+        num_workers=8,
+        batch_size=128,
+        fsdp_devices=16,
+        inline_eval_val_root="/vePFS/tim/workspace/deepdive_kai0/kai0/data/Task_A/self_built/vis_v2_merged_val",
+        inline_eval_n_frames=200,
+        inline_eval_every=4,
+        inline_eval_dataset_id=1,
+    ),
+
     # X-VLA Exp1: Hard Prompt Mixed (kai data + "kai " prefix, vis data + "vis " prefix)
     # tasks.jsonl patched per dataset in xvla/data/mixed_hard/
     TrainConfig(

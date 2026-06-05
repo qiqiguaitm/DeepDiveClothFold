@@ -332,12 +332,17 @@ def transform_dataset(dataset: Dataset, data_config: _config.DataConfig, *, skip
             )
         norm_stats = data_config.norm_stats
 
+    norm_tf = (
+        _transforms.DomainNormalize(getattr(data_config, "domain_norm_stats", None) or {}, use_quantiles=data_config.use_quantile_norm)
+        if getattr(data_config, "domain_norm_stats", None) and not skip_norm_stats
+        else _transforms.Normalize(norm_stats, use_quantiles=data_config.use_quantile_norm)
+    )
     return TransformedDataset(
         dataset,
         [
             *data_config.repack_transforms.inputs,
             *data_config.data_transforms.inputs,
-            _transforms.Normalize(norm_stats, use_quantiles=data_config.use_quantile_norm),
+            norm_tf,
             *data_config.model_transforms.inputs,
         ],
     )
@@ -360,12 +365,17 @@ def transform_iterable_dataset(
             )
         norm_stats = data_config.norm_stats
 
+    norm_tf = (
+        _transforms.DomainNormalize(getattr(data_config, "domain_norm_stats", None) or {}, use_quantiles=data_config.use_quantile_norm)
+        if getattr(data_config, "domain_norm_stats", None) and not skip_norm_stats
+        else _transforms.Normalize(norm_stats, use_quantiles=data_config.use_quantile_norm)
+    )
     return IterableTransformedDataset(
         dataset,
         [
             *data_config.repack_transforms.inputs,
             *data_config.data_transforms.inputs,
-            _transforms.Normalize(norm_stats, use_quantiles=data_config.use_quantile_norm),
+            norm_tf,
             *data_config.model_transforms.inputs,
         ],
         is_batched=is_batched,
@@ -421,6 +431,45 @@ def create_data_loader(
         config=config,
         episodes=episodes,
     )
+
+
+def _build_domain_weights(dataset, domain_sample_weights: dict) -> "np.ndarray":
+    """Per-frame sampling weight = domain_sample_weights[task_index[frame]]. Unwraps TransformedDataset
+    layers to reach the LeRobotDataset and reads its per-frame `task_index` (= domain, set at merge time).
+    Lets a single pre-merged multi-domain dataset be balanced by probability (e.g. kai:vis -> 1:1) with
+    NO disk copy and WITHOUT the broken datasets_yaml/ConcatDataset path."""
+    d = dataset
+    while not hasattr(d, "hf_dataset") and hasattr(d, "_dataset"):
+        d = d._dataset
+    if not hasattr(d, "hf_dataset"):
+        raise ValueError("domain_sample_weights set but could not reach LeRobotDataset.hf_dataset to read task_index")
+    ti = np.asarray(d.hf_dataset["task_index"]).reshape(-1)
+    weights = np.ones(len(ti), dtype=np.float64)
+    for dom, wt in domain_sample_weights.items():
+        weights[ti == int(dom)] = float(wt)
+    return weights
+
+
+class _DomainWeightedJAXSampler(torch.utils.data.Sampler):
+    """Weighted-with-replacement frame sampler that also shards across JAX processes (per-rank seed).
+    Realizes domain_sample_weights as draw probabilities; each process draws an independent weighted
+    stream so multi-host sees different samples. num_samples per replica ≈ frames/num_replicas."""
+
+    def __init__(self, weights, num_replicas: int, rank: int, seed: int = 0):
+        self.weights = torch.as_tensor(np.asarray(weights), dtype=torch.double)
+        self.num_replicas = max(1, int(num_replicas))
+        self.rank = int(rank)
+        self.seed = int(seed)
+        self.num_samples = math.ceil(len(self.weights) / self.num_replicas)
+
+    def __iter__(self):
+        g = torch.Generator()
+        g.manual_seed(self.seed + self.rank)
+        idx = torch.multinomial(self.weights, self.num_samples, replacement=True, generator=g)
+        return iter(idx.tolist())
+
+    def __len__(self):
+        return self.num_samples
 
 
 def create_torch_data_loader(
@@ -481,6 +530,15 @@ def create_torch_data_loader(
             local_batch_size = batch_size
     else:
         local_batch_size = batch_size // jax.process_count()
+        if getattr(data_config, "domain_sample_weights", None):
+            weights = _build_domain_weights(dataset, data_config.domain_sample_weights)
+            sampler = _DomainWeightedJAXSampler(
+                weights, num_replicas=jax.process_count(), rank=jax.process_index(), seed=seed
+            )
+            logging.info(
+                f"[domain-weighted sampler] weights={data_config.domain_sample_weights} "
+                f"frames={len(weights)} per-replica-samples={sampler.num_samples}"
+            )
 
     logging.info(f"local_batch_size: {local_batch_size}")
     data_loader = TorchDataLoader(
