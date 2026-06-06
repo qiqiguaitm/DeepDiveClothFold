@@ -1010,6 +1010,22 @@ class TrainConfig:
 
 # Use `get_config` if you need to get a config by name in your code.
 _CONFIGS = [
+    # AWBC Advantage Estimator (RECAP Stage 1, PyTorch) — registered so eval.py / eval_adv_est.py can
+    # get_config() to rebuild the model arch for the trained ckpt
+    # kai0/checkpoints/ADVANTAGE_TORCH_KAI0_FLATTEN_FOLD/adv_est_v1 (metadata: pi05 / gemma_2b /
+    # action_horizon=50 / max_token_len=200 / advantage_estimator=True). Used for Stage-2 labeling +
+    # V0 sanity (PyTorch), NOT JAX training. data= is a placeholder (eval only reads cfg.model).
+    TrainConfig(
+        name="ADVANTAGE_TORCH_KAI0_FLATTEN_FOLD",
+        model=pi0_config.Pi0Config(pi05=True, action_dim=32, action_horizon=50, max_token_len=200),
+        data=LerobotAgilexDataConfig(
+            repo_id="/vePFS/tim/workspace/deepdive_kai0/kai0/data/Task_A/self_built/A_smooth800_dagger_full",
+            default_prompt="Flatten and fold the cloth.",
+        ),
+        advantage_estimator=True,
+        num_train_steps=100_000,
+    ),
+
     # ===== Cross-embodiment: per-DS-norm + Action-Head conditioning (2026-06-05) =====
     # Single PRE-MERGED kai+vis dataset `kai_vis_merged` (kai0_base+kai0_dagger=domain0 6512ep,
     # A_smooth800_dagger_full=domain1/vis 1033ep) → healthy single-source path (NOT datasets_yaml).
