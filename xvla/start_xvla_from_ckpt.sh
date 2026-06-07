@@ -29,7 +29,7 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 CKPT_BASE="/data1/DATA_IMP/checkpoints/ckpt_xvla"
-DEFAULT_CKPT_NAME="xvla_x3c_smooth800_step_final"
+DEFAULT_CKPT_NAME="xvla_x3c_smooth800_p0_step_final"  # P0 (ImageNet 归一化, 60k); 旧 30k 是 R1 未修版
 STACK="$REPO_ROOT/start_scripts/xvla/start_xvla_stack.sh"
 
 # 第 1 个位置参数 = ckpt (名字或路径); 空 → 默认。其余转发给 client (如 --execute)。

@@ -417,9 +417,11 @@ def _parse_args():
     p.add_argument("--proprio_feedback", action=argparse.BooleanOptionalAction, default=False,
                    help="server 端预测式 proprio (用上次预测末步当 proprio)。默认【关】: 改由 client node "
                         "走 commanded-proprio (上次下发命令当 proprio, 连续模式正确时序)。开此与 node 版冲突, 勿同开")
-    p.add_argument("--imagenet_norm", action=argparse.BooleanOptionalAction, default=False,
-                   help="P0: 对输入图像做 ImageNet 归一化 (必须与训练 ckpt 一致). "
-                        "30k 旧 ckpt 用 --no-imagenet_norm; P0 重训 ckpt 用 --imagenet_norm.")
+    p.add_argument("--imagenet_norm", action=argparse.BooleanOptionalAction, default=None,
+                   help="对输入图像做 ImageNet 归一化 (必须与训练 ckpt 一致)。"
+                        "默认 None=从 sidecar.image_norm 自动判定 (imagenet→开, none→关, 缺省→开)。"
+                        "显式 --imagenet_norm / --no-imagenet_norm 覆盖。"
+                        "旧 30k/20k ckpt sidecar 标 none; P0 起标 imagenet。")
     p.add_argument("--proprio_resync", type=float, default=0.15,
                    help="预测 proprio 偏离实测 EE 位置超此 (m) 则 resync 回实测 (漂移保护)")
     return p.parse_args()
@@ -444,6 +446,19 @@ def main():
     logger.info("ckpt=%s | prompt=%r | domain_id=%d | source=%s",
                 args.ckpt_dir.name, default_prompt, default_domain, sidecar.get("source", "?"))
 
+    # ImageNet 归一化解析 (train/serve parity 铁律): CLI 显式 > sidecar.image_norm > 默认开。
+    # P0 (2026-06-02) 起所有训练无条件 ImageNet 归一化 → serve 默认开; 旧 30k/20k ckpt
+    # sidecar 标 image_norm="none" 保持自洽。缺字段时默认开 (后续 XVLA pipeline 都用归一化)。
+    if args.imagenet_norm is not None:
+        imagenet_norm, _src = bool(args.imagenet_norm), "cli"
+    else:
+        _sc_norm = str(sidecar.get("image_norm", "")).lower()
+        if _sc_norm in ("imagenet", "none"):
+            imagenet_norm, _src = (_sc_norm == "imagenet"), "sidecar"
+        else:
+            imagenet_norm, _src = True, "default(sidecar 缺 image_norm 字段)"
+    logger.info("imagenet_norm=%s (来源: %s) — 必须与训练 ckpt 一致, 否则真机静默错位", imagenet_norm, _src)
+
     TL, TR = _load_calibration(args.calibration_yaml)
     policy = _load_policy(args.ckpt_dir, args.base_config, device, dtype)
     logger.info("XVLAPolicy loaded (%.1fM params, dtype=%s)",
@@ -457,7 +472,7 @@ def main():
         g_open=args.gripper_open_value, g_close=args.gripper_close_value,
         binarize=args.binarize_gripper, seed=(None if args.seed < 0 else args.seed),
         proprio_feedback=args.proprio_feedback, proprio_resync=args.proprio_resync,
-        imagenet_norm=args.imagenet_norm)
+        imagenet_norm=imagenet_norm)
 
     metadata = {
         "action_kind": "ee",

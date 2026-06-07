@@ -22,7 +22,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 XVLA="$SCRIPT_DIR/start_xvla_autonomy.sh"
 PORT=8003
-DEFAULT_CKPT="/data1/DATA_IMP/checkpoints/ckpt_xvla/xvla_x3c_smooth800_step_final"
+DEFAULT_CKPT="/data1/DATA_IMP/checkpoints/ckpt_xvla/xvla_x3c_smooth800_p0_step_final"  # P0 (ImageNet 归一化, 60k)
 
 # ckpt 是第 1 个位置参数;空串或缺省 → 默认 X3.C。其余参数转发给 client。
 CKPT="${1-}"; [ "$#" -gt 0 ] && shift || true
