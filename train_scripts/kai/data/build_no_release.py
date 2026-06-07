@@ -36,6 +36,7 @@ _REPO = os.environ.get("KAI0_REPO_ROOT", "/vePFS/tim/workspace/deepdive_kai0")
 # 2026-06-02: vis_base v2 数据归入 vis_base/v2/ 子目录; v3 (裁投放) 并列在 vis_base/v3/.
 VIS_BASE = Path(f"{_REPO}/kai0/data/Task_A/vis_base/v2")          # 源: v2 各日期 <date>-v2
 V3_ROOT = Path(f"{_REPO}/kai0/data/Task_A/vis_base/v3")           # per-date 模式输出: <date>-v3
+V3_2_ROOT = Path(f"{_REPO}/kai0/data/Task_A/vis_base/v3.2")       # idle_downsample 输出: <date>-v3.2 (v3 前端裁 + 中段选择性)
 DST_ROOT = Path(f"{_REPO}/kai0/data/Task_A/self_built")           # 合并模式输出 (原 A_0522_0526_*)
 DATES = ["2026-05-22-v2", "2026-05-26-v2"]
 CAMERAS = ("observation.images.top_head", "observation.images.hand_left", "observation.images.hand_right")
@@ -57,6 +58,10 @@ BUILD_WORKERS = int(os.environ.get("BUILD_WORKERS", str(max(1, _avail_cores() //
 ENC_PRESET = os.environ.get("BUILD_PRESET", "veryfast")
 ARM_DIMS = list(range(0, 6)) + list(range(7, 13))   # 12 arm dims (exclude dim6 L_grip, dim13 R_grip)
 THR = 3e-3      # rad/frame: sustained mean |Δa| over arm dims => "moving"
+# v3.2 selective idle-downsample params (env-overridable). Conservative start:
+IDLE_THR = float(os.environ.get("V32_IDLE_THR", "2e-3"))   # rad/frame: per-frame |Δa| below this = idle
+KEEP_LEN = int(os.environ.get("V32_KEEP_LEN", "15"))       # idle run ≤ this many frames (≤0.5s) = short settle, kept whole
+DOWNSAMPLE_K = int(os.environ.get("V32_K", "3"))           # long idle run: keep boundaries + every k-th frame
 WIN = 10        # frames of sustained motion to call it the onset
 MARGIN = 15     # keep this many frames before onset (avoid clipping the reach-start)
 
@@ -110,6 +115,71 @@ def _trim_job(job):
     """Top-level wrapper so ProcessPoolExecutor can pickle it."""
     src_mp4, dst_mp4, cut, new_len = job
     trim_video_pyav(Path(src_mp4), Path(dst_mp4), cut, new_len)
+    return dst_mp4
+
+
+def idle_keep_indices(action: np.ndarray, idle_thr: float = IDLE_THR,
+                      keep_len: int = KEEP_LEN, k: int = DOWNSAMPLE_K) -> np.ndarray:
+    """v3.2 selective idle handling: return sorted frame indices to KEEP.
+    Moving frames always kept; short idle runs (≤keep_len) kept whole (functional settle);
+    long idle runs (>keep_len) compressed: keep both boundaries + every k-th frame.
+    (Boundary transition frames preserved so action chunks don't jump across the seam.)"""
+    T = len(action)
+    if T <= 1:
+        return np.arange(T)
+    da = np.abs(np.diff(action[:, ARM_DIMS], axis=0)).mean(axis=1)      # (T-1,)
+    moving = np.concatenate([da > idle_thr, [True]])                    # (T,); last frame kept
+    keep = np.zeros(T, dtype=bool)
+    i = 0
+    while i < T:
+        if moving[i]:
+            keep[i] = True
+            i += 1
+            continue
+        j = i
+        while j < T and not moving[j]:
+            j += 1
+        L = j - i
+        if L <= keep_len:
+            keep[i:j] = True                       # short settle → keep whole
+        else:
+            keep[i] = True; keep[j - 1] = True     # boundaries
+            keep[i:j][::k] = True                  # every k-th in the run
+        i = j
+    return np.nonzero(keep)[0]
+
+
+def select_video_pyav(src_mp4: Path, dst_mp4: Path, keep_idx: np.ndarray, expected_frames: int):
+    """Re-encode src_mp4 keeping ONLY the decode-indices in keep_idx (in order). Assert == expected."""
+    import av
+    keep_set = set(int(x) for x in keep_idx)
+    in_c = av.open(str(src_mp4))
+    in_stream = in_c.streams.video[0]
+    in_stream.thread_type = "AUTO"
+    out_c = av.open(str(dst_mp4), mode="w")
+    out_stream = out_c.add_stream("libx264", rate=FPS)
+    out_stream.width = in_stream.codec_context.width
+    out_stream.height = in_stream.codec_context.height
+    out_stream.pix_fmt = "yuv420p"
+    out_stream.options = {"crf": "18", "preset": ENC_PRESET, "threads": str(ENC_THREADS)}
+    written, idx = 0, 0
+    for frame in in_c.decode(video=0):
+        if idx in keep_set:
+            for pkt in out_stream.encode(frame.reformat(format="yuv420p")):
+                out_c.mux(pkt)
+            written += 1
+        idx += 1
+    for pkt in out_stream.encode():
+        out_c.mux(pkt)
+    in_c.close(); out_c.close()
+    if written != expected_frames:
+        raise RuntimeError(f"v3.2 video frame mismatch {src_mp4.name}: wrote {written}, "
+                           f"expected {expected_frames} (decoded {idx})")
+
+
+def _select_job(job):
+    src_mp4, dst_mp4, keep_idx, new_len = job
+    select_video_pyav(Path(src_mp4), Path(dst_mp4), np.asarray(keep_idx), new_len)
     return dst_mp4
 
 
@@ -260,6 +330,94 @@ def build_per_date_v3(date_v2: str, dry_run: bool = False, compute_norm: bool = 
     return rep
 
 
+def build_per_date_v32(date_v3: str, dry_run: bool = False, compute_norm: bool = True, action_dim: int = 32,
+                       idle_thr: float = IDLE_THR, keep_len: int = KEEP_LEN, k: int = DOWNSAMPLE_K) -> dict:
+    """v3.2: from vis_base/v3/<date>-v3 (front already trimmed), selectively downsample MIDDLE idle
+    runs (keep short settle, compress long pause) → vis_base/v3.2/<date>-v3.2. Preserves ep ids,
+    rebuilds frame_index/index/timestamp, re-encodes the 3 mp4s to the kept frames (assert ==)."""
+    src = V3_ROOT / date_v3
+    date_v32 = date_v3.replace("-v3", "-v3.2")
+    dst = V3_2_ROOT / date_v32
+    if not src.exists():
+        raise FileNotFoundError(f"v3 src not found: {src}")
+    parquets = sorted((src / "data" / "chunk-000").glob("episode_*.parquet"))
+    src_eps = {json.loads(l).get("episode_id", json.loads(l).get("episode_index")): json.loads(l)
+               for l in (src / "meta" / "episodes.jsonl").open()}
+    print(f"[{date_v3}→{date_v32}] {len(parquets)} eps  (idle_thr={idle_thr} keep_len={keep_len} k={k})", flush=True)
+
+    if not dry_run:
+        if (dst / "meta" / "info.json").exists():
+            print(f"  skip {date_v32}: already complete", flush=True)
+            return {"date_v3": date_v3, "date_v32": date_v32, "skipped": True}
+        if dst.exists():
+            shutil.rmtree(dst)
+        (dst / "data" / "chunk-000").mkdir(parents=True)
+        (dst / "meta").mkdir()
+        for cam in CAMERAS:
+            (dst / "videos" / "chunk-000" / cam).mkdir(parents=True)
+
+    episodes_out, stats_out, video_jobs = [], [], []
+    total_frames, total_in = 0, 0
+    for pq in parquets:
+        ep_id = int(pq.stem.split("_")[1])
+        df = pd.read_parquet(pq)
+        T0 = len(df)
+        action = np.stack(df["action"].to_numpy()).astype(np.float64)
+        keep_idx = idle_keep_indices(action, idle_thr, keep_len, k)
+        new_len = len(keep_idx)
+        total_in += T0
+        if not dry_run:
+            sub = df.iloc[keep_idx].copy().reset_index(drop=True)
+            sub["frame_index"] = np.arange(new_len, dtype=np.int64)
+            sub["episode_index"] = np.int64(ep_id)
+            sub["index"] = np.arange(total_frames, total_frames + new_len, dtype=np.int64)
+            sub["timestamp"] = (np.arange(new_len, dtype=np.float32) / FPS).astype(np.float32)
+            sub.to_parquet(dst / "data" / "chunk-000" / f"episode_{ep_id:06d}.parquet", index=False)
+            for cam in CAMERAS:
+                sv = src / "videos" / "chunk-000" / cam / f"episode_{ep_id:06d}.mp4"  # v3 = feature-key dirs
+                dv = dst / "videos" / "chunk-000" / cam / f"episode_{ep_id:06d}.mp4"
+                video_jobs.append((str(sv), str(dv), keep_idx.tolist(), new_len))
+            meta = src_eps.get(ep_id, {})
+            episodes_out.append({"episode_index": ep_id,
+                                 "tasks": meta.get("tasks", ["Flatten and fold the cloth."]),
+                                 "length": new_len})
+            stats_out.append({"episode_index": ep_id, "stats": per_episode_stats(sub)})
+        total_frames += new_len
+
+    rep = {"date_v3": date_v3, "date_v32": date_v32, "episodes": len(parquets),
+           "frames_in": total_in, "frames_out": total_frames,
+           "compressed_pct": float(100 * (total_in - total_frames) / total_in) if total_in else 0.0}
+    if dry_run:
+        print(f"  DRY: {total_in}→{total_frames} frames (compressed {rep['compressed_pct']:.1f}%)", flush=True)
+        return rep
+
+    if video_jobs:
+        from concurrent.futures import ProcessPoolExecutor, as_completed
+        print(f"  re-encoding {len(video_jobs)} videos ({BUILD_WORKERS} workers)...", flush=True)
+        with ProcessPoolExecutor(max_workers=BUILD_WORKERS) as ex:
+            for fut in as_completed({ex.submit(_select_job, j): j for j in video_jobs}):
+                fut.result()
+
+    with (dst / "meta" / "episodes.jsonl").open("w") as f:
+        for r in episodes_out:
+            f.write(json.dumps(r) + "\n")
+    with (dst / "meta" / "episodes_stats.jsonl").open("w") as f:
+        for r in stats_out:
+            f.write(json.dumps(r) + "\n")
+    shutil.copy(src / "meta" / "tasks.jsonl", dst / "meta" / "tasks.jsonl")
+    info = json.loads((src / "meta" / "info.json").read_text())
+    info["total_episodes"] = len(parquets)
+    info["total_frames"] = total_frames
+    info["total_videos"] = len(parquets) * len(CAMERAS)
+    info["total_chunks"] = 1
+    info["chunks_size"] = max(1000, len(parquets))
+    info["splits"] = {"train": f"0:{len(parquets)}"}
+    (dst / "meta" / "info.json").write_text(json.dumps(info, indent=2))
+    print(f"  done → {dst}  ({total_in}→{total_frames}, compressed {rep['compressed_pct']:.1f}%)", flush=True)
+    _maybe_norm_stats(dst, compute_norm and not dry_run, action_dim)
+    return rep
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--mode", choices=["raw", "no_release"],
@@ -281,7 +439,33 @@ def main():
                     help="source root for --merge-dates: v2 (raw vis_base/v2) or v3 (trimmed vis_base/v3)")
     ap.add_argument("--merge-out", metavar="NAME",
                     help="output dataset name under self_built/ for --merge-dates")
+    ap.add_argument("--per-date-v32", nargs="+", metavar="DATE",
+                    help="v3.2 selective idle-downsample: from vis_base/v3/<date>-v3 compress middle pauses "
+                         "→ vis_base/v3.2/<date>-v3.2. Pass dates like 2026-05-18-v3, or 'all' for every -v3.")
+    ap.add_argument("--idle-thr", type=float, default=IDLE_THR, help="v3.2 idle |Δa| threshold")
+    ap.add_argument("--keep-len", type=int, default=KEEP_LEN, help="v3.2 short-settle keep length (frames)")
+    ap.add_argument("--k", type=int, default=DOWNSAMPLE_K, help="v3.2 long-pause keep-every-k")
     args = ap.parse_args()
+
+    # ---- v3.2 selective idle-downsample mode ----
+    if args.per_date_v32:
+        if args.per_date_v32 == ["all"]:
+            dates = sorted(d.name for d in V3_ROOT.iterdir() if d.is_dir() and d.name.endswith("-v3"))
+        else:
+            dates = args.per_date_v32
+        print(f"v3.2 idle_downsample: {len(dates)} dates → vis_base/v3.2/ "
+              f"(idle_thr={args.idle_thr} keep_len={args.keep_len} k={args.k})", flush=True)
+        reps = [build_per_date_v32(d, dry_run=args.dry_run, compute_norm=not args.no_norm_stats,
+                                   action_dim=args.action_dim, idle_thr=args.idle_thr,
+                                   keep_len=args.keep_len, k=args.k) for d in dates]
+        print("\n=== v3.2 summary ===")
+        for r in reps:
+            if r.get("skipped"):
+                print(f"  {r['date_v32']}: SKIPPED")
+            else:
+                print(f"  {r['date_v32']}: {r['episodes']} ep, {r['frames_in']}→{r['frames_out']} "
+                      f"frames (compressed {r['compressed_pct']:.1f}%)")
+        return
 
     # ---- per-date v3 mode ----
     if args.per_date:
