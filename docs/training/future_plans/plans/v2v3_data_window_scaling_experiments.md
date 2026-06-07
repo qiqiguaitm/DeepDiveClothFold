@@ -15,6 +15,7 @@
 - **Exp-B 5-18~5-28 窗口**: 后期 8 天(955 ep),"近期多日"。
 - **Exp-C 全 v3(排 5-16)**: 全量 1940 ep,"全历史"。
 - **Exp-B→C 顺序**: 先窗口后全量,对比"加早期数据(4-23~5-10)是帮忙还是稀释"。
+- **⭐ Exp-D (2026-06-07 新增)**: 排除嫌疑窗 **5-19~5-27**(= Exp-C 去掉这 6 天)。用户怀疑之前 v3 训练有问题源于**混入 5-19~5-27 脏数据** → 本实验隔离验证。详见 §8。
 
 ---
 
@@ -120,3 +121,24 @@ X-VLA 的 volc 8 卡训练规划写在 [`xvla_track_x_curriculum.md`](xvla_track
 - ✅ **Exp-C 触发**: 手动(Exp-B 完成后)。
 - ✅ **XVLA**: 细化提交,规划落 `xvla_track_x_curriculum.md`。
 - ⏳ 仍需: cnbj vePFS 确认/同步 v3(§4);config 注册 + 数据 build。
+
+---
+
+## 8. ⭐ Exp-D — 排除嫌疑窗 5-19~5-27(2026-06-07,已提交)
+
+> **假说(用户)**: 之前 v3 训练(Exp-C 全量 / Exp-B 窗口)真机有问题,怀疑是**混入了 2026-05-19-v3 ~ 2026-05-27-v3 的脏数据**。本实验把这 6 天剔除,其余同 Exp-C,真机对比验证。
+
+### 数据集 `A_v3_excl_0519_0527` = ≤5-18(排5-16)+ 5-28 = **1335 ep**(13 天)
+选入(实测 ep):4-23(21) 4-24(187) 4-25(96) 4-28(152) 4-29(100) 4-30(83) 5-06(100) 5-07(20) 5-08(101) 5-09(30) 5-10(95) **5-18(201)** **5-28(149)**。
+排除:**5-19/5-20/5-21/5-22/5-26/5-27(嫌疑窗 605 ep)** + 5-16(残缺)。
+> = Exp-C(1940)− 嫌疑窗(605)= 1335。即"全历史去掉嫌疑 6 天"。
+
+### 配置(同 Exp-B/C 单变量,只改数据)
+- config `pi05_flatten_fold_v3_excl_0519_0527`(config.py)· init `mixed_1_clean` · 50k · batch128 · 16卡 · norm 重算 · inline_eval `vis_v2_merged_val`。
+
+### 提交(cnbj 16卡, 2026-06-07)
+- YAML `train_scripts/kai/volc/v3_excl_0519_0527_cnbj_16gpu.yaml`(2-host × 8 H20)。
+- **task_id `t-20260607104053-jgbgw`**(cn-beijing / Robot-North-H20)。
+- ⚠️ **数据 build 折进 entrypoint**(node-0 in-pod 用 `build_no_release.py --merge-src v3 --merge-dates ...` 合并 13 天 + 重算 norm,sentinel barrier;build 失败则 preflight 安全退出,不浪费训练)。原因:cnbj `/vePFS-North-E/vis_robot` 为 root:root 700,本地 tim 无权预建,故在 pod 内(root)建。
+- 监控:`volc_job_status.py` / cnbj `logs/v3_excl_0519_0527_*.log`(root)。
+- **真机为终判**:出 ckpt 后真机对比 Exp-C(含嫌疑窗)→ 若 Exp-D 真机明显改善则假说成立。
