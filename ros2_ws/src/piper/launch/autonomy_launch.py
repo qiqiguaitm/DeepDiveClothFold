@@ -121,6 +121,10 @@ def generate_launch_description():
     prompt_arg = DeclareLaunchArgument('prompt',
         default_value='Flatten and fold the cloth.',
         description='Language prompt (must match training config default_prompt)')
+    dataset_id_arg = DeclareLaunchArgument('dataset_id',
+        default_value='-1',
+        description='Per-domain token for action_head_cond/soft_prompt models (vis=1). '
+                    '-1 (default) = disabled → obs unchanged, backward-compatible with plain pi05.')
     execute_mode_arg = DeclareLaunchArgument('execute_mode',
         default_value='false',
         description='Start in execute mode (true) or observe-only mode (false)')
@@ -317,6 +321,7 @@ def generate_launch_description():
             'host': LaunchConfiguration('host'),
             'port': LaunchConfiguration('port'),
             'prompt': LaunchConfiguration('prompt'),
+            'dataset_id': ParameterValue(LaunchConfiguration('dataset_id'), value_type=int),
             'gpu_id': LaunchConfiguration('gpu_id'),
             'img_front_topic': '/camera_f/camera/color/image_raw',
             'img_left_topic': '/camera_l/camera/color/image_raw',
@@ -444,6 +449,7 @@ def generate_launch_description():
     return LaunchDescription([
         set_ld, set_py, set_path, set_cache, set_mem_frac,
         mode_arg, gpu_arg, config_arg, ckpt_arg, host_arg, port_arg, prompt_arg,
+        dataset_id_arg,
         execute_mode_arg, enable_rerun_arg, enable_policy_arg, calib_arg,
         fg_enable_arg, bg_enable_arg,
         enable_rtc_arg, rtc_execute_horizon_arg,

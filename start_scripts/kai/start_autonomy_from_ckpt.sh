@@ -39,10 +39,18 @@ if [ -n "$ASSET_ID" ] && [ ! -f "$CKPT_DIR/assets/$ASSET_ID/norm_stats.json" ]; 
   exit 1
 fi
 
-echo "[start_autonomy_from_ckpt] config_name=$CONFIG_NAME asset_id=$ASSET_ID ckpt_dir=$CKPT_DIR"
+# Optional sidecar key for domain-conditioned models (action_head_cond_num_domains>0):
+# "deploy_dataset_id": <int> (e.g. 1=vis) → forces the per-domain token at inference.
+# Absent (old sidecars / plain pi05) → no dataset_id:= arg, launch default -1 (disabled). Backward-compatible.
+DATASET_ID=$(/data1/miniconda3/bin/python -c "import json; v=json.load(open('$CKPT_DIR/train_config.json')).get('deploy_dataset_id'); print('' if v is None else int(v))")
+
+echo "[start_autonomy_from_ckpt] config_name=$CONFIG_NAME asset_id=$ASSET_ID dataset_id=${DATASET_ID:-<none>} ckpt_dir=$CKPT_DIR"
 
 cd "$(dirname "$0")/../.."
+EXTRA_ARGS=()
+[ -n "$DATASET_ID" ] && EXTRA_ARGS+=("dataset_id:=$DATASET_ID")
 exec ./start_scripts/kai/start_autonomy.sh --execute \
   "config_name:=$CONFIG_NAME" \
   "checkpoint_dir:=$CKPT_DIR" \
+  "${EXTRA_ARGS[@]}" \
   "$@"

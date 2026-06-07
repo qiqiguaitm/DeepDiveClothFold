@@ -445,6 +445,10 @@ class PolicyInferenceNode(Node):
         self.declare_parameter('shm_req_name', 'kai0_v1_obs')
         self.declare_parameter('shm_resp_name', 'kai0_v1_chunk')
         self.declare_parameter('prompt', 'Flatten and fold the cloth.')
+        # Domain id for action-head-cond / soft-prompt models (Pi0Config.action_head_cond_num_domains>0).
+        # -1 = disabled (obs carries no dataset_id → Observation.dataset_id=None, identical to plain pi05).
+        # Set >=0 (e.g. 1=vis) to force the per-domain token at inference; plumbed from sidecar deploy_dataset_id.
+        self.declare_parameter('dataset_id', -1)
         self.declare_parameter('publish_rate', 30)
         self.declare_parameter('inference_rate', 3.0)
         self.declare_parameter('chunk_size', 50)
@@ -562,6 +566,7 @@ class PolicyInferenceNode(Node):
 
         self.mode = self.get_parameter('mode').value
         self.prompt = self.get_parameter('prompt').value
+        self._dataset_id = int(self.get_parameter('dataset_id').value)  # -1 = no per-domain token (plain pi05)
         self.publish_rate = self.get_parameter('publish_rate').value
         self.inference_rate = self.get_parameter('inference_rate').value
         self._open_loop_chunk = bool(self.get_parameter('open_loop_chunk').value)
@@ -1247,6 +1252,20 @@ class PolicyInferenceNode(Node):
         cache_dir = os.environ.get('JAX_COMPILATION_CACHE_DIR', '/tmp/xla_cache')
         os.makedirs(cache_dir, exist_ok=True)
         os.environ['JAX_COMPILATION_CACHE_DIR'] = cache_dir
+
+        # GPU memory: grow-on-demand instead of JAX's default upfront grab.
+        # JAX defaults to PREALLOCATE=true + MEM_FRACTION=0.75, i.e. it reserves
+        # 0.75×32GB ≈ 24GB the instant the GPU is first touched. On sim01 every
+        # card is shared, so free VRAM is routinely < 24GB → that reservation
+        # blocks indefinitely and create_trained_policy hangs forever right
+        # after the Pi0→Pi0RTCConfig upgrade (observed 2026-06-05: dagger web
+        # "Start session" never completes; reproduced on GPU 0 AND a 23.8GB-free
+        # GPU 3). Set here (before any JAX import) rather than only via the
+        # launch file, because ros2 launch SetEnvironmentVariable did not reach
+        # this subprocess. setdefault → an explicit launch/shell override wins.
+        # pi05 inference needs ~10-13GB, so 0.35 (≈11GB) is ample.
+        os.environ.setdefault('XLA_PYTHON_CLIENT_PREALLOCATE', 'false')
+        os.environ.setdefault('XLA_PYTHON_CLIENT_MEM_FRACTION', '0.35')
 
         # 确保 CUDA 库路径 (reuse auto-detected site-packages path)
         venv_nvidia = os.path.join(_venv_sp, 'nvidia')
@@ -2260,6 +2279,11 @@ class PolicyInferenceNode(Node):
             },
             'prompt': self.prompt,
         }
+        # Domain-conditioned models (action_head_cond_num_domains>0): inject fixed dataset_id so
+        # Pi0.embed_suffix prepends the per-domain token (vis=1). Passthrough via agilex_policy →
+        # Observation.dataset_id. -1 keeps obs bit-identical to plain pi05 (no extra key).
+        if self._dataset_id >= 0:
+            obs['dataset_id'] = np.int32(self._dataset_id)
         # C.2: stamp 不进 obs dict (避免 JAX/V1 transform 链兼容性风险),
         # 走 tuple 侧通道. obs 完全 bit-identical 旧版.
         return obs, int(head_stamp_ns)

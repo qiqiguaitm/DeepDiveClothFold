@@ -20,6 +20,13 @@ class AgilexInputs(transforms.DataTransformFn):
       estimator, optional_rename_map keys may be included as well.
     - state: [14]
     - actions: [action_horizon, 14]
+
+    Optional extended inputs (gated by enable_depth / enable_ee_pose, default off
+    so existing pi05 ckpts are unaffected):
+    - depth_top_head: [H, W] float32 (meters) — D435 aligned depth, fed when
+      enable_depth=True. Emitted as inputs["depth"]["base_0_depth"].
+    - ee_pose_left / ee_pose_right: [7] xyz+quat_wxyz (m / unit quat) in world
+      frame, fed when enable_ee_pose=True. Emitted as inputs["ee_pose"]["left"|"right"].
     """
 
     # The action dimension of the model. Will be used to pad state and actions.
@@ -47,9 +54,14 @@ class AgilexInputs(transforms.DataTransformFn):
 
     EXPECTED_CAMERAS: ClassVar[tuple[str, ...]] = tuple(required_rename_map.keys())
     EXTRA_CAMERAS: ClassVar[tuple[str, ...]] = tuple(optional_rename_map.keys())
-    
+
     # if set all state to zeros
     mask_state: bool = False
+
+    # Extended modality toggles (default off → 14-dim joint-only behavior unchanged).
+    # Set True for models that need depth and/or EE pose proprioception.
+    enable_depth: bool = False
+    enable_ee_pose: bool = False
 
     def __call__(self, data: dict) -> dict:
         # We only mask padding for pi0/pi0_rtc model, not pi05/pi05_rtc or pi0-FAST
@@ -101,6 +113,30 @@ class AgilexInputs(transforms.DataTransformFn):
             "state": masked_state,
         }
 
+        # Optional: depth top_head (H, W) float32 meters → inputs["depth"]["base_0_depth"]
+        if self.enable_depth:
+            if "depth_top_head" not in data:
+                raise ValueError("enable_depth=True but obs missing key 'depth_top_head'")
+            depth = data["depth_top_head"]
+            if isinstance(depth, torch.Tensor):
+                depth = depth.cpu().numpy()
+            inputs["depth"] = {"base_0_depth": np.asarray(depth, dtype=np.float32)}
+
+        # Optional: dual-arm EE pose, 7-dim xyz+quat_wxyz in world frame.
+        # Kept as a separate top-level key so model code can opt-in without
+        # disturbing the existing `state` shape (still 14-dim joint).
+        if self.enable_ee_pose:
+            for side in ("left", "right"):
+                k = f"ee_pose_{side}"
+                if k not in data:
+                    raise ValueError(f"enable_ee_pose=True but obs missing key '{k}'")
+            def _to_np(x):
+                return x.cpu().numpy() if isinstance(x, torch.Tensor) else np.asarray(x)
+            inputs["ee_pose"] = {
+                "left":  _to_np(data["ee_pose_left"]).astype(np.float32),
+                "right": _to_np(data["ee_pose_right"]).astype(np.float32),
+            }
+
         # Add actions if present
         if "actions" in data:
             actions = transforms.pad_to_dim(data["actions"], self.action_dim)
@@ -143,8 +179,33 @@ class AgilexInputs(transforms.DataTransformFn):
 
 @dataclasses.dataclass(frozen=True)
 class AgilexOutputs(transforms.DataTransformFn):
-    """Outputs for the Agilex policy."""
+    """Outputs for the Agilex policy.
+
+    The model emits actions of shape [H, action_dim] where action_dim is the
+    padded model action width (e.g. 32 for pi05). This wrapper slices to the
+    meaningful prefix and tags `action_kind` so the client (policy_inference_node)
+    can branch into joint-mode (drive arms directly) vs EE-mode (run IK first).
+
+    `action_kind` MUST be configured at policy-creation time — the data shape
+    alone cannot disambiguate (action_dim is always padded). It's a property
+    of how the model was trained, not the runtime data.
+
+    Slices:
+      - action_kind="joint": actions[..., :14]
+            14 = left_joint[6] + left_gripper + right_joint[6] + right_gripper
+      - action_kind="ee":    actions[..., :16]
+            16 = left_ee[7 = xyz + quat_wxyz] + left_gripper
+               + right_ee[7 = xyz + quat_wxyz] + right_gripper
+    """
+
+    # "joint" (legacy, current default) or "ee" (Cartesian-trained model).
+    # Set explicitly at policy creation time; do NOT infer from runtime shape.
+    action_kind: str = "joint"
 
     def __call__(self, data: dict) -> dict:
-        # Return the first 14 dimensions of actions (13 joints + 1 gripper)
-        return {"actions": np.asarray(data["actions"][:, :14])} 
+        raw = np.asarray(data["actions"])
+        if self.action_kind == "ee":
+            return {"actions": raw[..., :16], "action_kind": "ee"}
+        if self.action_kind == "joint":
+            return {"actions": raw[..., :14], "action_kind": "joint"}
+        raise ValueError(f"AgilexOutputs.action_kind must be 'joint' or 'ee', got {self.action_kind!r}")

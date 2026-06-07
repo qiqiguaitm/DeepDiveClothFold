@@ -28,8 +28,10 @@ if [ ! -f "$CKPT_DIR/train_config.json" ]; then
   echo "[FAIL] $CKPT_DIR/train_config.json missing — 不是 pack_inference_ckpt.py 产物?" >&2
   exit 1
 fi
-if [ ! -f "$CKPT_DIR/_CHECKPOINT_METADATA" ]; then
-  echo "[FAIL] $CKPT_DIR/_CHECKPOINT_METADATA missing — invalid orbax ckpt" >&2
+# JAX-sourced v1 ckpt 带 _CHECKPOINT_METADATA (orbax); PyTorch-sourced v1 ckpt
+# (convert_pytorch_safetensors_to_v1.py 产物) 带 metadata.pt。二者之一即有效。
+if [ ! -f "$CKPT_DIR/_CHECKPOINT_METADATA" ] && [ ! -f "$CKPT_DIR/metadata.pt" ]; then
+  echo "[FAIL] neither $CKPT_DIR/_CHECKPOINT_METADATA (JAX) nor $CKPT_DIR/metadata.pt (PyTorch) found — invalid ckpt dir" >&2
   exit 1
 fi
 

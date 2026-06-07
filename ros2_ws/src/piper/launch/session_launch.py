@@ -120,7 +120,16 @@ def generate_launch_description():
     # JAX compilation cache lives in the project dir, persists across sessions.
     set_cache = SetEnvironmentVariable('JAX_COMPILATION_CACHE_DIR',
         os.path.join(_KAI0_ROOT, '.xla_cache'))
-    set_mem_frac = SetEnvironmentVariable('XLA_PYTHON_CLIENT_MEM_FRACTION', '0.9')
+    # GPU memory: grow-on-demand, NOT upfront-grab. The old config
+    # (PREALLOCATE unset → default true, MEM_FRACTION=0.9) made JAX reserve
+    # 0.9×32GB ≈ 28.8GB at init. On sim01 every GPU is shared with other jobs,
+    # so no card has 28.8GB free → the preallocation blocks indefinitely and
+    # create_trained_policy hangs forever right after the Pi0→Pi0RTC upgrade
+    # (observed 2026-06-05: web "Start session" never completes). pi05 inference
+    # needs ~10-13GB, so cap growth at 0.35 (≈11GB) and let it allocate lazily —
+    # matching the working autonomy_launch.py (PREALLOCATE=false, MEM_FRACTION=0.35).
+    set_prealloc = SetEnvironmentVariable('XLA_PYTHON_CLIENT_PREALLOCATE', 'false')
+    set_mem_frac = SetEnvironmentVariable('XLA_PYTHON_CLIENT_MEM_FRACTION', '0.35')
 
     policy_node = Node(
         package='piper', executable='policy_inference_node.py',
@@ -158,7 +167,7 @@ def generate_launch_description():
     )
 
     return LaunchDescription([
-        set_py, set_cache, set_mem_frac,
+        set_py, set_cache, set_prealloc, set_mem_frac,
         mode_arg, gpu_arg, config_arg, ckpt_arg, prompt_arg,
         execute_mode_arg, enable_rtc_arg,
         host_arg, port_arg,

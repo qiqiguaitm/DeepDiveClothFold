@@ -1546,6 +1546,20 @@ wheels = [
 ]
 
 [[package]]
+name = "ikpy"
+version = "3.4.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+    { name = "scipy" },
+    { name = "sympy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/0a/3a/9bf290c81a49fc7215e8083b18d097f2f830cdfe155190bf34f5d62fe27c/ikpy-3.4.2.tar.gz", hash = "sha256:f7cc9c54055735deaf89a79ce676e6f5acabc72954e769d1043febfdbfb57840", size = 24771, upload-time = "2024-08-12T11:18:24.812Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/12/c8/1f611b05c89004c399d5cc8a6d33550316d35fe1d7802243e404c43e3324/ikpy-3.4.2-py3-none-any.whl", hash = "sha256:9ead7b2085f057822e563786a70b52a4f5d0db03de9d562f1488df38ccef36af", size = 24302, upload-time = "2024-08-12T11:18:23.679Z" },
+]
+
+[[package]]
 name = "imageio"
 version = "2.37.0"
 source = { registry = "https://pypi.org/simple" }
@@ -3110,6 +3124,7 @@ dependencies = [
     { name = "flax" },
     { name = "fsspec", extra = ["gcs"] },
     { name = "gym-aloha" },
+    { name = "ikpy" },
     { name = "imageio" },
     { name = "jax", extra = ["cuda12"] },
     { name = "jaxtyping" },
@@ -3162,6 +3177,7 @@ requires-dist = [
     { name = "flax", specifier = "==0.10.2" },
     { name = "fsspec", extras = ["gcs"], specifier = ">=2024.6.0" },
     { name = "gym-aloha", specifier = ">=0.1.1" },
+    { name = "ikpy", specifier = ">=3.4.2" },
     { name = "imageio", specifier = ">=2.36.1" },
     { name = "jax", extras = ["cuda12"], specifier = "==0.5.3" },
     { name = "jaxtyping", specifier = "==0.2.36" },

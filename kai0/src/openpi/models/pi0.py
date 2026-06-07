@@ -403,6 +403,8 @@ class Pi0(_model.BaseModel):
         *,
         num_steps: int | at.Int[at.Array, ""] = 10,
         noise: at.Float[at.Array, "b ah ad"] | None = None,
+        tac_prefix: at.Float[at.Array, "b ah ad"] | None = None,
+        tac_delay: int | at.Int[at.Array, ""] = 0,
     ) -> _model.Actions:
         observation = _model.preprocess_observation(None, observation, train=False)
         # note that we use the convention more common in diffusion literature, where t=1 is noise and t=0 is the target
@@ -412,6 +414,14 @@ class Pi0(_model.BaseModel):
         if noise is None:
             noise = jax.random.normal(rng, (batch_size, self.action_horizon, self.action_dim))
 
+        # TAC faithful conditioning (eval only): clamp prefix [0:tac_delay] to clean
+        # normalized GT at per-token time=0, matching compute_loss's training setup,
+        # and only denoise the postfix. Off by default → non-TAC path unchanged.
+        tac_pos_mask = None
+        if tac_prefix is not None:
+            tac_pos_mask = (jnp.arange(self.action_horizon) < tac_delay)[None, :, None]  # (1, ah, 1)
+            noise = jnp.where(tac_pos_mask, tac_prefix, noise)
+
         # first fill KV cache with a forward pass of the prefix
         prefix_tokens, prefix_mask, prefix_ar_mask = self.embed_prefix(observation)
         prefix_attn_mask = make_attn_mask(prefix_mask, prefix_ar_mask)
@@ -420,8 +430,13 @@ class Pi0(_model.BaseModel):
 
         def step(carry):
             x_t, time = carry
+            if tac_prefix is not None:
+                x_t = jnp.where(tac_pos_mask, tac_prefix, x_t)
+                time_emb_arg = jnp.where(tac_pos_mask[..., 0], 0.0, time)  # (1, ah) per-token
+            else:
+                time_emb_arg = jnp.broadcast_to(time, batch_size)
             suffix_tokens, suffix_mask, suffix_ar_mask, adarms_cond = self.embed_suffix(
-                observation, x_t, jnp.broadcast_to(time, batch_size)
+                observation, x_t, time_emb_arg
             )
             # `suffix_attn_mask` is shape (b, suffix_len, suffix_len) indicating how the suffix tokens can attend to each
             # other

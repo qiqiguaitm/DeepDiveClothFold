@@ -31,7 +31,7 @@
 set -eo pipefail
 
 CHECKPOINT_DIR=""
-GPU_ID="0"
+GPU_ID=""             # empty = auto-select GPU with most free memory (see below)
 VARIANT="auto"        # v0 | v1 | auto
 SERVE_PORT="8002"     # V1 serve port (v1 only)
 CONFIG_OVERRIDE=""
@@ -43,7 +43,7 @@ usage() {
 Usage: $0 --ckpt <checkpoint_dir> [options]
 Options:
   --ckpt <path>          Packed ckpt dir (train_config.json + assets/norm_stats.json)
-  --gpu <id>             CUDA_VISIBLE_DEVICES (default 0)
+  --gpu <id>             CUDA_VISIBLE_DEVICES (default: auto-pick GPU with most free VRAM)
   --variant <v0|v1|auto> Inference path (default auto: ckpt_v1/* → v1, else v0)
   --serve-port <port>    V1 serve_policy_v1.py port (v1 only, default 8002)
   --config-name <name>   Override base_config_name (v0 only; default: from sidecar)
@@ -68,6 +68,26 @@ done
 
 [[ -z "$CHECKPOINT_DIR" ]] && { echo "[FAIL] --ckpt required" >&2; exit 1; }
 [[ ! -d "$CHECKPOINT_DIR" ]] && { echo "[FAIL] ckpt dir not found: $CHECKPOINT_DIR" >&2; exit 1; }
+
+# ── GPU auto-select (default when --gpu omitted) ──────────────────────────
+# Web "Start session" forks us without --gpu, so historically GPU_ID hardcoded
+# to 0 — the busiest card on sim01 (shared with other users' jobs). Combined
+# with the old MEM_FRACTION=0.9 preallocation that made the load hang. Now pick
+# the GPU with the MOST free VRAM (tiebreak: higher index, per request — leaves
+# the lower-numbered cards for others). KAI0_GPU_ID=<n> or --gpu <n> override.
+if [[ -z "$GPU_ID" ]]; then
+    if [[ -n "${KAI0_GPU_ID:-}" ]]; then
+        GPU_ID="$KAI0_GPU_ID"
+        echo "[gpu] KAI0_GPU_ID override → GPU $GPU_ID" >&2
+    else
+        GPU_ID=$(nvidia-smi --query-gpu=index,memory.free \
+                     --format=csv,noheader,nounits 2>/dev/null \
+                 | awk -F',' '{i=$1+0; f=$2+0; if (f>bf || (f==bf && i>bi)) {bf=f; bi=i}} END{print bi}')
+        GPU_ID=${GPU_ID:-0}
+        FREE_MB=$(nvidia-smi --query-gpu=memory.free --format=csv,noheader,nounits -i "$GPU_ID" 2>/dev/null || echo "?")
+        echo "[gpu] auto-selected GPU $GPU_ID (most free VRAM: ${FREE_MB}MB)" >&2
+    fi
+fi
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"

@@ -7,12 +7,19 @@ Output layout (Type A flat per `kai0/checkpoints/README.md`):
   ├── assets/<asset_id>/
   │   └── norm_stats.json       (copied from --norm_stats)
   ├── params/                   (copied from <ckpt_step>/params/)
-  └── train_config.json         {"base_config_name": ..., "override_asset_id": ...}
+  ├── datasets.yaml             (copied from --datasets_yaml, optional)
+  └── train_config.json         {"base_config_name": ..., "override_asset_id": ...,
+                                  "override_datasets_yaml": "datasets.yaml" (if provided)}
 
 The JSON sidecar is consumed by sim01's `start_autonomy_from_ckpt.sh` (which sets
 OPENPI_EXTRA_CONFIG=<json>) so the bundle runs without editing
 src/openpi/training/config.py per-experiment. Pre-req: sim01 must already have
 the base_config_name entry in its config.py.
+
+Pass --datasets_yaml when the base TrainConfig uses `datasets_yaml=...` (e.g.
+xvla soft-prompt configs); the file is copied into the bundle and the sidecar
+points to it via a relative path. Resolved at load time against the sidecar's
+parent dir, so the bundle remains relocatable.
 
 Usage:
   python pack_inference_ckpt.py \\
@@ -37,6 +44,8 @@ def main() -> None:
     p.add_argument("--asset_id", required=True)
     p.add_argument("--out_dir", required=True, type=Path)
     p.add_argument("--with_train_state", action="store_true")
+    p.add_argument("--datasets_yaml", type=Path, default=None,
+                   help="Source datasets_yaml to bundle (required when base config has datasets_yaml set, e.g. xvla configs)")
     args = p.parse_args()
 
     src = args.ckpt_step
@@ -46,6 +55,8 @@ def main() -> None:
         raise SystemExit(f"missing {src}/_CHECKPOINT_METADATA")
     if not args.norm_stats.is_file():
         raise SystemExit(f"missing norm_stats: {args.norm_stats}")
+    if args.datasets_yaml is not None and not args.datasets_yaml.is_file():
+        raise SystemExit(f"missing datasets_yaml: {args.datasets_yaml}")
 
     out = args.out_dir
     out.mkdir(parents=True, exist_ok=True)
@@ -71,6 +82,11 @@ def main() -> None:
         print(f"[pack] train_state/ → {out}/train_state/")
 
     sidecar = {"base_config_name": args.config_name, "override_asset_id": args.asset_id}
+    if args.datasets_yaml is not None:
+        bundled_yaml_name = "datasets.yaml"
+        shutil.copy(args.datasets_yaml, out / bundled_yaml_name)
+        sidecar["override_datasets_yaml"] = bundled_yaml_name
+        print(f"[pack] datasets.yaml → {out}/{bundled_yaml_name}")
     (out / "train_config.json").write_text(json.dumps(sidecar, indent=2) + "\n")
     print(f"[pack] train_config.json → {out}/train_config.json")
 
