@@ -1,5 +1,7 @@
 # v2/v3 数据量×时窗 扩展实验 (Data Window Scaling)
 
+> 📦 **2026-06-07 已并入** [`idle_data_trimming_experiments.md`](idle_data_trimming_experiments.md):本系列的**真正主线是"idle(投放/静止)数据裁剪对训练的影响"**(v2=未裁 vs v3=前端投放已裁),已围绕该核心目的重组到新文档。**本文档留存窗口/数量细节 + Exp-D(去脏 5-19~5-27, task `t-20260607104053-jgbgw`)任务跟踪**;idle 主题的汇总与"中段裁剪"分步规划见新文档。
+>
 > **目的**: 用 3 个 pi05 cloth-fold 训练实验,考察**数据时窗/数量**对真机表现的影响 —— 单日 vs 多日窗口 vs 全量。与 [`data_root_cause_probe_experiments.md`](data_root_cause_probe_experiments.md) 互补(后者查"数据质量/裁剪",本系列查"数据数量/时窗")。
 > **状态**: 📝 规划已定稿 (决策见 §7;待 build 数据集 + 注册 config + 提交)
 > **建立**: 2026-06-03
