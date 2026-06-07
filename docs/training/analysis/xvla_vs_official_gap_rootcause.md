@@ -20,6 +20,8 @@
 | **R4** | **架构/容量**: X-VLA-base 0.9B vs pi05 2.2B + 成熟 flow-matching | §0.NEW.2.5b 同标尺 pi05 EE6D MAE 各 horizon 4~6× 优于 X3.C | action 保真度天花板更低 | 🟡 中 |
 
 > **为什么 pi05 同数据 work 而 X3.C 不**: pi05 (a) 图像归一化正确 (openpi AgilexInputs 标准管线), (b) 直接输出 joint **不经 IK**, (c) 模型更大更成熟, (d) 训练配方匹配 (50k step EMA)。X3.C 在 R1/R2/R3/R4 四处同时吃亏。
+>
+> ⚠️ **2026-06-07 重定位(以 §7 为准)**: P0 修了 R1 后真机仍"抓不到衣角",实测复盘 → **R4 容量排除**(官方 0.9B 能 fold)、**新增 D5 = 动作 chunk 表示(我们 1s 稠密 vs 官方 2s intention-abstraction anchor)升为主因**。上表 R1/R4 权重已过时,详见 §7。
 
 ---
 
@@ -145,10 +147,62 @@ P0 ckpt 真机录 trace, 对比 [`x3c_realrobot_trace_20260601.md`](x3c_realrobo
 
 ---
 
+## 7. P0 后实测复盘 + 根因重定位 (2026-06-07) — 容量排除,动作表示(D5)是主因
+
+> P0 版 `xvla_x3c_smooth800_p0/step58000` 训完:offline xyz MAE@1 0.0052(P0 前 0.0122→减半,R1 见效),**但真机仍"连衣角都抓不到"**(用户实测)。两个针对性探针(Claude 离线 A100,bart 真 token + 在线 EE6D 转换 + held-out vis;脚本在 gitignored `_xvla_gripper_debug/`)定位真因。
+
+### 7.1 实测诊断
+
+**(a) 运动剖面 — MAE@1 误导,模型没学会"运动幅度"**(按 GT chunk 位移分高/低动量):
+
+| 窗口 | xyz MAE@1 | GT chunk 位移 | pred chunk 位移 | pred/GT |
+|---|---:|---:|---:|---:|
+| 接近/抓取(高动量) | ~0.005 | ~1.2m | ~0.7–0.9m | **0.60–0.80(欠到位 → 够不到衣角)** |
+| 持握(低动量) | ~0.004 | ~0.012m | ~0.31m | **~26×(该静止却乱飘)** |
+
+→ MAE@1 看着好(≈5mm)但只测**第一步 + teacher-forcing**;整条 chunk 的**运动幅度是错的**:接近只走 60-80%(够不到衣角=真机抓不到),持握乱飘 26×。**又一次应验"offline MAE 系统性反指"。**
+
+**(b) denoise 步数无效(零成本旋钮已排除)**:10→20→50 步,欠到位仅 0.74→0.77→0.80(补 6pp,仍够不到),持握更糟 0.33→0.38m,MAE@1 略升。→ 非推理问题。
+
+### 7.2 ⭐ 根因重定位:R4 容量**排除**,D5 动作表示**升为主因**
+
+- **官方 X-VLA-0.9B 能学会 Agilex 叠衣**(Soft-Fold ~100% 成功 / 33 folds·h⁻¹,paper)→ **同架构同 0.9B 容量足够、任务可学 → R4 容量不成立,DEMOTE**。差异必在我们的实现。
+- 代码坐实 **D5(动作 chunk 表示)= 真凶**:
+
+| | 官方 X-VLA (Agilex real-world) | 我们 |
+|---|---|---|
+| 动作 chunk 构造 | `freq=30, qdur=2.0` → `np.linspace(cur, cur+2s, 31)` = **30 anchor 均匀铺在 2 秒**(intention abstraction 插值下采样) | `stack(action[f_idx:f_idx+30])` = **30 连续帧 = 1 秒稠密** |
+| 代码 | `base.py:152` + `real_world.py:40`(`qdur=2.0`) | `multi_domain_dataset.py:162-163` |
+| 时间窗口 | **2s** | **1s(仅一半)** |
+| 采样 | linspace 时间插值 anchor | 连续帧,无下采样 |
+
+- **机理**:`lerobot/xvla-base` 预训练用的是"30 anchor over 2s"的 **intention-abstraction** 动作表示;我们用"30 连续帧 1s 稠密"finetune → **动作的时间窗 + 尺度与预训练先验冲突** → 模型 hedge → (a) 欠到位(走 60-80% → 够不到衣角)、(b) 持握乱飘。与 7.1 实测完全吻合,**且不依赖容量**(官方 0.9B 用对表示就 fold)。
+- 这正是数据审计 [`xvla_dataset_vs_official.md`](xvla_dataset_vs_official.md) 早标的 **D5(唯一实质差异:chunk 1s vs 官方 2s)**;P0 后经实测 + 代码坐实,**从"下一候选"升为头号主因**。
+
+### 7.3 根因权重修正(P0 后)
+
+| 根因 | P0 前 | P0 后(本次)修正 |
+|---|---|---|
+| **D5 动作表示(1s 稠密 vs 官方 2s anchor)** | 未列 | 🔴 **主因**(实测+代码坐实) |
+| R1 ImageNet 归一 | 主因 | P0 已修,offline 减半但真机仍废 → **非真机主因** |
+| R3 欠训 | 中 | 次(58k 近 plateau) |
+| **R4 容量 0.9B** | 中 | ❌ **排除**(官方 0.9B 能 fold) |
+| R2 EE6D→IK 链 | 高 | 放大器,非源头 |
+| gripper 部署映射(SoftFold -0.0055) | — | 叠加项 |
+
+### 7.4 验证 / 修复(下一步)
+
+- **重建 EE6D 数据用官方 intention abstraction**:每个 query time 取 `linspace(cur, cur+2.0s, num_actions+1)` 时间插值 anchor(对齐 `real_world.py qdur=2.0`),替换"30 连续帧"。重训 X3.C → 看欠到位/乱飘是否消失、真机能否抓到衣角。**这是数据/表示重建,与"官方能 fold"自洽,不是容量。**
+- 次要嫌疑:官方 Soft-Fold 可能 **co-train 在 290K 多域语料**(享跨本体先验),我们是**单域 finetune-from-base on 811ep** → 配方差异。D5 修复后若仍不足再查。
+
+---
+
 ## 附录 — 关键文件:行
 
 | 项 | 位置 |
 |---|---|
+| **官方动作 anchor(intention abstraction)** | `xvla/X-VLA/datasets/domain_handler/base.py:152` (`linspace(cur,cur+qdur,N+1)`) + `real_world.py:40` (`qdur=2.0`) |
+| **我们动作 chunk(30 连续帧 1s)** | `train_scripts/xvla/data/multi_domain_dataset.py:162-163` |
 | 我们训练 forward (绕过 processor) | `train_scripts/xvla/launch/xvla_train.py:330` |
 | 我们 dataset 图像 /255 无归一化 | `train_scripts/xvla/data/multi_domain_dataset.py:157` |
 | lerobot 归一化在 processor | `lerobot/policies/xvla/processor_xvla.py:73,349` |
