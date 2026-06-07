@@ -97,3 +97,5 @@ tau-0-wm/.claude/
 
 # tau-0-wm training outputs (checkpoints/report assets, 100s of GB)
 tau-0-wm/runs/
+# calibration verify outputs (scratch/outputs, jim-generated on sim01)
+calib/verify_out/
