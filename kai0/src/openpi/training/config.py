@@ -1820,6 +1820,37 @@ _CONFIGS = [
         inline_eval_every=4,
     ),
 
+    # AWBC (RECAP traditional route): warm-start from smooth800 BC, fine-tune on A_smooth800_dagger_all
+    # with per-frame advantage prompt ("...Advantage: positive/negative", ra>=0 split, 75.3% positive).
+    # Same pi05 arch (advantage carried in the text prompt, NOT a domain token). Infer: always "positive".
+    # norm_stats recomputed on the AWBC dataset (incl dagger action distribution). cnsh 8卡.
+    TrainConfig(
+        name="pi05_flatten_fold_awbc",
+        model=pi0_config.Pi0Config(pi05=True),
+        data=LerobotAgilexDataConfig(
+            repo_id="/vePFS/tim/workspace/deepdive_kai0/kai0/data/Task_A/self_built/A_smooth800_dagger_all_awbc",
+            default_prompt=None,
+            base_config=DataConfig(prompt_from_task=True),  # per-frame task_index → tasks.jsonl advantage prompt
+            use_delta_joint_actions=False,
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader(
+            "/vePFS/tim/workspace/deepdive_kai0/kai0/checkpoints/task_a_new_smooth_800_step49999/params"
+        ),
+        lr_schedule=_optimizer.CosineDecaySchedule(
+            warmup_steps=1_000, peak_lr=1.5e-5, decay_steps=50_000, decay_lr=1.5e-6,
+        ),
+        ema_decay=0.9999,
+        num_train_steps=50_000,
+        keep_period=10_000,
+        save_interval=2_000,
+        num_workers=16,
+        batch_size=128,
+        fsdp_devices=8,
+        inline_eval_val_root="/vePFS/tim/workspace/deepdive_kai0/kai0/data/Task_A/self_built/vis_v2_merged_val",
+        inline_eval_n_frames=200,
+        inline_eval_every=4,
+    ),
+
     # Exp-B (D2): smooth800抽样 + dagger 1:1 (~454 ep), best ckpt step40000 微调 20k — cnsh 8卡
     TrainConfig(
         name="pi05_flatten_fold_A_smooth800_dagger_1to1_ft",
