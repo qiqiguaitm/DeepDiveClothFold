@@ -50,9 +50,19 @@ Entrypoint: |
   nvidia-smi -L
 
   KAI0=/vePFS/tim/workspace/deepdive_kai0/kai0
+
+  # ---- bootstrap uv + Python 3.11 (root user; .venv python symlink hardcodes /home/tim/.local uv path) ----
+  if [ ! -x "$HOME/.local/bin/uv" ]; then
+    curl -LsSf https://astral.sh/uv/install.sh | sh
+  fi
+  export PATH="$HOME/.local/bin:$PATH"
+  uv python install 3.11.15 2>&1 | tail -2
+  mkdir -p /home/tim/.local/share
+  ln -sfn /root/.local/share/uv /home/tim/.local/share/uv
+
   cd "$KAI0"
   source .venv/bin/activate
-  python -c "import torch; print('torch',torch.__version__,'cuda',torch.cuda.is_available(),'ngpu',torch.cuda.device_count())"
+  python -c "import torch, cv2; print('torch',torch.__version__,'cv2',cv2.__version__,'cuda',torch.cuda.is_available(),'ngpu',torch.cuda.device_count())"
 
   DS=/vePFS/tim/workspace/deepdive_kai0/kai0/data/Task_A/self_built/A_smooth800_dagger_all
   CKPT=/vePFS/tim/workspace/deepdive_kai0/kai0/checkpoints/ADVANTAGE_TORCH_KAI0_FLATTEN_FOLD/adv_est_v1/100000
