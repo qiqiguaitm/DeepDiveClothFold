@@ -105,6 +105,9 @@ def parse_args():
                         help='Total workers for sharding (shard = ep_idx %% num_workers)')
     parser.add_argument('--worker-id', type=int, default=0,
                         help='This worker index [0, num_workers)')
+    parser.add_argument('--only-episodes', type=int, nargs='+', default=None,
+                        help='If set, label ONLY these episode indices (overrides sharding). '
+                             'Used for targeted cleanup of a few missing episodes.')
     return parser.parse_args()
 
 
@@ -165,8 +168,12 @@ def main():
         # Shard episodes across workers (ep_idx % num_workers == worker_id)
         num_workers = getattr(args, 'num_workers', 1)
         worker_id = getattr(args, 'worker_id', 0)
-        all_eps = range(dataset_metadata.total_episodes)
-        my_eps = [e for e in all_eps if e % num_workers == worker_id]
+        if getattr(args, 'only_episodes', None):
+            my_eps = list(args.only_episodes)
+            print(f"[only-episodes] labeling {len(my_eps)} specific episodes: {my_eps}")
+        else:
+            all_eps = range(dataset_metadata.total_episodes)
+            my_eps = [e for e in all_eps if e % num_workers == worker_id]
         for i in tqdm(my_eps, desc=f"Evaluating (w{worker_id}/{num_workers})"):
             parquet_file = repo_id / dataset_metadata.data_path.format(
                 episode_chunk=i // dataset_metadata.chunks_size, episode_index=i
