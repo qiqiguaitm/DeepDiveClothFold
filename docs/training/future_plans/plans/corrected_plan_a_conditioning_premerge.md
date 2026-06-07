@@ -2,7 +2,8 @@
 
 > **目的**: 干净地检验 **per-dataset norm + domain-token conditioning** 能否在 kai+vis 混训下保住 vis 部署精度(并为"压双模态抖动 / kai 帮 OOD"做真机判据)。之前所有 conditioning 实验都跑在 broken 的 `datasets_yaml`/ConcatDataset 路径上、全塌成 predict-zero —— **conditioning 从没被真正检验过**。本路线改走**物理预合并单源 + 真·per-DS norm + 加权采样**。
 >
-> **状态**: ✅ **offline 跑通 (2026-06-06)** —— `pi05_kaivis_perdsnorm_cond` 50k 训完,vis inline MAE@1 单调降到 **0.0086(≈ vis-only baseline),全程没塌 0.47**。这是 conditioning 路线**第一次干净验证成功**。🔴 **真机 + no-cond control 仍待做**(Q1/Q2/Q3 终判)。
+> **状态**: ✅ **offline + 真机均通过 (2026-06-07)** —— `pi05_kaivis_perdsnorm_cond` 50k 训完:offline vis inline MAE@1 单调降到 **0.0086(≈ vis-only),全程没塌**;**真机实测无问题(用户 2026-06-07)**。conditioning 路线**第一次干净验证成功(offline+真机)**。
+> ⚠️ **但留下一个 confound**:Exp-1 的 vis = `smooth800 + vis_dagger`,kai = `base + kai_dagger` —— **两边都含 dagger(真机纠错强成分)**,**无法分辨真机好是 kai 的贡献还是 vis_dagger 的功劳**。→ 需 **Exp-2(vis 缩到纯 smooth800,去 vis_dagger)** 隔离 kai 是否真帮(见 §7)。
 >
 > **最佳 ckpt**:
 > ```
@@ -19,7 +20,8 @@
 
 ## TL;DR (结论速览, 2026-06-06)
 
-1. **方法跑通,没塌**: `pi05_kaivis_perdsnorm_cond`(kai_base+dagger ⊕ vis=smooth800+dagger,per-DS norm + domain token + 帧级 1:1 加权采样,单预合并集)50k 训完。vis inline MAE@1 **0.0305(8k)→ 0.0086(49999)**,单调收敛、末端 plateau、无过拟合。**对比历史三连崩(@1≈0.47 predict-zero),这是 conditioning 第一次在健康路径上跑成功。**
+1. **方法跑通,没塌,真机 OK**: `pi05_kaivis_perdsnorm_cond`(kai_base+dagger ⊕ vis=smooth800+dagger,per-DS norm + domain token + 帧级 1:1 加权采样,单预合并集)50k 训完。vis inline MAE@1 **0.0305(8k)→ 0.0086(49999)**,单调收敛;**真机实测无问题(用户 2026-06-07)**。对比历史三连崩(@1≈0.47),conditioning 第一次在健康路径上 offline+真机双通过。
+   - ⚠️ **confound(待 Exp-2 解)**: vis 含 vis_dagger、kai 含 kai_dagger,两边都有 dagger(真机纠错强成分)→ **分不清真机好是 kai 帮的还是 vis_dagger 的功劳**。
 2. **kai 没伤 vis**: 收敛 vis @1=0.0086 ≈ 纯 vis baseline(Exp-B vis 0.0080 / dagger-B 0.0085)。混入 6512 ep kai + per-DS norm + token,vis in-distribution 单步精度**持平**纯 vis。
 3. **三连崩的真因不是 conditioning,是 `datasets_yaml` 代码路径**(详见 §0)。修复 = 物理预合并单源 + 真·per-DS norm(之前从没实现)+ task_index 透传 domain + 帧级加权采样。
 4. **还没回答的(需真机 + control)**: Q1 减抖、Q2 超越/OOD、Q3 conditioning 必要性(要 no-cond control 对照)。offline 只证明"前置闸门通过"。
@@ -50,9 +52,9 @@
 
 | # | 问题 | 假说 | 终判(真机) | **offline 进展 (2026-06-06)** |
 |---|---|---|---|---|
-| **Q1** | domain token(推理固定 vis)能否消歧、压住真机抖动? | 能 | 真机抖动 ≤ vis-only | ⏳ offline 测不到抖动(逐帧 MAE 不显著)。前置闸门✅:跑通+没塌 |
-| **Q2** | 加 kai co-train(有 cond)能否**超越** vis-only(成功率/OOD)? | 边际提升或持平 | 真机成功率 ≥ vis-only | 🟡 offline **持平**(vis @1=0.0086 ≈ vis-only 0.008)→ 没伤,但"超越"要真机 OOD |
-| **Q3** | conditioning 是否必要?(vs 预合并无 cond) | 必要(无 cond=坑 B) | 对照 no-cond control | ⏳ **control 还没跑** → Q3 未答。本次只证 cond 版健康 |
+| **Q1** | domain token(推理固定 vis)能否消歧、压住真机抖动? | 能 | 真机抖动 ≤ vis-only | ✅ **真机无问题(用户 2026-06-07)** —— 不抖、可用。(具体抖动/成功率数值待量化回填)|
+| **Q2** | 加 kai co-train(有 cond)能否**超越** vis-only(成功率/OOD)? | 边际提升或持平 | 真机成功率 ≥ vis-only | ⚠️ 真机 work,但 **dagger confound 无法归因**:vis 含 vis_dagger → 分不清是 kai 还是 vis_dagger 的功劳 → **Exp-2 隔离(§7)** |
+| **Q3** | conditioning 是否必要?(vs 预合并无 cond) | 必要(无 cond=坑 B) | 对照 no-cond control | ⏳ **control 还没跑** → Q3 未答 |
 
 > ⚠️ **真机为终判**: offline per-source MAE 只用于 ① 训练健康闸门 ② 选 ckpt ③ 相对差。conditioning 的价值(消歧/减抖)在逐帧 MAE 上未必显著 → **必须真机对比**。
 
@@ -152,11 +154,57 @@ offline vis MAE ≈ 0.47 ? — 否(0.0086)✅ → 进真机
 
 - [x] 合并集 `kai_vis_merged` + 2 份 per-DS norm + 帧级加权采样 + config + smoke + cnsh 16卡训练 50k
 - [x] offline 健康闸门(vis @1=0.0086,没塌)
-- [ ] **no-cond control**:同数据/同采样,去掉 `action_head_cond_num_domains`(= 坑 B 复现,Q3 对照)
-- [ ] **vis-only baseline**:纯 `A_smooth800_dagger_full`(无 kai)训的模型 = 要超越/对比的对象。**`dagger-A full`(`pi05_flatten_fold_A_smooth800_dagger_full`)正好就是它**(同 vis 数据、从 mixed_1_clean、无 kai 混训)→ 直接复用作 vis-only 参考,省一组
-- [ ] **三者 offline 同 val 重测**(cond/control/vis-only,严格可比)
-- [ ] **vis 真机三方对比**(抖动 + 成功率 + OOD)→ Q1/Q2/Q3 终判
+- [x] **Exp-1 真机**:无问题(用户 2026-06-07)。✅ conditioning 路线 offline+真机双通过(具体抖动/成功率数值待量化回填)
+- [ ] **⭐ Exp-2(隔离 kai)**:vis 缩到纯 smooth800(去 vis_dagger)+ 重算权重(~6.2)+ 重算 per-DS norm + 同方式重训 → 见 §7.2
+- [ ] **Exp-2 真机 vs smooth800-only baseline**(= 既有 `task_a_new_smooth_800` 模型)→ **判定 kai 是否真帮**
+- [ ] (可选)**no-cond control**:同数据去掉 `action_head_cond_num_domains`(Q3,conditioning 必要性)
 - [ ] 回填 `xvla_conditioning_methods_results.md` + deep-dive 结论
+
+---
+
+## 7. 实验进度总结 + 新实验 Exp-2(隔离 kai 贡献)
+
+### 7.1 已完成实验
+
+| 实验 | config | kai | vis | 采样 | offline vis MAE@1 | 真机 | 结论 |
+|---|---|---|---|---|---:|---|---|
+| 历史三连崩 | E3.6 / Track C / Action-delta | base+dagger | vis_v2_merged ×7 | datasets_yaml ConcatDataset(broken) | ≈0.47 塌 | 不动/抖 | ❌ 管线 bug,非 conditioning |
+| **Exp-1** ✅ | `pi05_kaivis_perdsnorm_cond` | base+dagger | **smooth800+dagger** | 预合并单源 + per-DS norm + 帧级 1:1 | **0.0086** | ✅ **无问题(2026-06-07)** | conditioning 路线 offline+真机首次跑通 |
+
+**Exp-1 已坐实**:① 物理预合并 + 真 per-DS norm + 帧级加权 → conditioning 不塌、真机可用;② kai 没伤 vis(@1 持平纯 vis)。
+**Exp-1 未解(confound)**:vis 含 vis_dagger、kai 含 kai_dagger → **真机好分不清是 kai 的贡献还是 vis_dagger(真机纠错强成分)的功劳**。
+
+### 7.2 ⭐ Exp-2 — vis 去 dagger(纯 smooth800),隔离 kai 是否真帮
+
+> **动机**: 去掉 vis 侧 dagger 这个强 confound,让 vis 基线"干净",再看加 kai 是否真带来真机增益。
+
+**变更(相对 Exp-1,单变量:只动 vis 源)**:
+| | Exp-1 | **Exp-2** |
+|---|---|---|
+| vis 数据 | `A_smooth800_dagger_full`(1033ep/1.46M,含 vis_dagger) | **`A_new_smooth_800/base`(811ep/0.93M,纯 smooth800,去 vis_dagger)** |
+| kai 数据 | base+dagger(6512ep/5.78M) | 不变 |
+| 帧级权重 (kai,vis) | (1.0, 3.97) | **(1.0, ~6.2)** 重算维持帧级 1:1(vis 0.93M / kai 5.78M)|
+| per-DS norm | kai / vis(含dagger) | **vis 用纯 smooth800 帧重算** |
+| 其余 | per-DS norm + domain token + 预合并单源 + 50k/bs128/16卡 + init pi05_base + inline_eval_dataset_id=1 | **完全相同** |
+
+**对照 baseline(关键,干净可比)**:
+| Run | kai | vis | dagger? | 用途 |
+|---|---|---|---|---|
+| **smooth800-only baseline** | ❌ | 纯 smooth800 | 无 | = 既有模型 `task_a_new_smooth_800(_new_norm)`(无 kai 无 dagger)→ 直接复用作干净 vis-only 参考 |
+| **Exp-2(新)** | base+dagger | 纯 smooth800 | 仅 kai 侧 | 测 kai 贡献 |
+
+**判据(真机为终判)**: Exp-2 真机 vs smooth800-only baseline →
+- Exp-2 **明显优**(成功率↑/抖动↓/OOD↑)→ **kai 数据确实帮 vis**(且非 vis_dagger 功劳)。
+- Exp-2 **≈ baseline** → kai 对(同任务近同构的)vis 无净增益 → 收束到 vis-only / 把 kai 留给真异构。
+- ⚠️ 残留: kai 仍含 kai_dagger(属"kai 数据"一部分,合理);若要更纯,后续可再出 kai-base-only 变体(本次先一个)。
+
+**执行链(待提交)**:
+1. build 新合并集 `kai_vis_s800_merged`(`build_kai_vis_merged.py` 改 vis 源 → `A_new_smooth_800/base`)+ `build_kai_vis_norm.py` 重算 2 份 per-DS norm(vis=纯 smooth800)。
+2. 重算帧级权重 ≈ 5.78M/0.93M = **6.2**(维持帧级 1:1)。
+3. 新 config `pi05_kaivis_cond_visS800`(克隆 `pi05_kaivis_perdsnorm_cond`,改 data 指向新集 + domain_weights)。commit+push。
+4. smoke(实例化采样器,验证 weight + dataset_id 透传)。
+5. 提交 16卡(cnsh 同 Exp-1,或 cnbj 按资源)。
+6. 出 ckpt → 真机 vs smooth800 baseline 对比 → 回填本节结论。
 
 ---
 
