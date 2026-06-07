@@ -88,8 +88,11 @@ giga_world_policy/scripts/aihc/workspace/
 # (checkpoints/ 与 __pycache__/ 已被全局规则忽略)
 tau-0-wm/.claude/
 
-# NVIDIA/cosmos 工程 (含自己的 .git + 280G 预训练) — 收拢于此, 绝不入 kai0 仓库
-/cosmos/
+# NVIDIA/cosmos 工程: 文档/cookbooks/源码入仓; 排除大权重、本地环境、eval 视频与日志
+# (.venv/ *.pyc *.bak .claude/ 已由全局规则忽略)
+/cosmos/models/
+/cosmos/wam_fold_policy/**/*.mp4
+/cosmos/wam_fold_policy/**/*.log
 /cosmos.oldlink.bak
 
 # tau-0-wm training outputs (checkpoints/report assets, 100s of GB)

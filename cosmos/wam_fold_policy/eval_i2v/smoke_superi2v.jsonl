@@ -1,0 +1,2 @@
+{"model": "Cosmos3-Super-Image2Video", "ep": 102, "cam": "cam_high", "horizon": "1s", "anchor": 0, "gen_s": 113.9, "psnr": 13.3491, "ssim": 0.6791, "temporal_absdiff_ratio": 20.3842}
+{"model": "Cosmos3-Super-Image2Video", "ep": 102, "cam": "cam_high", "horizon": "7s", "anchor": 0, "gen_s": 974.9, "psnr": 11.6839, "ssim": 0.474, "temporal_absdiff_ratio": 3.3201}

@@ -1,0 +1,9 @@
+{"model": "Cosmos3-Nano", "ep": 102, "cam": "cam_high", "horizon": "7s", "anchor": 0, "gen_s": 261.1, "psnr": 15.6684, "ssim": 0.6459, "temporal_absdiff_ratio": 1.6704}
+{"model": "Cosmos3-Nano", "ep": 102, "cam": "cam_left_wrist", "horizon": "7s", "anchor": 0, "gen_s": 260.1, "psnr": 13.0066, "ssim": 0.5496, "temporal_absdiff_ratio": 1.7967}
+{"model": "Cosmos3-Nano", "ep": 102, "cam": "cam_right_wrist", "horizon": "7s", "anchor": 0, "gen_s": 260.2, "psnr": 12.8597, "ssim": 0.5663, "temporal_absdiff_ratio": 2.0836}
+{"model": "Cosmos3-Nano", "ep": 126, "cam": "cam_high", "horizon": "7s", "anchor": 0, "gen_s": 260.5, "psnr": 15.6367, "ssim": 0.7085, "temporal_absdiff_ratio": 2.2742}
+{"model": "Cosmos3-Nano", "ep": 126, "cam": "cam_left_wrist", "horizon": "7s", "anchor": 0, "gen_s": 260.6, "psnr": 9.4854, "ssim": 0.4557, "temporal_absdiff_ratio": 1.3748}
+{"model": "Cosmos3-Nano", "ep": 126, "cam": "cam_right_wrist", "horizon": "7s", "anchor": 0, "gen_s": 260.6, "psnr": 10.5591, "ssim": 0.5526, "temporal_absdiff_ratio": 1.1385}
+{"model": "Cosmos3-Nano", "ep": 168, "cam": "cam_high", "horizon": "7s", "anchor": 0, "gen_s": 260.5, "psnr": 15.3913, "ssim": 0.7019, "temporal_absdiff_ratio": 1.4305}
+{"model": "Cosmos3-Nano", "ep": 168, "cam": "cam_left_wrist", "horizon": "7s", "anchor": 0, "gen_s": 260.5, "psnr": 9.5306, "ssim": 0.4667, "temporal_absdiff_ratio": 2.0247}
+{"model": "Cosmos3-Nano", "ep": 168, "cam": "cam_right_wrist", "horizon": "7s", "anchor": 0, "gen_s": 260.4, "psnr": 10.4333, "ssim": 0.5021, "temporal_absdiff_ratio": 1.5686}

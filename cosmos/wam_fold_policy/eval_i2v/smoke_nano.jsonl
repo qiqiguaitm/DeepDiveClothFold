@@ -1,0 +1,2 @@
+{"model": "Cosmos3-Nano", "ep": 102, "cam": "cam_high", "horizon": "1s", "anchor": 0, "gen_s": 32.8, "psnr": 15.6074, "ssim": 0.7367, "temporal_absdiff_ratio": 15.252}
+{"model": "Cosmos3-Nano", "ep": 102, "cam": "cam_high", "horizon": "7s", "anchor": 0, "gen_s": 316.0, "psnr": 15.6684, "ssim": 0.6459, "temporal_absdiff_ratio": 1.6704}

@@ -1,0 +1,86 @@
+# wam_fold_nano — Cosmos3-Nano-Policy posttrain on the WAM dual-arm fold dataset.
+# Consumed by cosmos_framework.configs.toml_config.sft_config.load_experiment_from_toml.
+# The full dataloader wiring (WamFoldLeRobotDataset + ActionDataPacker) lives in
+# the experiment Python (configs/base/experiment/action/posttrain_config/wam_fold_nano.py);
+# this TOML only overrides top-level scalars.
+
+[job]
+task         = "vfm"
+experiment   = "wam_fold_nano"
+project      = "cosmos3"
+group        = "action"
+name         = "wam_fold_nano"
+wandb_mode   = "disabled"
+
+[model]
+max_num_tokens_after_packing = 45056
+joint_attn_implementation    = "two_way"
+precision                    = "bfloat16"
+
+[model.ema]
+enabled         = true
+rate            = 0.1
+iteration_shift = 0
+
+[model.parallelism]
+data_parallel_shard_degree     = 8                      # HSDP: shard within node (8 GPU, NVLink) — 16B fits per-node
+data_parallel_replicate_degree = 4                      # replicate across 4 nodes (1 grad all-reduce/step, not per-layer)
+
+[model.compile]
+enabled         = true
+compile_dynamic = true
+
+[model.activation_checkpointing]
+mode               = "selective"                        # per-op SAC: recompute only heavy ops (faster backward than full; mem-safe under HSDP)
+save_ops_regex     = ["fmha"]
+preserve_rng_state = true
+determinism_check  = "default"
+
+[model.tokenizer]
+vae_path = "${oc.env:WAN_VAE_PATH}"
+
+[optimizer]
+betas          = [0.9, 0.95]
+eps            = 1.0e-8
+fused          = true
+keys_to_select = []
+lr             = 2.0e-5
+weight_decay   = 0
+
+[scheduler]
+cycle_lengths      = [300]
+f_max              = [1.0]
+f_min              = [0.0]
+f_start            = [0.0]
+verbosity_interval = 0
+warm_up_steps      = [30]
+
+[trainer]
+distributed_parallelism = "fsdp"
+grad_accum_iter         = 1
+logging_iter            = 1
+max_iter                = 300
+
+[trainer.callbacks.grad_clip]
+clip_norm    = 0.1
+force_finite = true
+
+[checkpoint]
+keys_to_skip_loading = [
+    "net_ema.",
+    "action2llm.",
+    "llm2action.",
+    "action_modality_embed",
+    "action_pos_embed.",
+]
+load_path     = "${oc.env:BASE_CKPT_DCP}"
+save_iter     = 100
+# strict_resume is set to false in the experiment Python (not a TOML schema field).
+
+# NOTE: no [dataloader_train] block. On the VFM task, max_sequence_length is
+# emitted verbatim as dataloader_train.max_sequence_length=... but this
+# experiment uses DataPackerDataLoader (ctor kwarg is max_tokens, not
+# max_sequence_length), so a verbatim override would fail. max_tokens (45056)
+# is set directly in the experiment Python (wam_fold_nano.py) instead. To change
+# the token budget, pass an extra CLI override:
+#   dataloader_train.max_tokens=<N>
