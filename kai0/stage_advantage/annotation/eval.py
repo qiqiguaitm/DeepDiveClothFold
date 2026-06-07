@@ -108,6 +108,9 @@ def parse_args():
     parser.add_argument('--only-episodes', type=int, nargs='+', default=None,
                         help='If set, label ONLY these episode indices (overrides sharding). '
                              'Used for targeted cleanup of a few missing episodes.')
+    parser.add_argument('--batch-size', type=int, default=None,
+                        help='Override inference batch size (default 400 for PI06, 160 for KAI0). '
+                             'Lower it on a shared/partly-full GPU to avoid CUDA OOM.')
     return parser.parse_args()
 
 
@@ -215,7 +218,7 @@ def main():
                 results = evaluator.evaluate_video_1timestep_advantage(
                     video_paths=video_paths,
                     prompt="Flatten and fold the cloth.",
-                    batch_size=400,
+                    batch_size=args.batch_size or 400,
                     frame_interval=1,       # 1 = evaluate every frame
                     min_frame_index=min_frame_index,
                     max_frame_index=max_frame_index,
@@ -225,7 +228,7 @@ def main():
                 results = evaluator.evaluate_video_2timesteps_advantages(
                     video_paths=video_paths,
                     prompt="Flatten and fold the cloth.",
-                    batch_size=160,
+                    batch_size=args.batch_size or 160,
                     frame_interval=1,       # 1 = evaluate every frame
                     relative_interval=relative_interval,
                     min_frame_index=min_frame_index,
