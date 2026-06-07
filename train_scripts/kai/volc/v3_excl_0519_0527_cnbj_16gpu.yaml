@@ -70,6 +70,7 @@ Entrypoint: |
   nvidia-smi -L
 
   REPO=/vePFS-North-E/vis_robot/workspace/deepdive_kai0
+  export KAI0_REPO_ROOT="$REPO"   # build_no_release.py reads vis_base/v3 under this root (else defaults to cnsh /vePFS/tim → FileNotFound)
   cd "$REPO/kai0"
   ls -la .venv/bin/python
   source .venv/bin/activate
