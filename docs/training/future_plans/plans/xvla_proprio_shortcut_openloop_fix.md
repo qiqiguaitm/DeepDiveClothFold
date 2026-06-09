@@ -42,21 +42,47 @@
 
 ---
 
-## 3. 根因
+## 3. 根因 (2026-06-09 深度调研定性): 数据约定 × 架构敏感性
 
-折叠任务**高度程式化** (从 home 位姿走固定折叠序列) + **单 domain(20)** + `configuration_xvla.py:85 use_proprio=True` 把 `state20` (EE6D) 当强条件输入 → 模型用 proprioception 就能把整条轨迹拟合到低 loss, 训练梯度没有动力流向 Florence2 视觉编码器。这是 **causal confusion / 开环捷径**的教科书案例。
+**一句话: 我们的 KAI0 数据用了 `action[t] ≡ observation.state[t]` 的 relabel 约定 (`relabel_action_eq_state.py`), 这给了"复述本体即可低 loss"的捷径; X-VLA 的架构把 proprio 早融合进每个 action token, 对这个捷径极度敏感 → 直接塌缩成 vision-blind。pi0 同数据不塌缩 = 架构耐受性不同。不是部署问题, 不是训练 loop 问题, 是数据约定与 X-VLA 架构不兼容。**
 
-同时解释了长期困惑"MAE 没问题但真机不可用": **开环复述本体轨迹本就能达到低 MAE / 低 val loss**, MAE 完全测不出视觉盲 (见 `feedback_offline_eval_protocol` / `feedback_real_machine_oscillation_data_tail`)。
+### 3.1 数据: action ≡ state (relabel 约定)
+- `relabel_action_eq_state.py` (workspace 根): "Relabel a LeRobot-v2 dataset so action[t] := observation.state[t] (bit-identical)", rationale="Match official KAI0 upstream convention (action == state)"。
+- 本地实测 `A_new_pure_200_val`: `mean|action−state| = 0.00000000`, 而真实帧间运动 `|state[t+1]−state[t]| ≈ 0.005 rad` → action 列相对当前 state **零新增预测信息**。
+- pi0 good ckpt `task_a_new_smooth_800` 的 norm_stats: `action.mean ≡ state.mean` (差 2.6e-7) → **pi0 也是 action≡state 训的**。X-VLA `A_new_smooth_800_xvla` 由同批 smooth800 关节经 `joint_to_ee6d` 转 EE6D (action/state 同样转换) → action_ee6d ≡ state_ee6d 传导成立。
 
-为何 X-VLA 瞎而 pi0 不瞎 (同数据): 待证, 假设是 X-VLA 的 proprio 条件强度 / action 表征 (绝对 EE6D, 首步≈当前 proprio) 让捷径更易赢; pi0 的 state 条件较弱或表征不同。
+### 3.2 架构: X-VLA 把 proprio 早融合进每个 action token
+- 官方 `transformer.py:372`: `action_tokens = cat([action_with_noise, proprio_tokens, time_tokens])` — proprio 广播到**每个 action 位置**、特征级拼接、每个去噪步都在。`use_proprio` 默认 True。
+- 配上 action≡state + 绝对 EE6D (首步 action[0] = 当前 state = proprio 输入本身) → 模型把"要预测的东西"(action≈state) 和"答案"(proprio=state) 摆在一起 → 平凡复制, 梯度不流向视觉。
+
+### 3.3 决定性对照: 同数据, pi0 健康 / X-VLA 全瞎
+| 模型 | 数据 (均 action≡state smooth800) | 视觉依赖 |
+|---|---|---|
+| **pi0 `task_a_new_smooth_800`** | action≡state ✓ | blank/real MAE **13.6×** 健康 (`reference_vision_ablation_openloop`) |
+| **X-VLA p0 / d5anchor** | action≡state ✓ | 视觉/本体比 **0.000** 全瞎 |
+
+→ **数据约定是必要条件 (使能捷径), 但是否塌缩取决于架构**。pi0 (state 走独立 token, 经 attention 弱耦合) 耐受; X-VLA (proprio 每 token 特征级早融合) 不耐受。这解释了为何只有 X-VLA 瞎。
+
+### 3.4 官方 X-VLA 为何不瞎 (开源对照)
+- 官方仓库 **github.com/2toinf/X-VLA** 的 SoftFold-Agilex (同任务) 用**真实 teleop/leader action** (action ≠ realized state), 且 `base.py:157` **丢弃 static 帧** (`|action[1]−action[0]|<1e-5 → continue`) — 专门剔除 action≈proprio 的退化样本。**我们的 `multi_domain_dataset.py` 无此 skip**。
+- 官方部署/训练/归一化/动作表征与我们**逐项一致** (proprio 都喂、绝对 EE6D、ImageNet norm、domain token) — 唯一实质差异在**训练数据的 action 语义** (真实 action vs relabel 成 state) + static-skip。
+- 文献佐证: causal confusion (de Haan 2019)、copycat problem、ReViP (arXiv 2601.16667, "state-dominant bias → false completion") 都记载 "绝对动作 + proprio 输入 + 程式化数据 → 忽略视觉"; 标准解 = state/proprio dropout、用真实未来动作、keyframe 重加权。
+
+同时解释长期困惑"MAE 没问题但真机不可用": action≡state 下**开环复述本体即低 MAE**, MAE/val-loss 完全测不出视觉盲 (`feedback_offline_eval_protocol` / `feedback_real_machine_oscillation_data_tail`)。
 
 ---
 
 ## 4. 修复训练规划
 
-`lerobot` XVLAConfig **只有 `use_proprio` 总开关, 无 proprio-dropout 部分遮蔽**。按代价/收益:
+修复可断**两条链**任一: ① 数据链 (让 action ≠ state, 官方做法) ② 架构链 (拿掉/遮蔽 proprio)。
 
-### 4.1 实验 E1 — 确诊性 A/B: `use_proprio=False` (先做, 最快)
+### 4.0 实验 E0 — 数据正解: 用真实 action 重训 (官方等价, 推荐主路径)
+- **做法**: X-VLA 训练数据**不用 action≡state relabel 版**, 改用原始 teleop/leader `action` (真实未来轨迹, action ≠ state); 并在 `LeRobotEE6DDataset`/`multi_domain_dataset.py` 加官方 static-frame skip (`|action[1]−action[0]|<1e-5 → continue`)。其余 (proprio 仍开、smooth800 同批 episode、60k) 不变。
+- **目的**: 复现官方 SoftFold 的数据性质 — proprio 无法平凡预测真实未来 → 强制读视觉, 同时**保留 proprio 的精度/平滑收益**。这是治本。
+- **前置**: 确认 smooth800 源是否存在未 relabel 的原始 action 版本 (vePFS `A_new_smooth_800/base` 的 action 列是否 = 当时 commanded/leader); 若已被 relabel 覆盖, 需从更上游 (采集原始 parquet) 重建。⚠️ **待查: 原始 action 是否还在**。
+- **判据**: `eval_xvla_vision_ablation_offline.py` 视觉/本体比 ≳0.5 + 真机会找衣服。
+
+### 4.1 实验 E1 — 确诊性 A/B: `use_proprio=False` (已就绪, 最快)
 - **做法**: 复制 p0 训练 config, 仅置 `use_proprio: false` (关 state 输入), 其余 (数据 smooth800 / 60k / lr 1e-4 / ImageNet norm) 完全不变。
 - **目的**: 强制模型只能用视觉。是**确诊**而非最终模型 — 验证"只要拿掉 proprio 捷径, 模型就会读视觉"。
 - **判据**: 训完跑 `eval_xvla_vision_ablation_offline.py`, **视觉/本体影响比从 0.000 抬到 ≳0.5** = 根因坐实。再上真机看是否会"找衣服"。
@@ -75,12 +101,15 @@
 
 ### 4.4 对照矩阵
 
-| 组 | use_proprio | proprio-dropout | 数据 | 终判 |
-|---|---|---|---|---|
-| **baseline (现状)** | True | — | smooth800 | 视觉比 **0.000** ❌ |
-| **E1** | **False** | — | smooth800 | 视觉比 ≳0.5? + 真机找衣服? |
-| **E2** | True | **0.5** | smooth800 | 视觉比 ≳0.5 + 真机成功率 |
-| **E3** | True/dropout | 0.5 | + 位置多样 | 跨位置泛化 |
+| 组 | use_proprio | proprio-dropout | 数据 action | static-skip | 终判 |
+|---|---|---|---|---|---|
+| **baseline (现状)** | True | — | ≡state | 无 | 视觉比 **0.000** ❌ |
+| **E0 (数据正解)** | True | — | **真实 action (≠state)** | **加** | 视觉比 ≳0.5 + 真机找衣服 + 保 proprio 精度 |
+| **E1 (确诊, 已就绪)** | **False** | — | ≡state | 无 | 视觉比 ≳0.5? (断架构链, 不依赖数据) |
+| **E2** | True | **0.5** | ≡state | 无 | 视觉比 ≳0.5 + 真机成功率 |
+| **E3** | True/dropout | 0.5 | 真实+位置多样 | 加 | 跨位置泛化 |
+
+> E1 断架构链 (不管数据如何, 无 proprio 就没法复制) → 最快确诊; E0 断数据链 (官方做法) → 保 proprio 收益的治本。两者正交, 都成立则根因 = "action≡state × proprio 早融合" 双重确证。
 
 ---
 
@@ -100,7 +129,8 @@ CUDA_VISIBLE_DEVICES=<free> kai0/.venv_xvla/bin/python \
 
 ## 6. 行动顺序
 
-1. **停止盲调 X-VLA ckpt** (换数据/qdur/norm 都不会改变 vision-blind)。
-2. 跑 **E1 (`use_proprio=False`)** 做确诊 → ablation 比值是否抬起。
-3. 比值抬起 + 真机会找衣服 → 实现 **E2 (proprio-dropout)** 做最终模型。
-4. 把 §5 门禁纳入 X-VLA 上机流程。
+1. **停止盲调 X-VLA ckpt** (换 qdur/norm/数据日期都不会改变 vision-blind, 根因在 action≡state × 架构)。
+2. 跑 **E1 (`use_proprio=False`, 已就绪)** 做确诊 → ablation 比值是否抬起 (断架构链, 不依赖数据, 最快验根因)。
+3. **查原始 action 是否还在** (vePFS `A_new_smooth_800/base` 的 action 列是否被 relabel 覆盖) → 决定 E0 是否需从上游重建数据。
+4. E1 确诊成立 → 走 **E0 (真实 action + static-skip)** 做治本的最终模型 (保 proprio 收益); 原始 action 已丢则退 **E2 (proprio-dropout)**。
+5. 把 §5 门禁纳入 X-VLA 上机流程。
