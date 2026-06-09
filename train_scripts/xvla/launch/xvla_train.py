@@ -24,6 +24,20 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."
 from multi_domain_dataset import LeRobotEE6DDataset, MultiDomainDataset, XVLAHdf5Dataset
 from lerobot.policies.xvla.modeling_xvla import XVLAPolicy
 
+# E1 (use_proprio=False): lerobot's EE6DActionSpace.preprocess unconditionally does
+# `proprio_m[..., gripper_idx] = 0.0`, which IndexErrors when proprio has 0 columns
+# (proprio_dim=0). Guard it for the empty-proprio case (no-op change when proprio has channels,
+# so safe for normal use_proprio=True runs). Action gripper-zeroing is preserved.
+from lerobot.policies.xvla import action_hub as _action_hub
+_orig_ee6d_preprocess = _action_hub.EE6DActionSpace.preprocess
+def _ee6d_preprocess_safe(self, proprio, action, mode="train"):
+    if proprio.shape[-1] == 0:  # use_proprio=False → skip proprio gripper-zeroing
+        action_m = action.clone()
+        action_m[..., self.gripper_idx] = 0.0
+        return proprio, action_m
+    return _orig_ee6d_preprocess(self, proprio, action, mode)
+_action_hub.EE6DActionSpace.preprocess = _ee6d_preprocess_safe
+
 # ==================== CONFIGS ====================
 DATA_ROOT = "/data/shared/ubuntu/workspace/dataset_ee6d"  # legacy (buggy pipeline) — superseded by SB
 SB = os.environ.get("XVLA_SB", "/data/shared/ubuntu/workspace/deepdive_kai0/xvla/data/self_built")  # X-VLA self-built EE6D (fixed pipeline); override via XVLA_SB env for local run
