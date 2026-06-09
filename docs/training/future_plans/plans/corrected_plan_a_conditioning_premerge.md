@@ -210,7 +210,23 @@ offline vis MAE ≈ 0.47 ? — 否(0.0086)✅ → 进真机
 4. ✅ config `pi05_kaivis_cond_visS800`(克隆 Exp-1,fsdp_devices=8)。commit+push(`6099534`)。
 5. ✅ smoke:per-domain norm 区分 + vis-fraction **0.507** + dataset_id 透传 ✅。
 6. ✅ **提交 8卡 cnsh**:yaml `pi05_kaivis_cond_visS800_cnsh_8gpu.yaml`,**task_id `t-20260607140155-46btn`**(cn-shanghai / robot-task)。
-7. ⏳ 出 ckpt → **真机 vs smooth800-only baseline(`task_a_new_smooth_800`)对比** → 回填本节结论(判定 kai 是否真帮)。
+7. ✅ **训完 50k**(2026-06-09)。inline-eval MAE(见下),收敛健康没塌。
+8. ⏳ **真机 vs smooth800-only baseline(`task_a_new_smooth_800`)对比** → 判定 kai 是否真帮(终判,待做)。
+
+**Exp-2 offline 结果(inline-eval `vis_v2_merged_val`,dataset_id=1):**
+
+| step | MAE@1 | @10 | @25 | @50 |
+|---|---|---|---|---|
+| 8000 | 0.0308 | 0.0455 | 0.0672 | 0.0960 |
+| 16000 | 0.0156 | 0.0276 | 0.0429 | 0.0616 |
+| 24000 | 0.0111 | 0.0215 | 0.0333 | 0.0468 |
+| 32000 | 0.0095 | 0.0186 | 0.0281 | 0.0387 |
+| 40000 | 0.0089 | 0.0171 | 0.0251 | 0.0341 |
+| **48000** | **0.0087** | **0.0163** | **0.0233** | **0.0314** |
+
+- 单调收敛、没塌(@1 0.0308→0.0087)。inline-eval 每 8k 一次,末次 48000(49999 非 8k 倍数无 eval)。**最佳已保存 ckpt = `49999`**(48000 最低但未存;49999 收敛终点 ≈ 48000)。
+- **最佳 ckpt**:`/vePFS/tim/workspace/deepdive_kai0/kai0/checkpoints/pi05_kaivis_cond_visS800/pi05_kaivis_cond_visS800_cnsh/49999`
+- **vs Exp-1(vis 含 dagger)同 val**:@1 **0.0087 ≈ 0.0086**(去 vis_dagger 单步几乎不变);@50 **0.0314 < 0.0357**(去 dagger 长程反略优)。→ **offline:去 vis_dagger 不伤,甚至长 horizon 略好**;但 kai 是否真帮**仍须真机对 smooth800-only baseline**(offline 反指)。
 
 ---
 

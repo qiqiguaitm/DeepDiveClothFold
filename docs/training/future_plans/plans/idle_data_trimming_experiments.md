@@ -92,10 +92,27 @@
 > offline MAE 仅看训练健康(idle 轨迹 MAE 反指,§1.5/铁律)。
 
 ### 3.4 分步执行
-- **2a** 扩 `build_no_release.py` 加 `idle_downsample` 模式;1~2 ep 可视化验证"短 settle 保留、长 pause 压缩、轨迹不断裂、chunk 不跳变"。
-- **2b** build `≤5-10 v3.2` + `全量 v3.2`(从严的 KEEP_LEN 起步)。
-- **2c** 注册 2 个 config(克隆 smooth800/Exp-C 同参,仅换数据 root);提交训练(cnbj/cnsh 16卡)。
-- **2d** 对齐各自 v3 baseline(复用现成 ckpt);**真机对比** → 落 §3.3 判据 + 回填本节。
+- **2a** ✅ `build_no_release.py` 加 `--per-date-v32`(idle_downsample:保留运动帧+短settle≤15帧,长pause保边界+每k帧抽1;重排 frame_index/index + 帧选择性视频重编码,assert 帧数对齐)。单 ep 验证:854→804,seam max|Δa|≈原始(chunk 不跳变),视频==parquet ✅。commit `e8afea5`。
+- **2b** ✅ build 19 个 v3 日期 → v3.2(压缩率 4–19%,晚期>早期,符合假设);merge `A_v32_le0510`(≤5-10,985ep)+ `A_v32_all`(全量排5-16,1940ep)+ norm 各自重算(gf3 本地建,免传输)。
+- **2c** ✅ config `pi05_flatten_fold_v32_{le0510,all}`(init mixed_1_clean,50k/bs128/fsdp8)+ **cnbj 8卡**(非16:H20 配额;global batch 128 不变)。commit `301d1ea`。Exp-1 `t-20260607234501-5stck`、Exp-2 `t-20260607234509-qfq8w`。
+- **2d** ⏳ 对齐各自 v3 baseline(复用现成 ckpt)+ **真机对比** → 落 §3.3 判据 + 回填(终判)。
+
+### 3.5 offline 结果(inline-eval `vis_v2_merged_val`)
+**Exp-1 `v32_le0510`(≤5-10 v3.2,985ep)— 训完 50k(2026-06-09):**
+
+| step | MAE@1 | @10 | @25 | @50 |
+|---|---|---|---|---|
+| 8000 | 0.0088 | 0.0223 | 0.0465 | 0.0845 |
+| 16000 | 0.0079 | 0.0191 | 0.0369 | 0.0640 |
+| 24000 | 0.0074 | 0.0180 | 0.0344 | 0.0593 |
+| 32000 | 0.0071 | 0.0176 | 0.0335 | 0.0577 |
+| 40000 | 0.0069 | 0.0174 | 0.0331 | 0.0571 |
+| **48000** | **0.0069** | **0.0173** | **0.0329** | **0.0569** |
+
+- 单调收敛、末端平台(40k≈48k @1=0.0069)。最佳已保存 ckpt = `49999`(48000 最低但未存;keep_period=10000)。
+- **最佳 ckpt**:`/vePFS-North-E/vis_robot/workspace/deepdive_kai0/kai0/checkpoints/pi05_flatten_fold_v32_le0510/v32_le0510_cnbj/49999`
+- **Exp-2 `v32_all`(全量1940ep v3.2)** cnbj 训练中,训完回填。
+- ⚠️ **offline 仅确认收敛**:idle 裁剪是否有用是**真机判据**(v3.2 vs 各自 v3 前端裁 baseline);idle 多的慢轨迹逐帧 MAE 反指(§铁律),offline 看不出。
 
 ---
 
