@@ -2,7 +2,7 @@
 
 > **核心目的(本系列的真正主线,之前文档未点明)**: 验证**裁掉 episode 里的 idle(静止)帧能否让模型真机表现更好**。idle 帧分两类:① **前端**"投放等待"长静止段(机械臂不动、操作员往台上放衣服);② **中段**操作里的停顿/犹豫/反复。假设:idle 帧被 BC 忠实模仿 → 真机走停 / 犹豫 / cloth loop / 拉取松手。
 > **分步走**: **Step 1 前端投放裁剪**(= 之前的 v2→v3 / no_release,已做)→ **Step 2 中段 idle 裁剪**(未来)→ Step 3 节奏归一(可选)。
-> **状态**: Step 1 ✅ 真机初步成立(裁前端真机明显改善);Step 2 📋 规划。
+> **状态**: Step 1 ✅ 真机成立(前端投放裁有效);**Step 2 ❌ 结案(2026-06-09)** —— v3.2 中段选择性下采样**真机退化**(抓取欠到位/抓不到衣角),三方收敛(文献+量化+真机)→ **回退 v3(front-trim-only)为默认,不重建 v3.2**,见 §3.6。
 > **建立**: 2026-06-07(**完整合并自** `v2v3_data_window_scaling_experiments.md`(2026-06-08 该文件已删,明细见 §5)+ [`data_root_cause_probe_experiments.md`](data_root_cause_probe_experiments.md) H1,围绕 idle 主题重组)。
 > ⚠️ **方法学铁律**: **真机为终判,offline MAE 系统性反指** —— idle 多的慢/停顿轨迹逐帧 teacher-forcing MAE 反而低,真机却灾难。MAE 仅用于确认训练健康 + 选 ckpt。
 
@@ -24,7 +24,7 @@
 ## 1. idle 数据 + 裁剪机制(代码)
 
 - **检测 motion-onset**(`build_no_release.py`):12D `|Δaction|` 均值持续 > `thr=3e-3`(rad/帧)达 `win=10` 帧的首帧 = 真运动起点;`margin=15` 帧。
-- **前端裁**:`cut = max(0, onset - margin)`,删 parquet 行 `[0:cut]` + 同步裁 3 路 mp4(`assert video_frames == parquet_rows`)。
+- **前端裁(非全删!)**:`cut = max(0, onset - margin)`,删 parquet 行 `[0:cut]` + 同步裁 3 路 mp4(`assert video_frames == parquet_rows`)。**保留 onset 前 `margin=15` 帧(≈0.5s)lead-in** —— 不把投放段整段删光,留一小段进入运动的过渡(对齐文献"keep short settle ≤15 frames",这也是 front-trim work 的原因之一,见 §3.6)。
   - `--mode no_release`:对指定 2 天做前裁(单实验对照)。
   - `--per-date`(v3):对 `vis_base/v2/<date>` 每个 ep 前裁 → 输出 `vis_base/v3/<date>-v3`。
 - **版本含义**: **v2 = 未裁原始;v3 = 前端投放已裁**。(只裁前端,中段 idle 仍在 → Step 2。)
@@ -43,6 +43,8 @@
 6. **关键空白 = 本实验的价值**:目前**无任何"在 chunked VLA 上直接 ablate 删中段 pause vs 靠 chunking 吸收"的工作** → 本系列 v3.1 实验正好填空白。研究**预测:全删 ≈ 或略差于 前端裁(v3)**。
 
 > **据此定 Step 2(按最优解)**:**主线 = v3.2 选择性**(前端裁 + 中段长 pause 设上限/下采样、保留短功能性 settle);**不做 v3.1 全删**(非必要/有风险/chunked 边际小),仅留作可选极端对照。两个实验都用 v3.2,各自对 v3(前端裁)baseline。详见 §3。
+>
+> ✅ **2026-06-09 结果坐实**:本节 point 2/6 的预测(chunked 吸收 chunk 内 pause → 删中段 ≈ 无收益,且有风险)被**真机验证** —— v3.2 真机退化(抓取欠到位),第二轮文献调研(99 agents)进一步坐实"删低速帧→速度膨胀伤抓取"。**Step 2 结案:回退 v3,不重建 v3.2**,见 §3.6。
 >
 > **Sources**: DP `2303.04137` · ACT `roboticsproceedings.org/rss19/p016` · PIP `2508.15669` · Causal Confusion `1905.11979` · Copycat `2010.14876` · Keyframe-Focused `2106.06452` · ESPADA `2512.07371` · DemoSpeedup `2506.05064` · DROID `droid_policy_learning` · openpi droid README。
 
@@ -88,7 +90,7 @@
 |---|---|
 | **更流畅/成功率↑/执行更快** | ✅ v3.2 选择性 idle 处理是增量 → 采纳为新默认(v3.2) |
 | **≈ baseline** | 前端裁已吃掉主要收益,中段处理无额外增量(与"chunked 吸收 pause"一致)→ 维持 v3 |
-| **更差** | 中段处理伤了(删了功能性 settle / 轨迹断裂)→ 回 v3,调 KEEP_LEN 更保守 |
+| **更差** ✅ **实际命中(2026-06-09)** | 中段下采样伤了(机制②速度膨胀,非 KEEP_LEN/断裂)→ **回退 v3**,见 §3.6 |
 > offline MAE 仅看训练健康(idle 轨迹 MAE 反指,§1.5/铁律)。
 
 ### 3.4 分步执行
@@ -113,6 +115,42 @@
 - **最佳 ckpt**:`/vePFS-North-E/vis_robot/workspace/deepdive_kai0/kai0/checkpoints/pi05_flatten_fold_v32_le0510/v32_le0510_cnbj/49999`
 - **Exp-2 `v32_all`(全量1940ep v3.2)** cnbj 训练中,训完回填。
 - ⚠️ **offline 仅确认收敛**:idle 裁剪是否有用是**真机判据**(v3.2 vs 各自 v3 前端裁 baseline);idle 多的慢轨迹逐帧 MAE 反指(§铁律),offline 看不出。
+
+### 3.6 ⭐⭐ 真机退化复盘 + 三方收敛 + 决策结案(2026-06-09)
+
+> **真机结果(终判)**: v3.2 **退化** —— 机械臂在**抓取衣角**等精细操作中**不够谨慎、欠到位、抓不到**。命中 §3.3 预注册判据的"**更差 → 中段处理伤了 → 回 v3**"分支。
+
+**(a) 根因量化(本地全 19 个 v3 日期,633k 帧)** —— 见 `_xvla_gripper_debug/`(已迁) / `build_no_release.py`:
+- **判别器缺陷(真但小)**: idle 判定只看手臂(`ARM_DIMS` 排除夹爪 dim6/13)→ 抓取(臂静+爪闭)被判 idle → grasp-dwell 被下采样。但**误删量小**:严格逐帧(臂+爪都静才算 idle)≈ **0%**;功能口径(抓取 ±1s 窗内)仅 **0.6% 全量 = 5% 删除量**(后期 6% > 早期 4%)。
+- **主因(机制②)**: v3.2 **整体删 12.5% 低速帧** → 对 chunked pi05(absolute action),跨过这些区域的定长 chunk **位移膨胀 → 模型学到"每个 chunk 走更远 = 更快更粗" → 最需要慢的抓取处不够谨慎**。
+- **修复已落地但非解药**: `build_no_release.py` idle 判别加夹爪保护(`moving |= 夹爪动 OR 抓取±30帧窗`,commit `78eb65f`;验证抓取窗丢弃 1.4%→0.0%、整体压缩几乎不变)。但它只挽回 0.6%,治不了机制②。
+
+**(b) 文献深度调研(2026-06-09,99 agents / 17 源 / 25 claim 3-票核验,20 confirmed)** —— 全部指向"别删中段":
+
+| 发现(confirmed) | 来源 |
+|---|---|
+| **删低速帧 → per-chunk 位移膨胀 → 策略变快**(temporal density = 执行速度)= **v3.2 退化机制坐实** | TempoVLA `2606.06491`、VFIL `2411.12310`、`2412.03252` |
+| **从 chunked 策略 filter 小/idle 动作 → 伤成功率/精度**;小动作聚集在**抓取准备**处,作者**刻意保留** | PAC `2508.15669`(最直接反 v3.2) |
+| **chunking 本就吸收 chunk 内 pause 且不删帧**;chunk=30 下删中段 idle **≈ 无收益**,保留 ≤15 帧短 settle 合理 | ACT `2304.13705` |
+| **纯速度/夹爪盲下采样是错抽象**;正确准则须**接触/语义感知 + 保护夹爪开合**;臂静爪动的 grasp-dwell **不该下采样** | ESPADA `2512.07371`、DemoSpeedup `2506.05064`、SAIL `2506.11948` |
+| **保护相位的下采样最多"成功率不降";naive 降成功率;主流 baseline 全 KEEP 帧** → v3.2 偏离领域默认、**零上行** | ESPADA、ACT、Keyframe-Focused `2106.06452` |
+
+> 会下采样的工作(ESPADA/DemoSpeedup/SAIL)全是**推理期加速 + 永远语义/接触感知保护抓取**,非训练数据过滤;主流训练管线(ACT/DP/RT/Octo/OpenVLA/pi0)**不过滤 idle**。caveat:多在 ACT/DP 验证、非 pi0.5,迁移靠类比。
+
+**(c) 三方收敛**:
+
+| 证据源 | 结论 |
+|---|---|
+| **文献(本轮)** | 删中段 idle 对 chunked 策略零收益 + 速度膨胀伤抓取 → 别做 |
+| **量化** | 夹爪盲误删仅 0.6%(小);主因=整体删 12.5% 低速帧→速度膨胀(=文献机制) |
+| **真机** | v3.2 退化、抓不到衣角(=速度膨胀的预期症状) |
+| **§1.5 旧调研** | 早就预测 v3.2 ≈ 或略差于 v3 |
+
+**(d) ✅ 决策(结案)**:
+1. **回退 v3(front-trim-only)为默认**;**不重建 v3.2、不再重训**(修正准则最多回到"速度中性=零增益,re-train 买不到东西)。
+2. **为什么 front-trim 对、middle-trim 错**(文献给的分界):**前端 idle = 操作员投放/setup 等待、超 chunk 长度、任务无关 → 裁了帮忙**(DROID 同);**中段 idle = 任务内、含功能性 settle/grasp-dwell → 删了伤**。我们 front-trim 有效、middle-trim 退化正踩这条线。
+3. ⚠️ **front-trim 不是"全删前端",而是保留 `margin=15` 帧 lead-in**(`cut = onset − margin`,§1),正好对齐文献"keep short settle ≤15 frames"——这也是它 work 的原因之一。
+4. **想要更快 → 推理期做**(SAIL 式接触感知变速:转移段快、抓取段慢),不靠训练数据过滤。
 
 ---
 
