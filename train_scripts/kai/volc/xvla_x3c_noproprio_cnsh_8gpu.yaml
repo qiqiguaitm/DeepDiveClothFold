@@ -1,0 +1,82 @@
+# XVLA X3C_noproprio (E1 vision-blind 确诊: use_proprio=False) — cnsh 单节点 8 GPU (A100)
+#   单变量 vs X3C_smooth800_p0: 仅 use_proprio=False (关 proprio 输入), 其余完全相同。
+#   根因: p0/d5anchor 离线 vision-ablation 视觉/本体影响比=0.000 (纯开环, proprio 捷径)。
+#   Plan: docs/training/future_plans/plans/xvla_proprio_shortcut_openloop_fix.md (E1)
+#   判据: 训完跑 eval_xvla_vision_ablation_offline.py, 视觉影响比 0.000→≳0.5 = 修复路径成立。
+#   Data: A_new_smooth_800_xvla (vePFS) | Init: xvla_ckpts (vePFS)
+# Submit: source ~/.volc_creds && kai0/.venv/bin/python train_scripts/kai/volc/submit_yaml.py train_scripts/kai/volc/xvla_x3c_noproprio_cnsh_8gpu.yaml
+TaskName: "xvla-x3c-noproprio-cnsh-8gpu"
+Description: "E1 vision-blind 确诊 (use_proprio=False): torch DDP 单节点 8 A100, 60k, 单变量 vs p0"
+Tags: []
+
+ImageUrl: "visincept-cn-shanghai.cr.volces.com/grasp/h2r:1.0"
+ResourceQueueName: "robot-task"
+Framework: "PyTorch"
+
+TaskRoleSpecs:
+  - RoleName: "worker"
+    RoleReplicas: 1
+    Flavor: "ml.hpcpni2.28xlarge"   # 8× A100-80G single node
+
+ActiveDeadlineSeconds: 259200
+EnableTensorBoard: false
+
+Storages:
+  - Type: "Vepfs"
+    VepfsId: "vepfs-cnsh075262e1f815"
+    SubPath: ""
+    MountPath: "/vePFS"
+
+CacheType: "Cloudfs"
+
+Envs:
+  - Name: HF_HUB_OFFLINE
+    Value: "1"
+  - Name: TRANSFORMERS_OFFLINE
+    Value: "1"
+  - Name: TOKENIZERS_PARALLELISM
+    Value: "false"
+  - Name: NCCL_DEBUG
+    Value: "WARN"
+  - Name: OMP_NUM_THREADS
+    Value: "8"
+
+Entrypoint: |
+  set -uo pipefail
+  STAMP=$(date -u +%Y%m%d_%H%M%S)
+  LOG_DIR=/vePFS/tim/workspace/deepdive_kai0/logs
+  mkdir -p "$LOG_DIR"
+  LOG="$LOG_DIR/xvla_x3c_noproprio_${STAMP}.log"
+  exec >> "$LOG" 2>&1
+  echo "=== entrypoint start $(date) ==="
+  set -x
+  nvidia-smi -L
+  VENV=/vePFS/tim/workspace/deepdive_kai0/xvla/X-VLA-env/.venv
+  XVLA_SB_DIR=/vePFS/tim/workspace/deepdive_kai0/xvla/data/self_built
+  INIT=/vePFS/tim/workspace/deepdive_kai0/xvla/xvla_ckpts
+  OUT=/vePFS/tim/workspace/deepdive_kai0/xvla/ckpts/xvla_x3c_smooth800_noproprio
+  mkdir -p "$OUT"
+  export XVLA_SB="$XVLA_SB_DIR"
+  export XVLA_CKPT_INIT="$INIT"
+  # bart-large tokenizer: nodes are HF_HUB_OFFLINE; point to a local vePFS copy (cached 2026-06-04)
+  export XVLA_BART_TOK=/vePFS/tim/workspace/deepdive_kai0/xvla/assets/bart-large-tokenizer
+
+  # preflight: venv works in image + data/init/tokenizer present
+  "$VENV/bin/python" -c "import torch; from lerobot.policies.xvla.modeling_xvla import XVLAPolicy; print('venv OK torch', torch.__version__, 'cuda', torch.cuda.is_available(), 'ngpu', torch.cuda.device_count())"
+  [ -f "$XVLA_SB_DIR/A_new_smooth_800_xvla/norm_stats.json" ] || { echo "FATAL: data missing" >&2; exit 13; }
+  [ -f "$INIT/config.json" ]                                  || { echo "FATAL: init missing" >&2; exit 13; }
+  [ -f "$XVLA_BART_TOK/tokenizer.json" ]                      || { echo "FATAL: bart tokenizer missing $XVLA_BART_TOK" >&2; exit 13; }
+  "$VENV/bin/python" -c "import os; from transformers import AutoTokenizer; AutoTokenizer.from_pretrained(os.environ['XVLA_BART_TOK']); print('bart tokenizer offline OK')"
+  echo "[$(date)] preflight OK"
+
+  cd /vePFS/tim/workspace/deepdive_kai0/train_scripts/xvla/launch
+  exec "$VENV/bin/python" -m torch.distributed.run --standalone --nproc_per_node=8 xvla_train.py \
+    --config X3C_smooth800_noproprio \
+    --output_dir "$OUT" \
+    --workers 4
+
+RetryOptions:
+    EnableRetry: true
+    MaxRetryTimes: 1
+
+AccessType: "Public"

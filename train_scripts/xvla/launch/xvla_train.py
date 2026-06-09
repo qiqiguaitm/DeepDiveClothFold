@@ -169,6 +169,25 @@ CONFIGS = {
         vlm_lr_scale=0.1,
         image_aug=True,     # 对齐官方 ColorJitter(0.2)
     ),
+    # E1 (2026-06-09): vision-blind 确诊实验 — 单变量 = use_proprio=False (关 proprio 输入),
+    # 其余与 X3C_smooth800_p0 完全相同。根因认证: p0/d5anchor 离线 vision-ablation 视觉/本体
+    # 影响比=0.000 (纯开环, 靠 proprio 捷径), 见 docs/training/future_plans/plans/
+    # xvla_proprio_shortcut_openloop_fix.md。判据: 训完跑 eval_xvla_vision_ablation_offline.py,
+    # 视觉影响比若从 0.000 抬到 ≳0.5 = 捷径修复路径成立 (此版为确诊, 非最终模型)。
+    "X3C_smooth800_noproprio": dict(
+        datasets=[
+            dict(root=f"{SB}/A_new_smooth_800_xvla", domain_id=20, prompt=PROMPT, weight=1.0),
+        ],
+        steps=60_000,
+        lr=1e-4,
+        warmup_steps=2000,
+        freeze_steps=1000,
+        weight_decay=0.0,
+        batch_size_per_gpu=8,
+        vlm_lr_scale=0.1,
+        image_aug=True,
+        use_proprio=False,  # ⭐ E1: 关 proprio 输入 → 强制模型读视觉 (proprio_dim=0)
+    ),
     # D5 修复 (2026-06-07): 单变量 = action 表示从"30 连续帧(1s 稠密)"改为
     # "30 anchor 铺在 2s(intention abstraction, action_qdur=2.0)", 对齐官方 X-VLA。
     # 其余与 X3C_smooth800_p0 完全相同。验证: offline 欠到位(pred chunk 位移/GT 60-80%)是否消失。
@@ -342,7 +361,17 @@ def main(args):
 
     # Model
     if is_main(rank): print(f"loading {CKPT_INIT}...")
-    model = XVLAPolicy.from_pretrained(CKPT_INIT).to(device)
+    # use_proprio 是 init ckpt config.json 的字段 (默认 True)。cfg 显式给 False 时 (E1
+    # vision-blind 确诊) 覆盖 config 后再构造: proprio_dim=0, _prepare_state 返回空 → 强制读视觉。
+    # strict=False (from_pretrained 默认) → init ckpt 的 proprio 投影权重变 unexpected, 不报错。
+    if cfg.get("use_proprio", True) is False:
+        from lerobot.configs.policies import PreTrainedConfig
+        _ovr = PreTrainedConfig.from_pretrained(CKPT_INIT)
+        _ovr.use_proprio = False
+        if is_main(rank): print("⭐ use_proprio=False override (E1 vision-blind 确诊): proprio_dim→0")
+        model = XVLAPolicy.from_pretrained(CKPT_INIT, config=_ovr).to(device)
+    else:
+        model = XVLAPolicy.from_pretrained(CKPT_INIT).to(device)
     if world > 1:
         model = DDP(model, device_ids=[local_rank], find_unused_parameters=True)
 
