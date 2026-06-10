@@ -108,6 +108,11 @@ def main():
 
     tf = CasualWorldActionTransformer.from_pretrained(args.transformer_dir).to(dt)
     raw_pipe = WAPipeline.from_pretrained(args.model_id, vae=vae, transformer=tf, torch_dtype=dt).to(dev)
+    # world-model-lookahead ckpts (action_attends_video=True) must denoise the video latents the
+    # action tokens attend to -> the action_only fast path is invalid; force full denoising for all eps.
+    LOOKAHEAD = bool(getattr(tf.config, "action_attends_video", False))
+    if LOOKAHEAD:
+        print(f"[report shard {sid}/{n}] action_attends_video=True -> full denoise (action_only disabled)", flush=True)
 
     def infer(gi, want_video):
         d = ds[int(gi)]; ep, f = info[int(gi)]; fr = fc.get(ep)
@@ -115,7 +120,8 @@ def main():
         st = d["observation.state"].float().unsqueeze(0).to(dev); ns = normalize_state(st, norm, mode="zscore").to(dev, dt)
         with torch.no_grad():
             out = raw_pipe(height=args.height, width=args.width, action_chunk=args.action_chunk, state=ns, num_frames=5,
-                           guidance_scale=0.0, num_inference_steps=args.steps_inf, image=ref, action_only=not want_video,
+                           guidance_scale=0.0, num_inference_steps=args.steps_inf, image=ref,
+                           action_only=(not want_video) and not LOOKAHEAD,
                            return_dict=False, prompt_embeds=t5.unsqueeze(0).to(dev, torch.float32))
         imgs, act = out[0], out[1]
         pa = add_state_to_action(denormalize_action(act[0].float(), norm, mode="zscore"), st[0].float().to(act.device),

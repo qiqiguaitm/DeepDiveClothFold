@@ -612,6 +612,7 @@ class CasualWorldActionTransformer(
         added_kv_proj_dim: Optional[int] = None,
         rope_max_seq_len: int = 1024,
         pos_embed_seq_len: Optional[int] = None,
+        action_attends_video: bool = False,
     ) -> None:
         super().__init__()
 
@@ -673,6 +674,12 @@ class CasualWorldActionTransformer(
             return self._forward_train(*args, **kwargs)
         else:
             action_only = kwargs.pop("action_only", False)
+            if action_only and getattr(self.config, "action_attends_video", False):
+                raise ValueError(
+                    "action_only inference is invalid when action_attends_video=True: action tokens "
+                    "must attend to the denoising future-video tokens, which the action_only path drops. "
+                    "Run the full path (pipeline action_only=False)."
+                )
             if action_only:
                 return self._forward_inference_action_only(*args, **kwargs)
             else:
@@ -768,10 +775,13 @@ class CasualWorldActionTransformer(
         s_r_end = num_state_tokens + num_ref_tokens
         action_end = s_r_end + num_action_tokens
         
-        # Causal attention: past cannot attend to future
-        mask[s_r_end:action_end, action_end:] = float("-inf")
+        # Causal attention: past cannot attend to future.
+        # action_attends_video: when set, do NOT sever action→noisy-video, so action tokens
+        # get world-model lookahead by attending to the (denoising) future-video tokens.
+        if not getattr(self.config, "action_attends_video", False):
+            mask[s_r_end:action_end, action_end:] = float("-inf")
         mask[:s_r_end, s_r_end:] = float("-inf")
-        
+
         self_attention_mask = mask.unsqueeze(0).unsqueeze(0).expand(batch_size, self.config.num_attention_heads, L, L)
         self_attention_mask = self_attention_mask.to(dtype=hidden_states.dtype)
 
@@ -1020,7 +1030,9 @@ class CasualWorldActionTransformer(
         mask = torch.zeros((L, L), device=device)
         s_r_end = num_state_tokens + num_ref_tokens
         action_end = s_r_end + num_action_tokens
-        mask[s_r_end:action_end, action_end:] = float("-inf")
+        # action_attends_video: when set, do NOT sever action→noisy-video (world-model lookahead).
+        if not getattr(self.config, "action_attends_video", False):
+            mask[s_r_end:action_end, action_end:] = float("-inf")
         mask[:s_r_end, s_r_end:] = float("-inf")
         self_attention_mask = mask.unsqueeze(0).unsqueeze(0).expand(batch_size, self.config.num_attention_heads, L, L)
         self_attention_mask = self_attention_mask.to(dtype=hidden_states.dtype)

@@ -69,6 +69,12 @@ class CasualWATrainer(Trainer):
         transformer.action_encoder = copy.deepcopy(encoder)
         transformer.action_decoder = copy.deepcopy(decoder)
         transformer.action_rope = WanRotaryPosEmbed1D(128, 1024)
+        # world-model lookahead: let action tokens attend to the (denoising) future-video tokens.
+        # Persisted to the transformer config so the checkpoint self-describes (eval/serve must then
+        # use the full path, action_only=False). Default False = original causal-severed behavior.
+        transformer.register_to_config(
+            action_attends_video=bool(model_config.get("action_attends_video", False))
+        )
         transformer_cfg = model_config.get('transformer', dict())
         transformer = process_transformer(transformer, transformer_cfg)
         transformer.to(self.device, dtype=self.dtype)
