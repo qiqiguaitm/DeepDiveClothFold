@@ -27,7 +27,7 @@ import os
 import numpy as np
 import pyarrow.parquet as pq
 
-from scripts.compute_norm_stats import NormStats, RunningStats, serialize_json  # 复用同一统计实现
+from scripts.compute_norm_stats import NormStats, RunningStats, serialize_json_with_mask  # 复用同一统计实现
 
 PIPER_MASK = [True] * 6 + [False] + [True] * 6 + [False]
 
@@ -92,7 +92,7 @@ def main():
     os.makedirs(args.out_dir, exist_ok=True)
     out_path = os.path.join(args.out_dir, f"norm_stats_{args.out_short}.json")
     with open(out_path, "w") as f:
-        f.write(serialize_json(out))
+        f.write(serialize_json_with_mask(out, mask.tolist()))
     print(f"FAST_NORM_DONE {args.emb_dir} -> {out_path} (sample_rate={args.sample_rate}, state_rows={n_state_rows})")
 
 

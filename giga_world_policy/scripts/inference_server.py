@@ -15,6 +15,7 @@ from world_action_model.pipeline.utils import (
     load_stats,
     load_t5_embedding_from_pkl,
     normalize_state,
+    resolve_delta_mask,
     resolve_view,
 )
 from world_action_model.pipeline.wa_pipeline import WAPipeline
@@ -53,7 +54,12 @@ def get_policy(args: argparse.Namespace):
     )
     stats = load_stats(args.stats_path)
     norm = extract_normalization_tensors(stats, device=device, state_dim=args.state_dim, action_dim=args.action_dim)
-    delta_mask = torch.tensor(_parse_bool_list(args.delta_mask), device=device, dtype=torch.bool)
+    # 默认从 stats 内嵌的 delta_mask 取(单一真值源,与训练严格一致);非空 --delta_mask 作显式覆盖。
+    if args.delta_mask.strip():
+        mask_list = _parse_bool_list(args.delta_mask)
+    else:
+        mask_list = resolve_delta_mask(stats, args.action_dim).tolist()
+    delta_mask = torch.tensor(mask_list, device=device, dtype=torch.bool)
     if delta_mask.numel() != args.action_dim:
         raise ValueError(
             f"--delta_mask length ({delta_mask.numel()}) must match --action_dim ({args.action_dim})"
@@ -165,7 +171,7 @@ def main():
     parser.add_argument(
         "--delta_mask",
         type=str,
-        default="1,1,1,1,1,1,0,1,1,1,1,1,1,0",
+        default="",  # 空=从 --stats_path 内嵌的 delta_mask 取(默认);传 "1,1,..,0" 可显式覆盖
     )
     args = parser.parse_args()
 

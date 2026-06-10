@@ -149,6 +149,21 @@ def serialize_json(norm_stats: dict[str, NormStats]) -> str:
     return _NormStatsDict(norm_stats=norm_stats).model_dump_json(indent=2)
 
 
+def serialize_json_with_mask(norm_stats: dict[str, NormStats], delta_mask) -> str:
+    """同 serialize_json,但把 delta_mask 内嵌进输出 json(单一真值源)。
+
+    action 统计就是在该 mask 下算的,绑定写入可杜绝 train/eval/serve 三处 mask 漂移。
+    action_repr 仅供人读:全 False=abs、含 True=delta(关节减 state、夹爪绝对则为 mixed)。
+    """
+    import json as _json
+
+    payload = _json.loads(serialize_json(norm_stats))
+    mask = [bool(x) for x in delta_mask]
+    payload["delta_mask"] = mask
+    payload["action_repr"] = "abs" if not any(mask) else ("delta" if all(mask) else "mixed")
+    return _json.dumps(payload, indent=2)
+
+
 class GetEmbodimentId:
     """Assign a fixed embodiment id (passed via --embodiment_id).
 
@@ -261,7 +276,7 @@ def compute_norm_stats(
     print(f'Writing stats to: {output_path}')
     output_path = pathlib.Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(serialize_json(norm_stats))
+    output_path.write_text(serialize_json_with_mask(norm_stats, delta_mask))
 
 
 if __name__ == '__main__':

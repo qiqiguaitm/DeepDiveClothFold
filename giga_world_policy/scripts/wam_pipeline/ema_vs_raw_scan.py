@@ -21,7 +21,7 @@ def main():
     ap.add_argument("--model_id", required=True); ap.add_argument("--stats_path", required=True)
     ap.add_argument("--val_root", required=True); ap.add_argument("--t5_pkl", required=True)
     ap.add_argument("--n", type=int, default=16); ap.add_argument("--action_chunk", type=int, default=48)
-    ap.add_argument("--steps_inf", type=int, default=10); ap.add_argument("--delta_mask", default="1,1,1,1,1,1,0,1,1,1,1,1,1,0")
+    ap.add_argument("--steps_inf", type=int, default=10); ap.add_argument("--delta_mask", default="")  # 空=从 --stats_path 内嵌 delta_mask 取;传 "1,1,..,0" 覆盖
     args = ap.parse_args()
     dev, dt = "cuda", torch.bfloat16
     from giga_datasets import load_dataset
@@ -32,7 +32,12 @@ def main():
     from diffusers.models import AutoencoderKLWan
     stats = load_stats(args.stats_path); norm = extract_normalization_tensors(stats, device=dev, state_dim=14, action_dim=14)
     t5 = load_t5_embedding_from_pkl(args.t5_pkl, target_len=64).to(dev, torch.float32)
-    dm = torch.tensor([c == "1" for c in args.delta_mask.split(",")], device=dev, dtype=torch.bool)
+    if args.delta_mask.strip():
+        _dm = [c == "1" for c in args.delta_mask.split(",")]
+    else:
+        from world_action_model.pipeline.utils import resolve_delta_mask
+        _dm = resolve_delta_mask(stats, 14).tolist()
+    dm = torch.tensor(_dm, device=dev, dtype=torch.bool)
     ve = dict(_class_name="LeRobotDataset", data_path=args.val_root, delta_info={"action": args.action_chunk},
               skip_video_decoding=True, embodiment="visrobot01", tolerance_s=1e-3)
     ds = load_dataset([ve]); idx, _, info = build_window_indices(args.val_root, "exec", 0, args.action_chunk, 16)

@@ -1,7 +1,7 @@
 import json
 import pickle
 from dataclasses import dataclass
-from typing import Dict, Literal, Optional, Tuple
+from typing import Dict, Literal, Optional, Sequence, Tuple
 
 import numpy as np
 import PIL
@@ -54,6 +54,27 @@ def load_t5_embedding_from_pkl(pkl_path: str, target_len: int = 32) -> torch.Ten
 def load_stats(stats_dict_path: str) -> Dict:
     with open(stats_dict_path, "r") as f:
         return json.load(f)
+
+
+# delta/abs action 表示的默认 mask:14 维 piper(左臂6+右臂6 关节 delta、双夹爪 idx6/13 绝对)。
+DEFAULT_PIPER14_DELTA_MASK = [True] * 6 + [False] + [True] * 6 + [False]
+
+
+def resolve_delta_mask(stats: Dict, action_dim: int, fallback: Optional[Sequence[bool]] = None) -> np.ndarray:
+    """delta/abs action mask 的唯一真值源。
+
+    从 norm_stats json 内嵌的 ``delta_mask`` 读取(该 mask 即 ``action`` 统计所依据的表示):
+    ``True``=delta(动作减去当前 state),``False``=absolute。``abs`` 即 mask 全 ``False``。
+    缺该字段的旧 stats 回退到 piper14(关节 delta、夹爪绝对),保持历史行为不变。
+    详见 ``docs/action_repr_delta_abs_compat.md``。
+    """
+    m = stats.get("delta_mask") if isinstance(stats, dict) else None
+    if m is None:
+        m = list(fallback) if fallback is not None else list(DEFAULT_PIPER14_DELTA_MASK)
+    m = np.asarray(m, dtype=bool)
+    if m.shape[-1] < action_dim:
+        m = np.pad(m, (0, action_dim - m.shape[-1]), constant_values=False)
+    return m[:action_dim]
 
 
 def tensor_chw01_to_pil_rgb(image_chw: torch.Tensor) -> Image.Image:

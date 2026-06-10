@@ -42,23 +42,16 @@
 - **生效前提**:giga-datasets 必须 editable 安装 —— `pip install -e ./third_party/giga-datasets`(否则改动不生效)。
 - 映射:`robotype_to_embed_id = {"visrobot01": 0, "kairobot01": 1}`(必须精确命中;两名都不含 agibot/aloha/agilex 子串,务必写全,否则 fallback default 0)。
 
-### 3.2 delta_mask 模板(已实施 ✅)
-`world_action_model/transformers/wa_transforms_lerobot.py:243-246` 原内置:
-```python
-delta_mask_templates = {
-    0: [T,T,T,T,T,T,F,T,T,T,T,T,T,F],            # 14维 piper —— 正确,vis 用
-    1: [T,T,T,T,T,T,T,F,T,T,T,T,T,T,T,F],         # 16维 —— 截到14维后夹爪位会错!
-}
-```
-kairobot01 也是 14 维 piper,需要的 mask 与 embed_id 0 **完全相同**。
-→ 把 `delta_mask_templates[1]` 改为与 `[0]` 相同的 14 维 piper mask:
-```python
-delta_mask_templates = {
-    0: np.array([True]*6 + [False] + [True]*6 + [False], dtype=bool),   # vis  (14维)
-    1: np.array([True]*6 + [False] + [True]*6 + [False], dtype=bool),   # kai  (14维, piper同款)
-}
-```
-配合 `model_action_dim = 14`、`models.action_dim = 14`。
+### 3.2 delta_mask(已重构 → 内嵌 norm_stats,2026-06-09)
+> ⚠️ 历史:曾在 `wa_transforms_lerobot.py` 内置 `delta_mask_templates={0,1}` 硬编码 mask
+> (vis/kai 同为 14 维 piper)。**该硬编码已删除**,改为从每份 norm_stats json 内嵌的
+> `delta_mask` 读取(单一真值源,`resolve_delta_mask()`)。abs = mask 全 False。
+> 现在不再改代码;mask 跟着 stats 走。完整设计+用法见
+> [`action_repr_delta_abs_compat.md`](action_repr_delta_abs_compat.md)。
+
+14 维 piper mask = `[True]*6 + [False] + [True]*6 + [False]`(关节 delta、夹爪 idx6/13 绝对);
+vis/kai 相同。配合 `model_action_dim = 14`、`models.action_dim = 14`。新算的 stats 自动写入该
+mask;旧 stats 无字段时回退 piper14。
 
 ### 3.3 训练端相机 key(config 传参,零改数据)
 `WATransformsLerobot` 接受 `view_keys`,仅当 `None` 才 fallback 到 `cam_high`(`wa_transforms_lerobot.py:31,67`)。

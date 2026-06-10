@@ -11,6 +11,7 @@ from torchvision.transforms import functional as F
  
 from giga_train import TRANSFORMS
  
+from ..pipeline.utils import resolve_delta_mask
 from .wa_transforms import WATransforms
  
  
@@ -243,20 +244,11 @@ class WATransformsLerobot(WATransforms):
         if action.shape[-1] < d:
             action = torch_F.pad(action, (0, d - int(action.shape[-1])), value=0.0)
  
-        # 14维 piper(左臂6 + 右臂6 + 双夹爪):关节 delta,夹爪(index 6/13)绝对值。
-        # visrobot01=embed_id 0, kairobot01=embed_id 1 同为双臂 piper,mask 相同。
-        _piper14 = np.array([True] * 6 + [False] + [True] * 6 + [False], dtype=bool)
-        delta_mask_templates = {
-            0: _piper14,
-            1: _piper14,
-        }
-        base = delta_mask_templates.get(robotype_embed_id, None)
-        assert base is not None, f"robotype_embed_id {robotype_embed_id} not found in delta_mask_templates"
-        if d > len(base):
-            base = np.pad(base, (0, d - len(base)), constant_values=False)
-        else:
-            base = base[:d]
- 
+        # delta/abs mask:单一真值源 = 该 embodiment 的 norm_stats json 内嵌 delta_mask
+        # (action 统计即在此 mask 下计算)。缺字段的旧 stats 回退 piper14(关节 delta、
+        # 夹爪 idx6/13 绝对);abs = mask 全 False。详见 docs/action_repr_delta_abs_compat.md。
+        base = resolve_delta_mask(stats_dict, d, fallback=[True] * 6 + [False] + [True] * 6 + [False])
+
         mask_t = torch.as_tensor(base, dtype=torch.bool, device=action.device)
         idx = torch.nonzero(mask_t, as_tuple=False).flatten()
         delta = action.clone()
@@ -313,8 +305,11 @@ class WATransformsLerobot(WATransforms):
                 out.pop(k)
  
         dim = out["action"].shape[-1]
-        base = delta_mask_templates.get(robotype_embed_id, None)
-        effective_dim = int(np.asarray(base).shape[0]) if base is not None else dim
+        # action_dim_mask:标记该 embodiment 的"真实动作维数"(其余为 padding),供跨 embodiment
+        # 训练的 per-dim mask。真实维数 = 该 embodiment stats 内嵌 delta_mask 的"原始(未 pad)长度"
+        # (与上面 base 同源但取未截断/未补齐的长度);缺字段则视作全维有效。仅用长度,与 delta/abs 无关。
+        raw_mask = stats_dict.get("delta_mask") if isinstance(stats_dict, dict) else None
+        effective_dim = len(raw_mask) if raw_mask is not None else dim
         effective_dim = min(effective_dim, dim)
         out["action_dim_mask"] = (torch.arange(dim, device=out["action"].device) < effective_dim).to(dtype=torch.bool)
  

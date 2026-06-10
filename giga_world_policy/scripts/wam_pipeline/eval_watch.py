@@ -369,8 +369,8 @@ def main():
     ap.add_argument("--t5_len", type=int, default=64)
     ap.add_argument("--state_dim", type=int, default=14)
     ap.add_argument("--action_dim", type=int, default=14)
-    ap.add_argument("--delta_mask", type=str, default="1,1,1,1,1,1,0,1,1,1,1,1,1,0",
-                    help="14维 piper:关节 delta、夹爪(idx6/13)绝对;与 inference_server 一致")
+    ap.add_argument("--delta_mask", type=str, default="",
+                    help="空=从 --stats_path 内嵌 delta_mask 取(默认,与训练一致);传 '1,1,..,0' 显式覆盖")
     ap.add_argument("--poll", type=int, default=120)
     ap.add_argument("--once", action="store_true", help="只评当前最新 ckpt 一次后退出")
     ap.add_argument("--smoke", action="store_true", help="不评 ckpt,只在 GT 上自测指标函数")
@@ -434,8 +434,12 @@ def main():
     stats = load_stats(args.stats_path)
     norm = extract_normalization_tensors(stats, device=device, state_dim=args.state_dim, action_dim=args.action_dim)
     t5 = load_t5_embedding_from_pkl(args.t5_pkl, target_len=args.t5_len).to(device=device, dtype=torch.float32)
-    delta_mask = torch.tensor([p.strip() in ("1", "true", "True") for p in args.delta_mask.split(",") if p.strip()],
-                              device=device, dtype=torch.bool)
+    if args.delta_mask.strip():
+        _mask_list = [p.strip() in ("1", "true", "True") for p in args.delta_mask.split(",") if p.strip()]
+    else:
+        from world_action_model.pipeline.utils import resolve_delta_mask
+        _mask_list = resolve_delta_mask(stats, args.action_dim).tolist()
+    delta_mask = torch.tensor(_mask_list, device=device, dtype=torch.bool)
     assert delta_mask.numel() == args.action_dim, f"delta_mask {delta_mask.numel()} != action_dim {args.action_dim}"
 
     # ---- 构建窗口索引(coverage 决定 stride),按需取本 shard ----
