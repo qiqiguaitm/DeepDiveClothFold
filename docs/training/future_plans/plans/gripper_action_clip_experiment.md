@@ -3,6 +3,7 @@
 > **建立**: 2026-06-10
 > **目的(用户定档)**: 探索**夹爪数据处理**对真机效果的影响。**真实目标 = 让夹爪真机更稳,不出现过程中松手 / 衣物从手中脱落。**
 > **方法**: 单变量对照 —— 只改"夹爪 action 是否裁剪",训练参数/数据 episode/init 全部锁死。
+> **状态**: 📋 **规划定稿(2026-06-10)** — 5 个决策已定档(§7);**等用户发话即开 build + 训练**,本次仅文档。
 > ⚠️ **铁律**: **真机为终判**;offline MAE 仅作收敛 sanity(夹爪是否更稳是真机判据)。
 
 ---
@@ -58,8 +59,7 @@
 | **A. 只裁 action(推荐)** | grasp 帧 **action=0 但 state=真实 2mm** → 制造 "从非零抓取态命令 0" 的**力信号**;state 保持真实测量 → **train/deploy 一致**(部署时 proprio 也是真实 2mm)| ✅ 既给力信号又不破坏 state 真实性 |
 | B. action + state 都裁 | grasp 帧 state 也=0(掩盖真实位置)→ 部署时真实 proprio=2mm ≠ 训练的 0 → **train/deploy 漂移**(除非 serve 端也裁 state)| 🟡 多一处 serve 改动、信号更弱 |
 
-→ **建议:只裁 action(夹爪 6/13),state 保持真实。** 这样模型学到"抓取态 → 命令 0(给力)",且部署无 state 漂移。
-> ❓ **请确认**:你说的"裁剪 action state"我理解为"裁剪动作数据(不动训练参数)"→ 默认**只裁 action**。若你要连 state 一起裁,我会同步加 serve 端 state 裁剪保证 parity。
+→ ✅ **已定档(2026-06-10 用户确认)= 只裁 action(夹爪 6/13),state 保持真实。** 模型学"抓取态 → 命令 0(给力)",部署无 state 漂移。
 
 ### 3.3 已知副作用(文档标注,真机观察)
 - **阈值不连续**:5.0mm→0 但 5.1mm 不变 → 阈值穿越处 action 有跳变(命令"突然全闭")。可接受(进入 5mm 内即命令全闭),但若真机抖动,改**平滑 remap**(如 [0,5]mm→线性压到 0,或 [0,8]→[0,0] 软过渡)。
@@ -68,13 +68,15 @@
 
 ---
 
-## 4. 训练规格
-- **config**: 克隆现有 `pi05_flatten_fold_A_smooth800_dagger_full`(config.py:1798)→ 两个新 config:
+## 4. 训练规格(✅ 已定档,沿用 `pi05_flatten_fold_A_smooth800_dagger_full` config.py:1798)
+- **config**: 克隆该 config → 两个新 config:
   - `pi05_smooth800_dagger_all_baseline`(repo_id → `A_smooth800_dagger_all`)
   - `pi05_smooth800_dagger_clip_all`(repo_id → `A_smooth800_dagger_clip_all`)
   - **除 repo_id + 各自 norm_stats 外,所有超参/init 完全相同。**
-- init:沿用该系列既有 init(warm-start,如 mixed_1_clean / smooth800 ckpt — 取与现有 dagger config 一致),**两臂同一个 init**。
-- 资源:单节点 8 卡(cnsh A100 / cnbj H20),fsdp8 / batch128 / steps 与现有 dagger 一致(如 50k);每 2-5k save。
+- **init(两臂同一个)**: `CheckpointWeightLoader("shared_ckpt/Task_A/mixed_1_clean/params")` warm-start。
+- **超参(两臂相同,照搬 dagger_full)**: `Pi0Config(pi05=True)` · use_delta_joint_actions=False(absolute) · cosine **warmup 1k / peak 1.5e-5 / decay 50k → 1.5e-6** · **EMA 0.9999** · **50k step** · batch **128** · **fsdp 8** · num_workers 16 · save 每 2k / keep 10k · inline-eval `vis_v2_merged_val`(n=200, every 4) · prompt "Flatten and fold the cloth."。
+- **资源**: 单节点 **8 卡**(cnsh A100 / cnbj H20)。
+- **范围**: 本实验**仅 vis**(`A_smooth800_dagger_all` 即 vis 单本体 smooth800+dagger);kai0 本体本轮不裁(力尾巴更小,留作后续)。
 
 ---
 
@@ -103,12 +105,14 @@
 
 ---
 
-## 7. 待确认(动手前)
-1. **裁 action-only vs action+state**(§3.2)— 默认 only-action,请确认。
-2. **阈值 5mm** 是否就按这个?(zoom 图谷底 ~5–10mm,5mm 偏保守靠闭合侧)
-3. **init**:沿用现有 dagger config 的 warm-start,还是别的?(两臂必须同一个)
-4. **steps / 集群**:沿用现有 dagger config(如 50k / 8卡)?
-5. 是否同时也对 **kai0 本体**做同样裁剪(本实验只 vis 的 smooth800_dagger;kai0 力尾巴更小,效果可能更明显)?
+## 7. 决策定档(✅ 2026-06-10 用户确认)
+1. ✅ **裁 action-only**(夹爪 6/13,≤5mm→0;state 保持真实)。
+2. ✅ **阈值 5mm**(0.005m)。
+3. ✅ **init = warm-start `mixed_1_clean/params`**(两臂同一个)。
+4. ✅ **steps/集群 = 沿用 dagger config**(50k / 8卡 / batch128 / fsdp8 / cosine 1.5e-5 / EMA0.9999)。
+5. ✅ **本实验仅 vis**(kai0 本轮不裁)。
+
+→ **5 点全定,可进入落地步骤(§6)。等用户发话即开 build + 训练。**
 
 ---
 
