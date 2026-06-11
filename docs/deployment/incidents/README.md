@@ -7,7 +7,7 @@
 
 | 日期 | 文件 | 主题 |
 |---|---|---|
-| 2026-05-16 | [`2026-05-16_uc_security_incident_and_backup.md`](2026-05-16_uc_security_incident_and_backup.md) | uc 集群挖矿木马入侵 (Ravencoin Rigel) + 重装备份记录 |
+| 2026-05-16 | [`../../backup/2026-05-16_uc_security_incident_and_backup.md`](../../backup/2026-05-16_uc_security_incident_and_backup.md) (uc 已停用) | uc 集群挖矿木马入侵 (Ravencoin Rigel) + 重装备份记录 |
 | 2026-04-27 | [`2026-04-27_realsense_anti_flicker.md`](2026-04-27_realsense_anti_flicker.md) | RealSense 抗闪烁修复 — 分水岭 |
 | (无日期) | [`task_a_real_robot_grasp_corner_debug_log.md`](task_a_real_robot_grasp_corner_debug_log.md) | Task A 真机叠衣 "夹不到衣角反复尝试" 排查日志 |
 | (无日期) | [`usb_camera_layout.md`](usb_camera_layout.md) | USB Camera Layout Issue — 相机识别次序问题 |
@@ -16,7 +16,7 @@
 
 | 你怀疑什么 | 去 |
 |---|---|
-| uc 节点跑慢 / SSH 异常登录 / 矿机 | 2026-05-16_uc_security_incident_and_backup.md (含 IoC + 检测命令) |
+| uc 节点跑慢 / SSH 异常登录 / 矿机 | ../../backup/2026-05-16_uc_security_incident_and_backup.md (含 IoC + 检测命令) |
 | RealSense 摄像头条纹 / 闪烁 | 2026-04-27_realsense_anti_flicker.md |
 | 真机抓衣角失败 / 夹不到 / 反复尝试 | task_a_real_robot_grasp_corner_debug_log.md |
 | USB 摄像头识别错 / /dev/video* 编号乱 | usb_camera_layout.md |

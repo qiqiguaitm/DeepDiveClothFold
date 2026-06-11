@@ -64,7 +64,7 @@
 - step 28k 后进入慢速 plateau (-1 ~ -3% per 4k step)
 - step 44k 起 @1 平在 0.0088, @10/@25/@50 继续微降 (long-horizon planner 仍在精修)
 - 全程 0 NaN
-- 中途遭遇 **挖矿木马入侵导致 step 38k-42k 严重降速** (详见 `docs/deployment/incidents/2026-05-16_uc_security_incident_and_backup.md`), 但 MAE 趋势未受影响
+- 中途遭遇 **挖矿木马入侵导致 step 38k-42k 严重降速** (详见 `docs/backup/2026-05-16_uc_security_incident_and_backup.md`), 但 MAE 趋势未受影响
 
 ## 4. SOTA 关键洞察
 
@@ -119,7 +119,7 @@ uc02:/cluster_ckpt/checkpoints/pi05_flatten_fold_a_new_pure2_1800/task_a_new_pur
 - 矿机干扰期 rate: 14-25 s/it (慢 7-13x)
 - step 38k-42k 期间 inline_eval 卡 8h+ 才完成 (vs 正常 20min)
 
-详细事件分析见 `docs/deployment/incidents/2026-05-16_uc_security_incident_and_backup.md`。**MAE 走势未受影响**, 只是训练时长延长 (26h → 42h)。最终 ckpt 完整可用。
+详细事件分析见 `docs/backup/2026-05-16_uc_security_incident_and_backup.md`。**MAE 走势未受影响**, 只是训练时长延长 (26h → 42h)。最终 ckpt 完整可用。
 
 ## 7. 后续
 

@@ -65,7 +65,7 @@ docs/deployment/
 ### 任务 C: uc01-03 集群 24 GPU HSDP/FSDP 训练
 
 ```
-1. training_ops/submission/uc_cluster_jobs.md (3-host HSDP 配置)
+1. ../backup/uc_cluster_jobs.md (3-host HSDP 配置, uc 已停用)
 2. → ssh_and_credentials.md (uc 互信拓扑)
 3. → storage_and_env.md (RDMA NCCL 环境变量)
 ```
@@ -92,7 +92,7 @@ docs/deployment/
 ### 任务 F: uc 节点跑慢, 怀疑入侵
 
 ```
-1. incidents/2026-05-16_uc_security_incident_and_backup.md (IoC + 检测脚本)
+1. ../backup/2026-05-16_uc_security_incident_and_backup.md (IoC + 检测脚本, uc 已停用)
 2. → training_ops/ssh_and_credentials.md (检查 SSH 状态 + 互信)
 ```
 
@@ -104,7 +104,7 @@ docs/deployment/
 |---|---|
 | `cross_embodiment_data_reuse_plan.md` | `strategy/cross_embodiment_strategy.md` |
 | `realtime_vla_optimization_analysis.md` | `inference/realtime_vla/{strategy,roadmap,v1_triton_log,layer_b_plan}.md` (4 文件) |
-| `training_servers_knowledge_base.md` | `training_ops/{overview,storage_and_env,ssh_and_credentials,data_sync_tos}.md` + `training_ops/submission/{volc_ml_platform,gf0_control_plane,uc_cluster_jobs}.md` (7 文件) |
+| `training_servers_knowledge_base.md` | `training_ops/{overview,storage_and_env,ssh_and_credentials,data_sync_tos}.md` + `training_ops/submission/{volc_ml_platform,gf0_control_plane}.md` (uc_cluster_jobs → backup/) |
 | `analysis_kai0_xvla.md` | 不保留, 主要内容已合并到 `strategy/cross_embodiment_strategy.md` §1, 历史可 `git log` 查 |
 
 旧路径中 `docs/deployment/<file>.md` 现在都需要加场景目录前缀 (`docs/deployment/<scenario>/<file>.md`)。

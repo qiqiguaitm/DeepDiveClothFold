@@ -1,5 +1,7 @@
 # 训练服务器知识库 — Overview
 
+> ⚠️ **uc01/02/03 已彻底停用 (2026-05-18 退役)** — 下文服务器全景/用途分工里的 uc 行仅作历史保留;现役训练机为 gf0/gf3 + Volc 集群。uc 历史归档见 [`../../backup/`](../../backup/README.md)。
+
 > 本文档是 `training_servers_knowledge_base.md` 拆分后的"总览层"。包含服务器全景、各机用途分工、单机快速启动模板、常见运维、性能基线。
 >
 > **同 series 文档**:
@@ -8,7 +10,7 @@
 > - `data_sync_tos.md` — TOS 枢纽 + 跨服务器数据同步 + ckpt 回流
 > - `submission/volc_ml_platform.md` — 经 Volc ML Platform 提集群任务
 > - `submission/gf0_control_plane.md` — gf0 作为统一控制平面
-> - `submission/uc_cluster_jobs.md` — uc01/02/03 任务提交 + 3-host HSDP
+> - ~~`submission/uc_cluster_jobs.md`~~ → [`../../backup/uc_cluster_jobs.md`](../../backup/uc_cluster_jobs.md) (uc 已停用)
 
 ---
 

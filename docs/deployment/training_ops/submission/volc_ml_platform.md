@@ -4,7 +4,7 @@
 >
 > **同 submission 子目录**:
 > - `gf0_control_plane.md` — 经 gf0 作为统一控制平面提任务
-> - `uc_cluster_jobs.md` — uc01-03 直连任务 + 3-host HSDP 集群
+> - [`../../../backup/uc_cluster_jobs.md`](../../../backup/uc_cluster_jobs.md) — uc01-03 (已停用)
 >
 > **上级**: `../overview.md` (服务器全景 + 单机直接启动模板)
 

@@ -66,7 +66,7 @@
 | ckpt 根 | `/data/shared/ubuntu/workspace/multinode_ckpts/pi05_flatten_fold_A_0522_0526_raw/A_0522_0526_raw_uc16/` (共享 NFS) |
 
 > **✅ 多机稳定性已实测通过** (2026-06-02 09:12): step-2000 ckpt 在共享 NFS 落成 finalized `2000/` (12G params + metadata + assets + train_state, 无 tmp 残留), orbax `Wrote NNN array_metadata` 写入共享 NFS 成功 (= 原崩溃点), 训练继续到 Step 2200 loss 0.0075。**这才是多机真正的稳定判据** (非 Step100 loss 下降)。
-> **基建踩坑** (迁 uc 多机时): 首跑崩在 step-2000 orbax 落盘 (ckpt 落节点本地盘), 换节点重跑又连挂 3 次 (JAX 编译缓存不对称致跨主机 clique init 死锁)。根因+修复见 [`../../deployment/training_ops/submission/uc_cluster_jobs.md §12.11 坑 9/10`](../../deployment/training_ops/submission/uc_cluster_jobs.md)。
+> **基建踩坑** (迁 uc 多机时): 首跑崩在 step-2000 orbax 落盘 (ckpt 落节点本地盘), 换节点重跑又连挂 3 次 (JAX 编译缓存不对称致跨主机 clique init 死锁)。根因+修复见 [`../../backup/uc_cluster_jobs.md §12.11 坑 9/10`](../../backup/uc_cluster_jobs.md)。
 
 ### MAE (待回填)
 

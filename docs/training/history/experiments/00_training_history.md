@@ -30,7 +30,7 @@
 > - **`task_a_new_pure_200_new_norm_results.md` §8** (2026-05-31 新) — **PyTorch 原生训练对照** (`A_mirror200_pi05_pytorch`, cnsh 8 A100, 50k, pi05_base init): pure_200 同数据同 init 下 **PyTorch best 50000 @1=0.0121 vs JAX 0.0065, +86% (纯框架变量)** — PyTorch 路径暂不能等价 reproduce JAX
 > - **`xvla_x3_controlled_a0423_results.md`** (2026-05-29, completed 2026-05-31) — **X-VLA 控制变量 X3 三件套**: 全用 A_0423_0527 作 vis + 统一 30k/lr5e-5, 唯一变量=域组成 (X3.C vis-only / X3.B +kai / X3.A +kai+xvla). 修复版管线. **eval: X3.C vis-only 各 horizon 全胜 (EE6D MAE@1=0.0142), 加 kai +78% / 加 xvla 再 +9%** (fit 非泛化, 真机待做). ⚠️ §4: X-VLA EE6D MAE 与 pi 系列 14D 关节 MAE **不可跨族比数值** (不同 action 表示/量纲). 取代原版 vis_v2_merged X3 (作废)
 > - **`training_paradigm_comparison.md`** — single-stage vs two-stage 训练范式对比 (pi05_base+7900ep 一次性 vs mixed_1+1800ep 两阶段, 决策树)
-> - **`docs/deployment/incidents/2026-05-16_uc_security_incident_and_backup.md`** — Ravencoin 挖矿木马入侵事件报告 (uc01/02/03, SSH 密码爆破 + 横向移动, 已处置)
+> - **`docs/backup/2026-05-16_uc_security_incident_and_backup.md`** — Ravencoin 挖矿木马入侵事件报告 (uc01/02/03, SSH 密码爆破 + 横向移动, 已处置)
 > - **`task_p_unfreeze_20k_v2_results.md`** — uc02 v2 数据集对比 (Task_P/v2_aligned 84 ep + action=state + 30fps interp + seed=123, best 0.0070, -64% vs orig)
 > - `kai0_mixed_1_results.md` — Task A 迁移 init 来源
 > - `training_plans.md` — kai0_mixed_1 / kai0_full 训练 recipe

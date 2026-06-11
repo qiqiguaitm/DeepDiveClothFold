@@ -85,7 +85,7 @@ tar -cf - A_new_smooth_800/ | tosutil cp - tos://transfer-shanghai/KAI0/dataset/
 | **gf3** | `/vePFS-North-E/vis_robot/workspace/deepdive_kai0/kai0/data/...` | `cd /vePFS-North-E/vis_robot/workspace/deepdive_kai0/kai0/data && tosutil cp -r tos://transfer-shanghai/KAI0/Task_A/<sub>/ ./Task_A/` |
 | **uc01** (仅 uc01, 经 NFS 自动同步给 uc02/03) ⭐ | `/data/shared/ubuntu/workspace/deepdive_kai0/kai0/data/Task_A/...`(2026-05-28 起,原 `dataset/` 已迁此) | 原始 base 拉到 `vis_base/`:`cd …/kai0/data/Task_A/vis_base && tosutil cp -r tos://transfer-shanghai/KAI0/Task_A/base/<date>-v2/ ./`;官方/构建集对应 `kai0_*` / `self_built/`。同步脚本 `from_tos_file.py/to_tos.py` 仍在 `dataset/KAI0/` |
 
-> ⭐ **uc 集群只在 uc01 拉一次** — `/data/shared/ubuntu/workspace/` 是 uc01 export 的 NFS root (`10.60.0.0/16`, 走管理网 eth0), uc02/03 通过 NFSv4.1 自动看到同一份 (跨机 inode 一致, 2026-05-28 实测). **不要 for-loop 各机各拉一份** — 浪费 3× TOS 带宽, 还会因不同步导致训练读到不同内容。详见 `uc_cluster_data_sharing_analysis.md`。
+> ⭐ **uc 集群只在 uc01 拉一次** — `/data/shared/ubuntu/workspace/` 是 uc01 export 的 NFS root (`10.60.0.0/16`, 走管理网 eth0), uc02/03 通过 NFSv4.1 自动看到同一份 (跨机 inode 一致, 2026-05-28 实测). **不要 for-loop 各机各拉一份** — 浪费 3× TOS 带宽, 还会因不同步导致训练读到不同内容。详见 `../../backup/uc_cluster_data_sharing_analysis.md` (uc 已停用)。
 
 **关键: 路径前缀对齐**:
 ```
