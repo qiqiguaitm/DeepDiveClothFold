@@ -75,6 +75,13 @@ class CasualWATrainer(Trainer):
         transformer.register_to_config(
             action_attends_video=bool(model_config.get("action_attends_video", False))
         )
+        # X-WAM 异步噪声采样(ANS, arXiv 2604.26694 Eq.4):视频/动作各自独立 timestep,
+        # 且 t_video ≥ t_action 恒成立(覆盖推理期"动作先去噪完、视频还半噪"的上三角分布,
+        # 修 action_attends_video 的 exposure bias)。写入 transformer config 供 eval/serve 自动识别。
+        self.async_noise = bool(model_config.get("async_noise", False))
+        self.ans_p = float(model_config.get("ans_p", 0.1))          # 分支A(t_a=0)概率,论文未公开
+        self.ans_beta = tuple(model_config.get("ans_beta", (1.5, 1.0)))
+        transformer.register_to_config(async_noise=self.async_noise)
         transformer_cfg = model_config.get('transformer', dict())
         transformer = process_transformer(transformer, transformer_cfg)
         transformer.to(self.device, dtype=self.dtype)
@@ -99,7 +106,11 @@ class CasualWATrainer(Trainer):
             _bs, _ndim = images.shape[0], images.ndim
         bs = _bs
         prompt_embeds = batch_dict['prompt_embeds']
-        timestep, sigma = self.get_timestep_and_sigma(_bs, _ndim)
+        if self.async_noise:
+            sigma, ans_action_sigma, timestep, ans_action_ts, ans_clean = self.get_ans_timesteps(_bs, _ndim)
+        else:
+            timestep, sigma = self.get_timestep_and_sigma(_bs, _ndim)
+            ans_action_sigma = ans_action_ts = ans_clean = None
         action = batch_dict['action']
         state = batch_dict['state']
         self.vae_decode(action=action, sign='input_action')
@@ -114,7 +125,8 @@ class CasualWATrainer(Trainer):
         visual_noise = torch.randn_like(visual_latents)
         visual_target = visual_noise - visual_latents
         noisy_latents = visual_noise * sigma + visual_latents * (1 - sigma)
-        action_sigma = sigma.squeeze(-1).squeeze(-1)
+        # ANS:action 用自己的(更低)sigma;否则与视频共享
+        action_sigma = ans_action_sigma if self.async_noise else sigma.squeeze(-1).squeeze(-1)
         action_noise = torch.randn_like(action)
         action_target = action_noise - action
         noisy_action = action_noise * action_sigma + action * (1 - action_sigma)
@@ -171,6 +183,10 @@ class CasualWATrainer(Trainer):
         num_clean_latent_tokens = frame_per_tokens
         num_noisy_latent_tokens = num_latent_tokens - num_clean_latent_tokens
         timestep[:, num_state_tokens + num_clean_latent_tokens:] = noise_t
+        if self.async_noise:
+            # token 序与模型一致 [state | ref(clean) | action | noisy]:action 切片填 t_a,其余仍 t_O
+            a0 = num_state_tokens + num_clean_latent_tokens
+            timestep[:, a0:a0 + num_action_tokens] = ans_action_ts.to(timestep.dtype)[:, None]
         visual_pred, action_pred = transformer(
             ref_latents=ref_latents,
             noisy_latents=noisy_latents,
@@ -194,7 +210,13 @@ class CasualWATrainer(Trainer):
         visual_loss = ((visual_pred.float() - visual_target.float()) * first_frame_mask) ** 2
         visual_loss = visual_loss.mean()
         action_loss = (action_pred.float() - action_target.float()) ** 2
-        action_loss = action_loss.mean()
+        if ans_clean is not None:
+            # ANS 分支A:t_a=0 时输入即干净动作,velocity 目标 ε−a₀ 不可预测(纯噪声回归),
+            # 置零该样本的 action loss——分支A 的作用是让"干净动作"成为视频去噪的条件分布内状态。
+            w = (~ans_clean).float()
+            action_loss = (action_loss.mean(dim=(1, 2)) * w).sum() / w.sum().clamp(min=1.0)
+        else:
+            action_loss = action_loss.mean()
         # 加权(λ_video/λ_action):backward 的 total=sum(dict) 即 ℒ_all=λ_v·ℒ_video+λ_a·ℒ_action。
         # 注意:日志里打印的是**加权后**的值(λ_action=5 时 action_loss 显示≈5×真实 velocity-MSE,
         # 监控真实收敛需 ÷λ_action)。
@@ -221,6 +243,33 @@ class CasualWATrainer(Trainer):
         while len(sigma.shape) < ndim:
             sigma = sigma.unsqueeze(-1)
         return timestep, sigma
+
+    def get_ans_timesteps(self, batch_size, ndim):
+        """X-WAM Eq.4 异步噪声采样,t_O ≥ t_a(视频恒比动作噪):
+          分支A(p):   t_a=0、t_O~U(0,1)   —— 动作已干净、视频还在去噪(推理后半段状态);
+          分支B(1-p): t_a~U(0,1)、t_O = t_a + (1−t_a)·Beta(1.5,1)(重标到 [t_a,1],右偏)。
+        实现决策:耦合后两者都过 flow_shift 单调变换 —— 保持 t_O ≥ t_a 次序不变,且 video
+        边际尽量贴近原 backbone 配方(与 sync 训练的唯一差异=耦合本身,A/B 干净);t_a=0 经
+        warp 仍为 0。返回 (sigma_O[ndim 维], sigma_a[bs,1,1], ts_O[bs], ts_a[bs], 分支A掩码)。
+        """
+        dev = self.device
+        u_a = torch.rand(batch_size, device=dev)
+        b = torch.distributions.Beta(self.ans_beta[0], self.ans_beta[1]).sample((batch_size,)).to(dev)
+        is_clean = torch.rand(batch_size, device=dev) < self.ans_p
+        t_a = torch.where(is_clean, torch.zeros_like(u_a), u_a)
+        t_o = torch.where(is_clean, torch.rand(batch_size, device=dev), t_a + (1 - t_a) * b)
+
+        def warp(s):
+            s = self.flow_shift * s / (1 + (self.flow_shift - 1) * s)
+            ts = torch.round(s * 1000).long()
+            return ts.float() / 1000, ts
+
+        sigma_a, ts_a = warp(t_a)
+        sigma_o, ts_o = warp(t_o)
+        sigma_a = sigma_a.view(-1, 1, 1)            # broadcast 到 action (bs,T,14)
+        while len(sigma_o.shape) < ndim:
+            sigma_o = sigma_o.unsqueeze(-1)
+        return sigma_o, sigma_a, ts_o, ts_a, is_clean
 
     def if_visualize(self):
         return self.process_index == 0 and (self.cur_step % self.view_interval == 0 or self.cur_step == 1) and len(self._outputs) == 0

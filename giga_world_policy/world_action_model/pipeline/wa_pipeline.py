@@ -366,6 +366,8 @@ class WAPipeline(DiffusionPipeline, WanLoraLoaderMixin):
         width: int = 832,
         num_frames: int = 81,
         num_inference_steps: int = 50,
+        action_num_inference_steps: Optional[int] = None,  # ANS:动作步数 T_a < T_O;None=同步
+        finish_video: bool = True,                          # False:动作出完即返回(imgs=None)
         guidance_scale: float = 5.0,
         guidance_scale_2: Optional[float] = None,
         num_videos_per_prompt: Optional[int] = 1,
@@ -451,9 +453,13 @@ class WAPipeline(DiffusionPipeline, WanLoraLoaderMixin):
 
         self.scheduler.set_timesteps(num_inference_steps, device=device)
         timesteps = self.scheduler.timesteps
-        self.action_scheduler.set_timesteps(num_inference_steps, device=device)
+        # ANS 异步去噪:action 用更少的步数(T_a < T_O)先走完;σ_a(i) ≤ σ_O(i) 自然成立
+        # (linspace 步进 + 单调 shift warp),与 ANS 训练的上三角分布一致。
+        # 默认 None → T_a = T_O,与原同步行为逐位等价。
+        t_a_steps = action_num_inference_steps or num_inference_steps
+        self.action_scheduler.set_timesteps(t_a_steps, device=device)
         action_timesteps = self.action_scheduler.timesteps
-        if not torch.all(timesteps == action_timesteps):
+        if t_a_steps == num_inference_steps and not torch.all(timesteps == action_timesteps):
             raise ValueError("timesteps and action_timesteps mismatch")
 
         num_channels_latents = self.vae.config.z_dim
@@ -533,6 +539,11 @@ class WAPipeline(DiffusionPipeline, WanLoraLoaderMixin):
                 )
                 num_clean_latent_tokens = frame_per_tokens
                 timestep_full[:, num_state_tokens + num_clean_latent_tokens :] = noise_t
+                # action token 用自己的 timestep(同步时 action_timesteps[i]==t,行为不变);
+                # 动作走完后(i ≥ T_a)固定为 clean modality(t=0,不再去噪)
+                action_active = i < t_a_steps
+                a0 = num_state_tokens + num_clean_latent_tokens
+                timestep_full[:, a0:a0 + num_action_tokens] = action_timesteps[i] if action_active else 0
 
                 with current_model.cache_context("cond"):
                     model_out = current_model(
@@ -566,7 +577,10 @@ class WAPipeline(DiffusionPipeline, WanLoraLoaderMixin):
 
                 if not action_only:
                     latents = self.scheduler.step(noise_pred, t, latents, return_dict=False)[0]
-                action = self.action_scheduler.step(action_pred, t, action, return_dict=False)[0]
+                if action_active:
+                    action = self.action_scheduler.step(action_pred, action_timesteps[i], action, return_dict=False)[0]
+                if not finish_video and i + 1 >= t_a_steps:
+                    break  # 动作已出,放弃剩余视频去噪(ANS 快档;imgs 返回 None)
 
                 if callback_on_step_end is not None:
                     callback_kwargs = {}
@@ -585,7 +599,7 @@ class WAPipeline(DiffusionPipeline, WanLoraLoaderMixin):
                     xm.mark_step()
 
         imgs = None
-        if not action_only:
+        if (not action_only) and finish_video:
             latents[:, :, :1] = latent_model_input[:, :, :1]
             latents_mean = (
                 torch.tensor(self.vae.config.latents_mean)

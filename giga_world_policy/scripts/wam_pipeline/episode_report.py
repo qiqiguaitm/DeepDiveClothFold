@@ -60,6 +60,7 @@ def get_args():
     ap.add_argument("--aggregate", action="store_true")
     ap.add_argument("--exec_horizon", type=int, default=16); ap.add_argument("--action_chunk", type=int, default=48)
     ap.add_argument("--steps_inf", type=int, default=10); ap.add_argument("--fps", type=int, default=5)
+    ap.add_argument("--steps_act", type=int, default=0)  # ANS 动作步数 T_a;0=自动(ANS ckpt→5,其余同步)
     ap.add_argument("--delta_mask", default="")  # 空=从 --stats_path 内嵌 delta_mask 取(默认);传 "1,1,..,0" 覆盖
     ap.add_argument("--width", type=int, default=768); ap.add_argument("--height", type=int, default=192)
     return ap.parse_args()
@@ -113,6 +114,11 @@ def main():
     LOOKAHEAD = bool(getattr(tf.config, "action_attends_video", False))
     if LOOKAHEAD:
         print(f"[report shard {sid}/{n}] action_attends_video=True -> full denoise (action_only disabled)", flush=True)
+    # ANS ckpt:动作 T_a 步先出(默认 5),metric eps 不需要视频时提前返回(finish_video=False)
+    ANS = bool(getattr(tf.config, "async_noise", False))
+    STEPS_ACT = (args.steps_act or None) if not ANS else (args.steps_act or 5)
+    if ANS:
+        print(f"[report shard {sid}/{n}] async_noise=True -> T_a={STEPS_ACT}/T_O={args.steps_inf}", flush=True)
 
     def infer(gi, want_video):
         d = ds[int(gi)]; ep, f = info[int(gi)]; fr = fc.get(ep)
@@ -122,6 +128,7 @@ def main():
             out = raw_pipe(height=args.height, width=args.width, action_chunk=args.action_chunk, state=ns, num_frames=5,
                            guidance_scale=0.0, num_inference_steps=args.steps_inf, image=ref,
                            action_only=(not want_video) and not LOOKAHEAD,
+                           action_num_inference_steps=STEPS_ACT, finish_video=want_video or STEPS_ACT is None,
                            return_dict=False, prompt_embeds=t5.unsqueeze(0).to(dev, torch.float32))
         imgs, act = out[0], out[1]
         pa = add_state_to_action(denormalize_action(act[0].float(), norm, mode="zscore"), st[0].float().to(act.device),
