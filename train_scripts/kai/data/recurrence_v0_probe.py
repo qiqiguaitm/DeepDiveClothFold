@@ -77,7 +77,7 @@ def main():
 
     chunks_size = json.load(open(ds / "meta" / "info.json")).get("chunks_size", 1000)
     eps_meta = [json.loads(l) for l in open(ds / "meta" / "episodes.jsonl")]
-    all_eps = [e["episode_index"] for e in eps_meta]
+    all_eps = [e.get("episode_index", e.get("episode_id")) for e in eps_meta]  # vis_dagger 用 episode_id
     random.Random(args.seed).shuffle(all_eps)
     eps = sorted(all_eps[: args.n_episodes])
     print(f"[v0] sampled {len(eps)} episodes: {eps[:8]}...")

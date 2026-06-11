@@ -1,0 +1,78 @@
+# 跨episode重复度研究 — 全量特征提取 (DINOv2, 8 GPU 分片) — cnsh robot-task 8×A100
+#   Plan: docs/training/future_plans/plans/cross_episode_recurrence_value_plan.md §5
+#   数据: smooth800 全量811ep + vis_dagger 全日期 + kai0_advantage 全量(各 top_head, 3Hz)
+#   产出: 各数据集 feat_cache/ (per-ep npz, vePFS) → 本地做全量 milestone 挖掘/TCC
+#   ⚠️ venv: 用 xvla/X-VLA-env/.venv (vePFS 自包含; kai0/.venv 的 python symlink 指 /home/tim, pod 不可用)
+# Submit: source ~/.volc_creds && kai0/.venv/bin/python \
+#   train_scripts/kai/volc/submit_yaml.py train_scripts/kai/volc/recurrence_feats_cnsh_8gpu.yaml
+
+TaskName: "recurrence-feats-cnsh-8gpu"
+Description: "重复度研究全量特征提取: DINOv2 3Hz, smooth800+dagger+kai0adv, 8xA100 分片"
+Tags: []
+
+ImageUrl: "visincept-cn-shanghai.cr.volces.com/grasp/h2r:1.0"
+ResourceQueueName: "robot-task"
+Framework: "PyTorch"
+
+TaskRoleSpecs:
+  - RoleName: "worker"
+    RoleReplicas: 1
+    Flavor: "ml.hpcpni2.28xlarge"   # 8× A100-80G 整机
+
+ActiveDeadlineSeconds: 21600        # ~1-2h 预期, 6h 兜底
+EnableTensorBoard: false
+
+Storages:
+  - Type: "Vepfs"
+    VepfsId: "vepfs-cnsh075262e1f815"
+    SubPath: ""
+    MountPath: "/vePFS"
+
+CacheType: "Cloudfs"
+
+Envs:
+  - Name: HF_HUB_OFFLINE
+    Value: "1"
+  - Name: TRANSFORMERS_OFFLINE
+    Value: "1"
+  - Name: HF_HUB_CACHE
+    Value: "/vePFS/tim/workspce/hf_cache/hub_default"
+  - Name: OMP_NUM_THREADS
+    Value: "8"
+
+Entrypoint: |
+  set -uo pipefail
+  STAMP=$(date -u +%Y%m%d_%H%M%S)
+  REPO=/vePFS/tim/workspace/deepdive_kai0
+  LOG_DIR=$REPO/logs
+  mkdir -p "$LOG_DIR"
+  exec >> "$LOG_DIR/recurrence_feats_${STAMP}.log" 2>&1
+  echo "=== recurrence feats start $(date) host=$(hostname) ==="
+  nvidia-smi -L | head -2
+  cd "$REPO"
+  PY=xvla/X-VLA-env/.venv/bin/python
+  $PY -c "import torch, transformers, av, sklearn; print('deps OK cuda', torch.cuda.device_count())"
+
+  extract() {  # dataset out — 8 GPU 分片提特征
+    for g in 0 1 2 3 4 5 6 7; do
+      CUDA_VISIBLE_DEVICES=$g $PY -u train_scripts/kai/data/tcc_train_features.py \
+        --dataset "$1" --out "$2" --all-eps --feats-only --shard $g 8 \
+        > "$LOG_DIR/recurrence_feats_${STAMP}_$(basename $2)_g$g.log" 2>&1 &
+    done
+    wait
+    echo "[extract done] $1 -> $2/feat_cache ($(ls $2/feat_cache | wc -l) eps)"
+  }
+  extract kai0/data/Task_A/self_built/A_new_smooth_800/base temp/tcc_smooth800
+  extract kai0/data/Task_A/kai0_advantage                   temp/tcc_kai0
+  for D in kai0/data/Task_A/vis_dagger/v2/2026-*-v2; do
+    n=$($PY -c "import json;print(json.load(open('$D/meta/info.json'))['total_episodes'])")
+    [ "$n" = "0" ] && continue
+    extract "$D" "temp/tcc_dagger_$(basename $D)"
+  done
+  echo "=== ALL EXTRACT DONE $(date) ==="
+
+RetryOptions:
+    EnableRetry: false
+    MaxRetryTimes: 0
+
+AccessType: "Public"

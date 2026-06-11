@@ -86,6 +86,10 @@ def main():
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--out", default="temp/tcc_kai0")
     ap.add_argument("--model", default="facebook/dinov2-small")
+    ap.add_argument("--all-eps", action="store_true", help="用全部 episode(忽略 n-train/n-val 采样,train=前90%%)")
+    ap.add_argument("--feats-only", action="store_true", help="只提特征进缓存后退出(集群分片用)")
+    ap.add_argument("--shard", type=int, nargs=2, default=None, metavar=("I", "N"),
+                    help="只处理 idx%%N==I 的 episode(多 GPU 分片提特征)")
     args = ap.parse_args()
     torch.manual_seed(args.seed); random.seed(args.seed); np.random.seed(args.seed)
 
@@ -93,10 +97,21 @@ def main():
     (out / "feat_cache").mkdir(parents=True, exist_ok=True)
     cam = cam_dir(ds)
     chunks_size = json.load(open(ds / "meta" / "info.json")).get("chunks_size", 1000)
-    eps_all = [json.loads(l)["episode_index"] for l in open(ds / "meta" / "episodes.jsonl")]
+    eps_all = [(lambda r: r.get("episode_index", r.get("episode_id")))(json.loads(l))
+               for l in open(ds / "meta" / "episodes.jsonl")]  # vis_dagger 用 episode_id
     random.Random(args.seed).shuffle(eps_all)
-    train_eps = sorted(eps_all[: args.n_train])
-    val_eps = sorted(eps_all[args.n_train: args.n_train + args.n_val])
+    if args.all_eps:
+        cut = int(len(eps_all) * 0.9)
+        train_eps, val_eps = sorted(eps_all[:cut]), sorted(eps_all[cut:])
+    else:
+        train_eps = sorted(eps_all[: args.n_train])
+        val_eps = sorted(eps_all[args.n_train: args.n_train + args.n_val])
+    if args.shard:
+        i, n = args.shard
+        allset = sorted(train_eps + val_eps)
+        mine = [ep for j, ep in enumerate(allset) if j % n == i]
+        print(f"[tcc] shard {i}/{n}: {len(mine)} eps (feats-only={args.feats_only})")
+        train_eps, val_eps = mine, []        # 分片模式只为提特征
     print(f"[tcc] train {len(train_eps)} eps, val {len(val_eps)} eps, cam={cam}")
 
     dev = "cuda" if torch.cuda.is_available() else "cpu"
@@ -114,10 +129,23 @@ def main():
 
     print("[tcc] extracting/caching features ...")
     feats = {}
+    skipped = []
     for n, ep in enumerate(train_eps + val_eps):
-        feats[ep] = get_feats(ep)
+        try:
+            feats[ep] = get_feats(ep)
+        except Exception as e:                      # 缺失/坏视频: 跳过不拖全局
+            skipped.append(ep)
+            print(f"  [skip] ep{ep}: {type(e).__name__} {str(e)[:80]}")
+            continue
         if (n + 1) % 20 == 0:
             print(f"  {n+1}/{len(train_eps)+len(val_eps)}")
+    if skipped:
+        print(f"[tcc] skipped {len(skipped)} eps: {skipped[:20]}")
+    train_eps = [e for e in train_eps if e in feats]
+    val_eps = [e for e in val_eps if e in feats]
+    if args.feats_only:
+        print(f"[tcc] feats-only done ({len(feats)} eps cached)")
+        return
 
     head = Head().to(dev)
     opt = torch.optim.AdamW(head.parameters(), lr=args.lr, weight_decay=1e-5)
@@ -138,7 +166,7 @@ def main():
         lens_t = torch.tensor(lens).to(dev)
         loss = compute_tcc_loss(
             embs=embs, idxs=steps_t, seq_lens=lens_t,
-            stochastic_matching=False, normalize_embeddings=False,
+            stochastic_matching=False, normalize_embeddings=True,
             loss_type="regression_mse", similarity_type="l2",
             num_cycles=20, cycle_length=2, temperature=0.1,
             label_smoothing=0.1, variance_lambda=0.001,

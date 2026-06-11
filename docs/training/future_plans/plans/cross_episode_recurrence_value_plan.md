@@ -140,11 +140,43 @@ smooth800(demo)挖的 10 个 milestone,KMeans 质心直接 assign 到 autonomy r
 
 **V0 判据结论**:前半 ✅ 进 V1;后半 → 软处理 + 分组(已实证);颜色主导 → 高覆盖簇 OK、低覆盖簇受 item 分型影响(分组可解)。
 
-### 5.2 TCC 复现/适配(进行中)
+**(e) vis_dagger 探针(2026-06-09-v2,50 ep)— `temp/recurrence_v0_dagger/`**
 
-- XIRL 官方 PyTorch 代码已拉到 `/vePFS/tim/workspace/recurrence_research/google-research/{xirl,tcc}`(sparse checkout);
-- 适配器 `train_scripts/kai/data/tcc_train_features.py`:冻结 DINOv2 + MLP head,直接 import XIRL `compute_tcc_loss`(deterministic regression-MSE cycle-back),XIRL 协议 value=−‖emb−goal‖;
-- 首训:kai0_advantage 120 train/20 val,2000 步,gf0 本地;评估 = val 上 TCC-value vs GT 的 τ(对照:原始 DINOv2 距离、pi0-AE)。结果待回填。
+覆盖率比 smooth800 更高(median 53% vs 25%,峰 88%)→ dagger 数据更同质;12 个低覆盖段待审计(dagger 含纠错段,是"低重复=错误"半边在有错数据上的测试场)。
+
+### 5.2 ⭐ 自动 milestone vs ViVa-DSM 手标 — 同 episode 直接对比(task_a_0509v2,30 ep)
+
+`recurrence_vs_dsm_milestones.py` + `temp/recurrence_v0_0509/auto_vs_hand_milestones.png`:
+
+| 指标 | 结果 |
+|---|---|
+| 手标边界 n | 120(30 ep × 4 边界) |
+| **到最近自动 milestone 的 \|Δt\|** | **median = 0.037 episode 长度(≈2.5s)**,mean 0.055 |
+| ≤0.05 / ≤0.10 命中率 | 59% / **80%** |
+| 0509 单日数据覆盖率 | **两个簇 100% 覆盖**(每条 episode 必经),top-10 全 ≥83% |
+
+→ **自动挖掘能以 ~4% 时长精度复现 DSM 手标边界** —— "替代 ViVa-DSM 手标"的核心主张获得同 episode 直接证据。
+
+### 5.3 全量挖掘(集群 8×A100 提特征 + 本地 CPU 挖掘)— milestone 跨规模稳定
+
+| 数据集 | eps/帧 | 覆盖率 | milestone(局部峰值) |
+|---|---|---|---|
+| kai0_advantage | **3055** / 337k | med 36%,max 79% | 11 个峰横跨全程;**中段峰 t≈0.44-0.46(71-79%)与 50-ep 探针一致**;dom≈0% |
+| smooth800 | 806 / 94k | med 27%,max 63% | 峰 t=0.37-0.46(51-61%)+ t=0.85(63%);覆盖率整体更低 = 跨 10 日期/多衣物的多样性(分组挖掘可提) |
+
+工件:`temp/full_mining_{kai0,smooth800}/`(mining.npz 含质心/覆盖率/milestone,full_coverage_curve.png)。
+
+### 5.4 TCC 复现/适配(迭代中)
+
+- XIRL 官方 PyTorch 代码 → `/vePFS/tim/workspace/recurrence_research/google-research/{xirl,tcc}`;适配器 `tcc_train_features.py`(冻结 DINOv2 + MLP head + 官方 `compute_tcc_loss`,XIRL value=−‖emb−goal‖,支持 `--shard/--feats-only` 集群分片)。
+- **v1(2000步,默认参)→ 塌缩**:loss 恒 0.0815≈Var(U(0,1))=1/12(soft-NN 均匀的局部最优),val τ≈−0.14(raw DINO 距离 τ 也≈−0.11 → 冻结特征上"到goal距离"天然不是好进度信号,与 V0 中 V_milestone≫V_tpos 一致)。
+- **修复迭代**:v2 = `normalize_embeddings=True` + lr 1e-3 + 4000 步;发现并修 XIRL `one_hot` 的 device bug(`torch.eye` CPU × CUDA 索引,torch2.4 必崩/2.7 容忍,已 patch 克隆仓);round3 任务 `t-20260611234053-jzr7z`(kai0 + smooth800 双训)结果待回填。
+
+### 5.5 基础设施记录(本轮)
+
+- **8×A100 全量特征提取**(robot-task,`t-20260611230152-x5k2d`):smooth800+kai0(3055)+dagger 全日期,**14 分钟跑完**;唯一坑 = 个别缺失视频把 shard 弄死(已加 skip-patch,round2 `t-20260611232906-qlbsp` 补齐 806/806)。
+- **pod venv 定论**:`kai0/.venv` python symlink 指 `/home/tim`(pod 无)→ 集群一律用 **`xvla/X-VLA-env/.venv`**(vePFS 自包含,已补装 matplotlib/scikit-learn)。
+- ⚠️ **gf0 本地 GPU 驱动于 2026-06-11 ~15:00 消失**(nvidia-smi 变 0 字节、torch cuda=False)→ 本地只能 CPU(挖掘/可视化),GPU 工作全部走集群。
 
 ## 4. 参考文献 + 阅读指引(按优先级;1-7 经 3 票核验引用)
 

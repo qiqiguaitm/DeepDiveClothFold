@@ -1,0 +1,60 @@
+# 重复度研究 round2: smooth800 补提(skip-patch) + 0509v2 提取 + TCC v2 训练 — robot-task 8×A100
+# Submit: source ~/.volc_creds && kai0/.venv/bin/python train_scripts/kai/volc/submit_yaml.py train_scripts/kai/volc/recurrence_round2_cnsh_8gpu.yaml
+TaskName: "recurrence-round2-cnsh-8gpu"
+Description: "round2: smooth800 fill + 0509v2 feats + TCC v2 train/eval (xvla venv)"
+Tags: []
+ImageUrl: "visincept-cn-shanghai.cr.volces.com/grasp/h2r:1.0"
+ResourceQueueName: "robot-task"
+Framework: "PyTorch"
+TaskRoleSpecs:
+  - RoleName: "worker"
+    RoleReplicas: 1
+    Flavor: "ml.hpcpni2.28xlarge"
+ActiveDeadlineSeconds: 14400
+EnableTensorBoard: false
+Storages:
+  - Type: "Vepfs"
+    VepfsId: "vepfs-cnsh075262e1f815"
+    SubPath: ""
+    MountPath: "/vePFS"
+CacheType: "Cloudfs"
+Envs:
+  - Name: HF_HUB_OFFLINE
+    Value: "1"
+  - Name: TRANSFORMERS_OFFLINE
+    Value: "1"
+  - Name: HF_HUB_CACHE
+    Value: "/vePFS/tim/workspce/hf_cache/hub_default"
+Entrypoint: |
+  set -uo pipefail
+  STAMP=$(date -u +%Y%m%d_%H%M%S)
+  REPO=/vePFS/tim/workspace/deepdive_kai0
+  LOG=$REPO/logs/recurrence_round2_${STAMP}.log
+  exec >> "$LOG" 2>&1
+  echo "=== round2 start $(date) ==="
+  cd "$REPO"; PY=xvla/X-VLA-env/.venv/bin/python
+  # 1) smooth800 fill (8 分片, skip-patch 已入库)
+  for g in 0 1 2 3 4 5 6 7; do
+    CUDA_VISIBLE_DEVICES=$g $PY -u train_scripts/kai/data/tcc_train_features.py \
+      --dataset kai0/data/Task_A/self_built/A_new_smooth_800/base --out temp/tcc_smooth800 \
+      --all-eps --feats-only --shard $g 8 > $REPO/logs/r2_fill_g$g.log 2>&1 &
+  done; wait
+  echo "[fill done] smooth800 cache=$(ls temp/tcc_smooth800/feat_cache | wc -l)"
+  # 2) 并行: 0509v2 提取(GPU0) + TCC v2 训练(GPU1)
+  CUDA_VISIBLE_DEVICES=0 $PY -u train_scripts/kai/data/recurrence_v0_probe.py \
+    --dataset kai0/data/Task_A/vis_base/v2/2026-05-09-v2 --n-episodes 30 \
+    --out temp/recurrence_v0_0509 > $REPO/logs/r2_0509_probe.log 2>&1 &
+  P1=$!
+  CUDA_VISIBLE_DEVICES=1 $PY -u train_scripts/kai/data/tcc_train_features.py \
+    --dataset kai0/data/Task_A/kai0_advantage --n-train 120 --n-val 20 --steps 4000 --lr 1e-3 \
+    --out temp/tcc_kai0 > $REPO/logs/r2_tcc_v2.log 2>&1 &
+  P2=$!
+  wait $P1 $P2
+  echo "[probe rc + tcc rc done]"
+  grep -a "V0 SUMMARY" -A6 $REPO/logs/r2_0509_probe.log | head -8 || true
+  grep -a "TCC EVAL" -A6 $REPO/logs/r2_tcc_v2.log | head -8 || true
+  echo "=== ROUND2 DONE $(date) ==="
+RetryOptions:
+    EnableRetry: false
+    MaxRetryTimes: 0
+AccessType: "Public"
