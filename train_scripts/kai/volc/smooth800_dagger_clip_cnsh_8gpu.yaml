@@ -4,11 +4,11 @@
 # Submit: source ~/.volc_creds && kai0/.venv/bin/python train_scripts/kai/volc/submit_yaml.py train_scripts/kai/volc/smooth800_dagger_clip_cnsh_8gpu.yaml
 
 TaskName: "pi05-smooth800-dagger-clip-cnsh-8gpu"
-Description: "gripper-action-clip (≤5mm→0) from mixed_1_clean: JAX 单节点 8 A100, 50k (cnsh robot-task)"
+Description: "gripper-action-clip (≤5mm→0) from mixed_1_clean: JAX 单节点 8 A100, 50k (Robot-GPU 开发机队列)"
 Tags: []
 
 ImageUrl: "visincept-cn-shanghai.cr.volces.com/grasp/h2r:1.0"
-ResourceQueueName: "robot-task"
+ResourceQueueName: "Robot-GPU开发机队列"
 Framework: "PyTorch"
 
 TaskRoleSpecs:
@@ -54,7 +54,7 @@ Entrypoint: |
   mkdir -p "$LOG_DIR"
   LOG="$LOG_DIR/smooth800_dagger_clip_cnsh_${STAMP}.log"
   exec >> "$LOG" 2>&1
-  echo "=== entrypoint start $(date) (single-node 8 GPU, cnsh robot-task) ==="
+  echo "=== entrypoint start $(date) (single-node 8 GPU, cnsh, Robot-GPU 开发机队列) ==="
   set -ex
   nvidia-smi -L
 
