@@ -34,6 +34,10 @@ def find_cam_dir(ds: Path) -> str:
     raise FileNotFoundError(f"no top camera dir under {base}")
 
 
+def video_path(ds: Path, cam: str, ep: int, chunks_size: int) -> Path:
+    return ds / "videos" / f"chunk-{ep // chunks_size:03d}" / cam / f"episode_{ep:06d}.mp4"
+
+
 def decode_strided(mp4: Path, stride: int, size: int = 224):
     """Decode every `stride`-th frame, center-crop-resize to size."""
     out, idxs = [], []
@@ -71,6 +75,7 @@ def main():
     cam = find_cam_dir(ds)
     print(f"[v0] dataset={ds} cam={cam}")
 
+    chunks_size = json.load(open(ds / "meta" / "info.json")).get("chunks_size", 1000)
     eps_meta = [json.loads(l) for l in open(ds / "meta" / "episodes.jsonl")]
     all_eps = [e["episode_index"] for e in eps_meta]
     random.Random(args.seed).shuffle(all_eps)
@@ -91,7 +96,7 @@ def main():
     else:
         feats, ep_ids, fr_idx, tnorm = [], [], [], []
         for n, ep in enumerate(eps):
-            mp4 = ds / "videos" / "chunk-000" / cam / f"episode_{ep:06d}.mp4"
+            mp4 = video_path(ds, cam, ep, chunks_size)
             imgs, idxs = decode_strided(mp4, args.stride)
             with torch.no_grad():
                 for b in range(0, len(imgs), 64):
@@ -151,7 +156,7 @@ def main():
     for (ep, fr), pos in need.items():
         by_ep.setdefault(ep, []).append((fr, pos))
     for ep, items in by_ep.items():
-        mp4 = ds / "videos" / "chunk-000" / cam / f"episode_{ep:06d}.mp4"
+        mp4 = video_path(ds, cam, ep, chunks_size)
         want = {fr: pos for fr, pos in items}
         cont = av.open(str(mp4))
         for i, f in enumerate(cont.decode(video=0)):
@@ -204,7 +209,7 @@ def main():
             thumbs.append((int(ep), int((s + e) // 2)))
     # 缩略图 (每段中点帧)
     for ep, fr in thumbs[:60]:
-        mp4 = ds / "videos" / "chunk-000" / cam / f"episode_{ep:06d}.mp4"
+        mp4 = video_path(ds, cam, ep, chunks_size)
         cont = av.open(str(mp4))
         for i, f in enumerate(cont.decode(video=0)):
             if i == fr:
