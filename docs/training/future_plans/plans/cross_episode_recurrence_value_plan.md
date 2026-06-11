@@ -170,7 +170,22 @@ smooth800(demo)挖的 10 个 milestone,KMeans 质心直接 assign 到 autonomy r
 
 - XIRL 官方 PyTorch 代码 → `/vePFS/tim/workspace/recurrence_research/google-research/{xirl,tcc}`;适配器 `tcc_train_features.py`(冻结 DINOv2 + MLP head + 官方 `compute_tcc_loss`,XIRL value=−‖emb−goal‖,支持 `--shard/--feats-only` 集群分片)。
 - **v1(2000步,默认参)→ 塌缩**:loss 恒 0.0815≈Var(U(0,1))=1/12(soft-NN 均匀的局部最优),val τ≈−0.14(raw DINO 距离 τ 也≈−0.11 → 冻结特征上"到goal距离"天然不是好进度信号,与 V0 中 V_milestone≫V_tpos 一致)。
-- **修复迭代**:v2 = `normalize_embeddings=True` + lr 1e-3 + 4000 步;发现并修 XIRL `one_hot` 的 device bug(`torch.eye` CPU × CUDA 索引,torch2.4 必崩/2.7 容忍,已 patch 克隆仓);round3 任务 `t-20260611234053-jzr7z`(kai0 + smooth800 双训)结果待回填。
+- **修复迭代**:v2 = `normalize_embeddings=True` + lr 1e-3 + 4000 步;发现并修 XIRL `one_hot` 的 device bug(`torch.eye` CPU × CUDA 索引,torch2.4 必崩/2.7 容忍,已 patch 克隆仓);round3 `t-20260611234053-jzr7z` 跑完。
+- **TCC verdict(本轮)**:kai0 val 上 TCC-value τ=**−0.31**(方向反转且弱;raw DINO 距离 −0.11)→ **冻结 DINOv2+MLP head 的 XIRL 距离式 value 远不如零训练 milestone(0.81)**。归因:goal=末帧嵌入(臂悬布上)与中段视觉相近、冻结特征空间"到 goal 距离"非单调;XIRL 原方是**端到端训练 backbone** —— 列为后续(V1 步 c 修订:**聚类-milestone 路线为已验证主线,TCC 端到端为可选增强**)。
+
+### 5.4b dagger 低覆盖审计(补)
+
+dagger(06-09)低覆盖段缩略图抽看:ep73 五段(共 ~35s)全是**红色长裤**(罕见 item;主流为方巾/T恤)→ 与 smooth800 审计一致:**三个数据集的低覆盖段均由稀有 item 主导**,"低重复=错误"在 demo/dagger 数据上均不成立(真错误检测须先按 item 分组再看组内低重复段)。
+
+### 5.6 阶段结论(2026-06-11 自循环第一轮收口)
+
+1. **假说前半(重复=必经)**:✅ 三数据集 + 全量(3055ep)成立,milestone 跨规模稳定、dom≈0;
+2. **自动 milestone 可替代 DSM 手标**:同 episode 直接对比 median |Δt|=3.7% 时长、80%≤0.10 ✅;
+3. **零训练 V_milestone**:GT τ=0.81(逼近监督 0.896 corr),且在真机 rollout 上具状态触发性(重试处回落,4panel 视频可见)✅;
+4. **假说后半(稀有=negative)**:❌ 实证三连否——低覆盖段由**稀有 item** 主导(非错误非恢复)→ 只能软处理 + 按 item/策略分组;
+5. **TCC(冻结特征版)**:❌ 弱于聚类路线;端到端版列为后续;
+6. **V1 修订**:主线 = 分组(item/策略)→ 全量聚类 milestone → V_milestone/相位 → 喂 `discretize_advantage.py`;TCC 仅作可选 recurrence 平滑器。下一决策点 = 用 milestone-value 重打 smooth800 advantage 标签 → AWBC 对照训练(沿用 awbc_viva 对比框架,真机终判)。
+
 
 ### 5.5 基础设施记录(本轮)
 
