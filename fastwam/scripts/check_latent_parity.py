@@ -30,8 +30,15 @@ def main():
     # B) 原路径数据集(同配置去掉缓存)
     ds_orig = instantiate(cfg.data.train, latent_cache_dir=None)
 
-    # 取 ep0 的第 0、第 7 个缓存窗口对拍
-    picks = [i for i, (ep, gs, wi) in enumerate(ds_fast._cache_index) if ep == 0][:8:7]
+    # 跨集采样:每个已缓存 episode 取中段 1 窗(重点覆盖 ep>0 的全局/局部偏移映射——
+    # ep0 global==local,单测 ep0 有盲区),默认取 4 个不同 episode
+    import collections
+    by_ep = collections.OrderedDict()
+    for i, (ep, gs, wi) in enumerate(ds_fast._cache_index):
+        by_ep.setdefault(ep, []).append(i)
+    eps_avail = list(by_ep)
+    chosen_eps = [e for e in [eps_avail[0], *eps_avail[1:]][:: max(1, len(eps_avail) // 4)]][:4]
+    picks = [by_ep[e][len(by_ep[e]) // 2] for e in chosen_eps]
     print(f"checking {len(picks)} windows: {[(ds_fast._cache_index[i]) for i in picks]}", flush=True)
 
     vae = None
