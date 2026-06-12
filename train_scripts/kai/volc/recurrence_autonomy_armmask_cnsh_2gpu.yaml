@@ -1,0 +1,38 @@
+TaskName: "recurrence-autonomy-armmask"
+Description: "extract armmask features for temp/autonomy rollout (768 frames, 1 ep)"
+Tags: []
+ImageUrl: "visincept-cn-shanghai.cr.volces.com/grasp/h2r:1.0"
+ResourceQueueName: "Robot-GPU开发机队列"
+Framework: "PyTorch"
+TaskRoleSpecs:
+  - RoleName: "worker"
+    RoleReplicas: 1
+    Flavor: "ml.pni2.7xlarge"
+ActiveDeadlineSeconds: 3600
+EnableTensorBoard: false
+Storages:
+  - Type: "Vepfs"
+    VepfsId: "vepfs-cnsh075262e1f815"
+    SubPath: ""
+    MountPath: "/vePFS"
+CacheType: "Cloudfs"
+Envs:
+  - Name: HF_HUB_OFFLINE
+    Value: "1"
+  - Name: TRANSFORMERS_OFFLINE
+    Value: "1"
+  - Name: HF_HUB_CACHE
+    Value: "/vePFS/tim/workspce/hf_cache/hub_default"
+Entrypoint: |
+  set -uo pipefail
+  REPO=/vePFS/tim/workspace/deepdive_kai0
+  exec >> "$REPO/logs/recurrence_autonomy_armmask_$(date -u +%H%M%S).log" 2>&1
+  cd "$REPO"; PY=xvla/X-VLA-env/.venv/bin/python
+  CUDA_VISIBLE_DEVICES=0 $PY -u train_scripts/kai/data/extract_masked_features.py \
+    --dataset temp/autonomy --out temp/tcc_autonomy_armmask
+  ls -la temp/tcc_autonomy_armmask/feat_cache/
+  echo "AUTONOMY_ARMMASK_DONE"
+RetryOptions:
+    EnableRetry: false
+    MaxRetryTimes: 0
+AccessType: "Public"

@@ -638,6 +638,28 @@ hybrid 取得最优 τ/Pearson 组合(段内增量来自状态对齐而非时间
 
 **结论(§4.3 判据修订)**:milestone 系 value 的 advantage 是**稀疏事件型**(跨越 milestone 时刻 = 真进步证据),pi0-AE 是**平滑回归型**;corr(ΔV,ΔGT) 天然偏向后者,不应作为标签优劣的 offline 判据。修订后的对照轴:① 二值标签层对比(discretize 后的 prompt 标签翻转率与位置分布);② 负 advantage 的语义审计(pi0-AE 的负标签集中在 value 噪声/end-drop,milestone 系的负标签只会来自退步重入 §4.4.6——后者语义更干净);③ **真机/rollout 数据为终判**(demo 上 GT 单调,二值标签近乎全正,根本区分不开两类标签;状态触发 vs 时间回归的差异只在含失败/重试的数据上显现)。
 
+#### 4.4.8 真机 rollout 实测:F1 通过,F2 跨域失效 — domain gap 系统验证(2026-06-12)
+
+> 用户要求:① 跑 F1 退步规则误报率;② 在 `temp/autonomy`(真机连续 3 轮叠衣:轮1中途衣物被人拿走重叠、轮2叠完被弄乱重叠)上验证 milestone 逻辑是否可用。armmask 特征经集群 `t-20260612183326-72lng`(2×A100)提取(768 帧)。
+
+**F1 退步规则误报率:✅ 0/50。** smooth800 50 条干净 held-out demo,V2.1 退步规则(anchor 持续置信重入,P≤V−0.15,驻留≥1s)触发 **0 次**——demo 域内零误报,保守性达标。
+
+**F2 rollout:❌ 退步检测 0 次,且根因不是退步逻辑,是 domain gap。** 逐层诊断(全部入 `docs/visualization/`):
+
+| 诊断 | 结果 | 图 |
+|---|---|---|
+| 命中分类(111 帧落入 milestone 簇) | ticker 30 / **margin>0.8 被挡 41** / **cummax 压制 37** / 真正驱动 V 仅 **3**(且 margin 0.90-0.97 噪声) | `rollout_hit_classification.png` |
+| 硬门控 vs 软加权 | 软加权 demo sanity **失败**(0.55-0.65 卡死,分辨率被 softmax 抹平);rollout std 仅 0.046 = 噪声 | `rollout_soft_value.png` |
+| 最近邻 + 中值滤波 | demo 上不单调(前段误命中);rollout 起伏频率远超 3 轮且不对齐边界 | `rollout_nn_value.png` |
+| **rollout 帧到最近 anchor 的 min-dist 中位 = 1.18** | 特征最大模 √2≈1.41 → rollout 帧在 demo 簇空间是"无主之地",分配本质随机 | (铁证) |
+| 所有已有 value(含**监督 pi0-AE**) | 逐帧全噪声;30s 重平滑后 pi0-AE 仍只单调缓爬(忽略 2 次重置),无轮间回落 | `rollout_supervised_values.png` · `rollout_smoothed_trend.png` |
+
+**裁决**:跨域 rollout 上,**零训练 milestone(硬/软/最近邻三读出)、监督 pi0-AE、DSM、ViVa 全部退化为噪声**,统一根因 = domain gap(真机 D435 俯视、空桌面、不同衣物、线缆入镜,与 self_built demo 特征空间错位)。这**不是门控太严或读出方式问题**(min-dist 1.18 是物理限制,放宽门控只会放进更多噪声),也不是 milestone 方法独有的短板(连监督模型一起败)。印证了 [[project_kai0_vis_camera_gap]]:跨本体/跨域真瓶颈在感知表征,非 value 逻辑。
+
+**退步逻辑本身的有效性不受影响**:合成退步测试(§4.4.6 图38)+ F1 零误报已在 demo 域证明逻辑正确;rollout 只是缺乏同域感知锚点。
+
+**可用 value 的唯一出路**(列 V2.2):① **同域真机 demo 重挖**——采几条同 D435 相机/同环境的叠衣 demo 挖 milestone,再 assign 到 rollout;② **rollout 自挖(self-mining)**——3 轮是同任务重复,按轮切分做 cross-round 挖掘,无 domain gap(但需先定轮边界 + 单条数据簇质量存疑)。两者都需新数据/新管线,非参数可调。
+
 ## 5. 基础设施与执行记录
 
 **表11 — 集群任务**(均 cnsh;pod venv = `xvla/X-VLA-env/.venv`)
