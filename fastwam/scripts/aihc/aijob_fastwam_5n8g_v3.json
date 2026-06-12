@@ -1,0 +1,83 @@
+{
+  "name": "visrobot01-fold-fastwam-v3",
+  "queue": "aihcq-z4v1apdppzwy",
+  "jobFramework": "pytorch",
+  "jobSpec": {
+    "command": "bash /mnt/pfs/p46h4f/cosmos/deepdive_kai0/fastwam/scripts/aihc/run_train_aihc.sh",
+    "image": "ccr-249evs6f-vpc.cnc.bj.baidubce.com/visrobot/cosmos:v4.0_QHcnix_20260531063553_QHcnix_20260603200802",
+    "imageConfig": {
+      "username": "root",
+      "password": ""
+    },
+    "replicas": 5,
+    "resources": [
+      {
+        "name": "baidu.com/a100_80g_cgpu",
+        "quantity": 8
+      },
+      {
+        "name": "rdma/hca",
+        "quantity": 1
+      },
+      {
+        "name": "sharedMemory",
+        "quantity": 0
+      }
+    ],
+    "envs": [
+      {
+        "name": "NUM_GPUS",
+        "value": "8"
+      },
+      {
+        "name": "CUDA_DEVICE_MAX_CONNECTIONS",
+        "value": "1"
+      },
+      {
+        "name": "LOG_COLLECTION",
+        "value": "true"
+      },
+      {
+        "name": "NCCL_DEBUG",
+        "value": "INFO"
+      },
+      {
+        "name": "NCCL_IB_DISABLE",
+        "value": "0"
+      },
+      {
+        "name": "TASK",
+        "value": "visrobot01_fold_uncond_1e-4"
+      },
+      {
+        "name": "RUN_NAME",
+        "value": "aihc_5n8g_v3"
+      }
+    ],
+    "enableRDMA": true,
+    "hostNetwork": true
+  },
+  "faultTolerance": true,
+  "priority": "normal",
+  "datasources": [
+    {
+      "id": "",
+      "type": "pfsl2",
+      "sourcePath": "/visdata",
+      "mountPath": "/mnt/pfs/p46h4f",
+      "name": "pfs-fDgaop",
+      "options": {
+        "sizeLimit": 0,
+        "medium": "",
+        "readOnly": false,
+        "pfsL1ClusterPort": "8888",
+        "pfsL2MountTargetId": [
+          "mt-zSSaab"
+        ],
+        "pfsL2HostMountPath": "/pfs/visdata",
+        "cfsInstanceId": "",
+        "cfsMountPoint": ""
+      }
+    }
+  ]
+}
