@@ -1,3 +1,5 @@
+> 命名约定:gwp_ori = 官方切断基线(旧称 abs-best);gwp_ans = 异步噪声采样模型(旧称 ANS 模型)。
+
 # PR: WAM world-model lookahead — action_attends_video + X-WAM ANS + MAE 根因排查
 
 分支 `wam/abs-lookahead` → `main`。PR 链接:
@@ -33,7 +35,7 @@ ANS(arXiv 2604.26694 Eq.4)训练耦合采样保证 σ_video ≥ σ_action(覆盖
 | 任务 | jobId | 结果(200ep:@1/@10/@24/@48,act 延迟) |
 |---|---|---|
 | naive lookahead | job-i3ngi7f23gi5 | 复现 GigaWorld Table 6:同步 attend 略差于切断,负迁移随 horizon 放大 |
-| **ANS(本 PR 核心)** | job-3am80jbendcf | **.0063/.0288/.0574/.0918 @283ms** —— @10/@24/@48 全面超 delta-5x(.1128@48)与 pi0.5(.1155@48),延迟约一半;@1 输 delta(锚定结构优势) |
+| **gwp_ans(本 PR 核心,旧称 ANS 模型)** | job-3am80jbendcf | **.0063/.0288/.0574/.0918 @283ms** —— @10/@24/@48 全面超 delta-5x(.1128@48)与 pi0.5(.1155@48);与 gwp_ori(切断,原 abs-best,.0916@48)精度打平、延迟 −47%,延迟约一半;@1 输 delta(锚定结构优势) |
 
 注:per-1k 曲线用的 60-ep 子集系统性偏难,跨家族对比一律以 200-ep 终评为准(勘误详见根因文档)。
 
