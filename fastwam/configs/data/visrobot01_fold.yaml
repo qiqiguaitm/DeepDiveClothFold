@@ -31,11 +31,14 @@ train:
   action_video_freq_ratio: 4 # 48 action, 13 video frames(对齐 GWP chunk48/mae@48 协议)
   video_size: [384, 320] # final resize video
   camera_key: null
-  val_set_proportion: 0.01
+  # 0.0:训练用全集(真 eval 在外部 visrobot01_val 200-ep)。同时是 latent 缓存的硬前提——
+  # 非 0 会让 split 重排 episode 编号,与按全集 mp4 编号建的 vae_latent 缓存错位(画面对错集)。
+  val_set_proportion: 0.0
   is_training_set: true
   pretrained_norm_stats: ./data/visrobot01_fold/dataset_stats.json
   skip_padding_as_possible: false
   concat_multi_camera: "robotwin"
+  latent_cache_dir: /mnt/pfs/p46h4f/cosmos/deepdive_kai0/kai0/data/wam_fold_v1/visrobot01_train/vae_latent
   processor:
     _target_: fastwam.datasets.lerobot.processors.fastwam_processor.FastWAMProcessor
     shape_meta: ${data.train.shape_meta}

@@ -42,6 +42,7 @@ class RobotVideoDataset(torch.utils.data.Dataset):
         max_padding_retry: int = 3,
         concat_multi_camera: str = "horizontal", # "horizontal", "vertical", "robotwin", or None
         override_instruction: Optional[str] = None, # whether to hardcode a specific instruction for all samples, for debugging
+        latent_cache_dir: Optional[str] = None,      # VAE latent 缓存目录(compute_latents.py 产出)
     ):
         self.lerobot_dataset = BaseLerobotDataset(
             dataset_dirs=dataset_dirs,
@@ -72,6 +73,31 @@ class RobotVideoDataset(torch.utils.data.Dataset):
         self.max_padding_retry = max_padding_retry
         self.concat_multi_camera = concat_multi_camera
         self.override_instruction = override_instruction
+        # ── VAE latent 缓存(compute_latents.py 产出)──
+        # 设置后:数据集只暴露"已缓存的窗口"(索引重映射,等价 GWP LatentEpisodeSampler stride=4),
+        # __getitem__ 走 fast path:parquet(action/state)+ 缓存 latent,完全不解码视频。
+        self.latent_cache_dir = latent_cache_dir
+        self._dataset_dirs = [str(d) for d in dataset_dirs]
+        self._cache_index = None   # [(ep, global_start, win_idx_in_ep), ...]
+        self._ep_lru = {}          # ep -> dict(payload mmap + ep_data),容量 _ep_lru_cap
+        self._ep_lru_cap = 2
+        self._task_str = None
+        if latent_cache_dir is not None:
+            # 缓存按全集 episode 编号(mp4 文件名)建;split 会重排编号导致画面对错集 → 禁止
+            if float(val_set_proportion) != 0.0:
+                raise ValueError(
+                    f"latent_cache_dir requires val_set_proportion=0 (got {val_set_proportion}): "
+                    "non-zero split re-indexes episodes and mismatches the cache built on full-set numbering."
+                )
+            import glob as _glob
+            files = sorted(_glob.glob(os.path.join(latent_cache_dir, "episode_*.pt")))
+            self._cache_index = []
+            for f in files:
+                ep = int(os.path.basename(f).split("_")[1].split(".")[0])
+                payload = torch.load(f, map_location="cpu", weights_only=True, mmap=True)
+                for wi, gs in enumerate(payload["starts"]):
+                    self._cache_index.append((ep, int(gs), wi))
+            logger.info(f"latent cache: {len(files)} episodes, {len(self._cache_index)} windows from {latent_cache_dir}")
 
         self.resize_transform = ResizeSmallestSideAspectPreserving(
             args={"img_w": self.video_size[1], "img_h": self.video_size[0]},
@@ -110,9 +136,79 @@ class RobotVideoDataset(torch.utils.data.Dataset):
             self.lerobot_dataset.set_processor(processor)
         
     def __len__(self):
+        if self._cache_index is not None:
+            return len(self._cache_index)
         return len(self.lerobot_dataset)
 
+    def _ep_cache(self, ep):
+        """per-worker LRU:{latents(mmap), starts, act_win[T,48,14] raw, state[T,14] raw}。"""
+        if ep in self._ep_lru:
+            return self._ep_lru[ep]
+        payload = torch.load(os.path.join(self.latent_cache_dir, f"episode_{ep:06d}.pt"),
+                             map_location="cpu", weights_only=True, mmap=True)
+        ep_data = self.lerobot_dataset._get_episode_data(ep)  # 纯 parquet,无视频
+        entry = {
+            "latents": payload["latents"], "starts": payload["starts"],
+            "act_win": ep_data["action"],   # {key: [T,48,dim]} raw(滑窗,末端复制)
+            "state": ep_data["state"],      # {key: [T,1,dim]} raw
+        }
+        if len(self._ep_lru) >= self._ep_lru_cap:
+            self._ep_lru.pop(next(iter(self._ep_lru)))
+        self._ep_lru[ep] = entry
+        return entry
+
+    def _get_cached(self, idx):
+        """fast path:零视频解码。归一化与原路径同链:
+        action_state_transform → normalizer.forward → action_state_merger.forward(同一 processor 实例)。"""
+        ep, gstart, wi = self._cache_index[idx]
+        ent = self._ep_cache(ep)
+        ep_from = self.lerobot_dataset.episode_data_index["from"]
+        lstart = gstart - int(ep_from[ep])
+        proc = self.lerobot_dataset.processor
+
+        T = self.num_frames                      # 49
+        A = T - 1                                # 48
+        batch = {
+            "action": {k: v[lstart].clone() for k, v in ent["act_win"].items()},          # [48,dim]
+            "state": {k: v[lstart:lstart + T, 0].clone() for k, v in ent["state"].items()},  # [49,dim]
+            "action_is_pad": torch.zeros(A, dtype=torch.bool),
+            "state_is_pad": torch.zeros(T, dtype=torch.bool),
+            "idx": idx,
+        }
+        batch = proc.action_state_transform(batch)
+        batch = proc.normalizer.forward(batch)
+        batch = proc.action_state_merger.forward(batch)
+
+        if self._task_str is None:
+            if self.override_instruction is not None:
+                self._task_str = self.override_instruction
+            else:
+                import json as _json
+                p = os.path.join(self._dataset_dirs[0], "meta", "tasks.jsonl")
+                if not os.path.exists(p):
+                    raise RuntimeError(f"latent fast path: missing {p}")
+                self._task_str = _json.loads(open(p).readline())["task"]
+        instruction = DEFAULT_PROMPT.format(task=self._task_str)
+        context, context_mask = self._get_cached_text_context(instruction)
+        context[~context_mask] = 0.0
+        context_mask = torch.ones_like(context_mask)
+
+        n_vid = len(self.video_sample_indices)   # 13
+        return {
+            "video_latents": ent["latents"][wi].clone(),     # [C,Tl,H,W] — 不留批维,collate 后 [B,C,Tl,H,W]
+            "action": batch["action"],                       # [48,14] normalized
+            "proprio": batch["state"][:-1, :],               # [48,14] normalized(对齐原路径 [:-1])
+            "prompt": instruction,
+            "context": context,
+            "context_mask": context_mask,
+            "image_is_pad": torch.zeros(n_vid, dtype=torch.bool),
+            "action_is_pad": batch["action_is_pad"],
+            "proprio_is_pad": batch["state_is_pad"][:-1],
+        }
+
     def _get(self, idx):
+        if self._cache_index is not None:
+            return self._get_cached(idx)
         sample_idx = idx
         sample = None
         for attempt in range(self.max_padding_retry + 1):
