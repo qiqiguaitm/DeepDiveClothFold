@@ -1059,6 +1059,39 @@ _CONFIGS = [
         inline_eval_dataset_id=1,
     ),
 
+    # from-PaliGemma 自训 (pi05_from_paligemma_base_training_plan.md 路径 B1, naive-from-base):
+    # 不 warm-start PI 的 pi05_base, 改从 PaliGemma VLM base 起 (action expert 随机初始化) → 双本体
+    # co-train. 单变量 vs pi05_kaivis_perdsnorm_cond = weight_loader (PaliGemmaLocalWeightLoader, 离线
+    # 本地 npz) + LR/warmup/steps (B1: peak 3e-5 / warmup 3k / 150k step, 随机 action expert 需更激进起步)
+    # + cnbj 8卡 (fsdp8) + 路径换 /vePFS-North-E. vis = A (A_smooth800_dagger_full).
+    # 数据 kai_vis_merged (7544ep / 7.12M frames; kai 5.778M / vis 1.346M → domain_weights vis=4.2925).
+    # 提交为 cnbj 闲时任务 + 自动 resume (yaml). 收敛判据 = val MAE 曲线 (非 train loss); ~150k 看是否在轨.
+    TrainConfig(
+        name="pi05_kaivis_from_paligemma",
+        model=pi0_config.Pi0Config(pi05=True, action_head_cond_num_domains=2),
+        data=KaiVisMergedDataConfig(
+            repo_id="/vePFS-North-E/vis_robot/workspace/deepdive_kai0/kai0/data/Task_A/self_built/kai_vis_merged",
+            default_prompt="Flatten and fold the cloth.",
+            use_delta_joint_actions=False,
+            domain_weights=(1.0, 4.2925),
+        ),
+        weight_loader=weight_loaders.PaliGemmaLocalWeightLoader(
+            npz_path="/vePFS-North-E/vis_robot/openpi_cache/paligemma_weights/pt_224.npz"
+        ),
+        lr_schedule=_optimizer.CosineDecaySchedule(warmup_steps=3_000, peak_lr=3e-5, decay_steps=150_000, decay_lr=3e-6),
+        ema_decay=0.9999,
+        num_train_steps=150_000,
+        keep_period=10_000,
+        save_interval=2_000,
+        num_workers=16,
+        batch_size=128,
+        fsdp_devices=8,
+        inline_eval_val_root="/vePFS-North-E/vis_robot/workspace/deepdive_kai0/kai0/data/Task_A/self_built/vis_v2_merged_val",
+        inline_eval_n_frames=200,
+        inline_eval_every=4,
+        inline_eval_dataset_id=1,
+    ),
+
     # EXP-2 (corrected_plan_a §7.2): isolate kai's contribution by removing vis_dagger.
     # Single-variable change vs pi05_kaivis_perdsnorm_cond: vis source = pure smooth800
     # (A_new_smooth_800/base, 811ep/0.93M frames) instead of A_smooth800_dagger_full.
