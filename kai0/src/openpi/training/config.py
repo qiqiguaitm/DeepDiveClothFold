@@ -595,6 +595,14 @@ class LerobotAgilexDataConfig(DataConfigFactory):
                 inputs=[_transforms.RepackTransform(new_structure)]
             )
 
+        # Advantage estimator: keep the per-frame 'progress' target through repack, else RepackTransform
+        # drops it (only keeps structure keys) → AgilexInputs can't pass it → obs.progress=None → forward crash.
+        if isinstance(model_config, pi0_config.AdvantageEstimatorConfig):
+            base_repack = repack_transforms.inputs[0]
+            adv_structure = dict(base_repack.structure)
+            adv_structure["progress"] = "progress"
+            repack_transforms = _transforms.Group(inputs=[_transforms.RepackTransform(adv_structure)])
+
         # Create data transforms for inputs and outputs
         data_transforms = _transforms.Group(
             inputs=[
