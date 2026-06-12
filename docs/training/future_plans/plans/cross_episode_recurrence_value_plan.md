@@ -571,6 +571,12 @@ milestone-value 重打 smooth800 advantage 标签 → AWBC 训练,对照现 pi0-
 
 → 干净 demo 上三者接近(循环型仅 3/20、循环度温和):**MAE 最优 = 忽略,τ/Pearson 最优 = 内插**。决策:V2 demo 打标用"忽略"(最简单且 MAE 最优);**内插版保留给 rollout 重标注**(那里循环占比高,忽略会丢大段信号)。E4(接 discretize_advantage 的标签分歧分析)待 AWBC 决策点一起做。
 
+#### 4.4.5 V2 标签落地 + 新版进度可视化视频(2026-06-12)
+
+**图36 — V2 stage 标签视频**(`make_milestone_ep_video_v5.py`,smooth800 ep660 held-out;视频 `temp/milestone_ep_s800_660_v5_calibrated_sync.mp4`):与 v4(图33)的三处升级——① **阶梯 y 轴 = 校准进度 P_k**(非均匀:可见 0.34-0.44 / 0.52-0.58 / 0.89-0.96 三个天然进度带,末段 7 个 milestone 挤在 0.89-0.96 共 0.07 的真实进度内——等步长会把它们错算成 0.35 的进度份额);② **milestone 按 P_k 重排序**(原 t̄ 序 M3=c83 实际 P_k=0.65 重排到 M11;c44/c81 判循环灰显 ×,不计入 V);③ **V 面板绿线 = V2 校准阶梯(cummax P_k),红线 = V1 等步长对照**——绿线一步跳到真实进度位(11s 处直达 0.35),红线只能等步慢爬。ep660:绝对 milestone 命中 15/18,末值 V2=0.96。
+
+![图36](../../../visualization/cross_episode_recurrence_value/msvideo_s800_660_v5_calibrated_preview.png)
+
 ---
 
 ## 5. 基础设施与执行记录
