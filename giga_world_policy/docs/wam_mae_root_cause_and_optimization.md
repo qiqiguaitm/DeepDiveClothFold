@@ -248,7 +248,52 @@ py3.12/torch2.11+cu128/diffusers0.37.1)**:
 gwp_ans 上限远未到:TF 上限 0.0598,当前 0.1245——视频预测质量仍是天花板,
 后续杠杆=更好的世界模型(视频侧训练/容量)而非 action 侧。
 
-## 四、探针复现
+## 四、推理优化终审(2026-06-13,jpsz 4×5090,真实 ckpt + 200ep 同协议)
+
+把推理提速工具集(prefix-KV/compile/FP8,见 `docs/inference_speed_optimization.md`)接到真实
+权重与 **gwp_ans 全量路径**(新增 `scripts/opt_ans.py`:AnsPrefixRunner —— prefix 因掩码不
+attend action/noisy,跨步恒定,全量路径同样可缓存;active=192 tok,t_a/t_O per-token 注入,
+与 stock 逐位 parity ~2e-2)。eval 集成:`episode_report --engine opt --opt_tier {eager,exact,fp8}
+--opt_bac N`。另:eval 管线加多线程 AV1 解码 + 下一 episode 后台预取(GPU 占空比修复)。
+
+**总表(200ep;延迟为 serving 全栈口径,括号内为纯 transformer 循环 bench):**
+
+| 配置 | @1 | @10 | @24 | @48 | Δ@48 | 延迟 | 判定 |
+|---|---|---|---|---|---|---|---|
+| ans stock(基线) | .0063 | .0288 | .0581 | .0932 | — | 251ms | 参考 |
+| ans exact | .0063 | .0286 | .0572 | .0917 | −.0015 | 131ms (86.6) | ✅ |
+| ans fp8 | .0065 | .0291 | .0582 | .0925 | −.0007 | 118ms (70.9) | ✅ |
+| **ans fp8+T_a3** | .0073 | .0278 | .0544 | **.0881** | **−.0051** | **87ms (47.7)** | ✅ **默认档** |
+| ori stock(基线) | .0052 | .0292 | .0578 | .0905 | — | 488ms | 参考 |
+| ori exact | .0053 | .0292 | .0581 | .0917 | +.0012 | 163ms (118.5) | ✅ |
+| ori fp8 | .0055 | .0301 | .0595 | .0914 | +.0009 | 160ms (117.0)* | ✅ |
+| **ori exact+NFE5** | .0064 | .0285 | .0560 | **.0887** | **−.0018** | **103ms (66.6)** | ✅ **默认档** |
+| ans BAC12 / ori BAC12 | (精度终审补录中;bench:50.9 / 81.5ms,慢于 T_a3/NFE5) | | | | | | 备选 |
+
+\* ori 的 fp8 在 reduce-overhead 编译下无延迟收益(M=48 小 GEMM 需 max-autotune,文档已预判);
+非部署首选,未追加调优。
+
+**关键结论:**
+1. **FP8 在真实 ckpt 上损失≈0**(Δ@48 ≤.0009)——随机权重 6.4% 上界纯属悲观,印证文档预判;
+2. **少步反而长程更好**(两次独立复现:NFE5 −.0018、T_a3 −.0051)——UniPC 高阶下少步=
+   更少随机累积;@1 +.001 是首步变糙(伪指标,部署可按场景调回);
+3. **NFE 缩减优于 BAC**:更快(47.7/66.6 vs 50.9/81.5ms)且零近似(只是 solver 步数);
+   BAC 的 4 进程 max-autotune 编译还会耗尽 pinned 内存(NVRM NV_ERR_NO_MEMORY 实录),
+   工程上也更脆;
+4. eval 管线 GPU 占空比问题根因 = CPU 解码与 GPU 推理串行;多线程解码+预取后单配置
+   200ep 时长 ~25→~23 分钟(进一步提升需窗口 batch 化,未做)。
+
+**最终选型(每模型三档,同一 ckpt 纯推理旋钮,可随时切换):**
+
+| 模型 | 保守(零近似) | **默认(推荐)** | 说明 |
+|---|---|---|---|
+| **gwp_ans** | exact:131ms | **fp8+T_a3:87ms(2.9×)** | T_a=5 档(118ms)介于其间;T_O=10 不动 |
+| gwp_ori | exact:163ms | **exact+NFE5:103ms(4.7×)** | fp8 对 ori 无收益,不引入 |
+
+部署王牌:**gwp_ans @ fp8+T_a3 = 87ms 全栈 / 47.7ms 纯循环,@48=.0881(优于一切历史配置)**。
+工件:`/data2/gwp_eval/out/opt200_*/summary.json`(jpsz);引擎 `scripts/opt_ans.py`。
+
+## 五、探针复现
 ```bash
 CUDA_VISIBLE_DEVICES=0 PYTHONPATH=. python scripts/wam_pipeline/_diag_deep.py \
   --ckpt <transformer_dir> --stats_path assets_visrobot01/norm_stats_vis_abs.json --n 24

@@ -160,16 +160,38 @@ class EpisodeFrameCache:
                 return p
         return None
 
-    def get(self, ep):
-        if ep in self.cache:
-            return self.cache[ep]
+    def _decode(self, ep):
         import av
         frames = {}
         for cam in self.vk:
             p = self._vpath(cam, ep)
             c = av.open(p)
+            try:
+                c.streams.video[0].thread_type = "AUTO"   # 帧/片级多线程解码(2-4×)
+            except Exception:
+                pass
             frames[cam] = np.stack([f.to_ndarray(format="rgb24") for f in c.decode(video=0)])  # [L,H,W,C] uint8
             c.close()
+        return frames
+
+    def prefetch(self, ep):
+        """后台线程预解码下一个 episode:把 CPU 解码藏进当前 episode 的 GPU 推理时间。"""
+        if ep is None or ep in self.cache:
+            return
+        if not hasattr(self, "_pf"):
+            from concurrent.futures import ThreadPoolExecutor
+            self._pf = ThreadPoolExecutor(max_workers=1)
+            self._pf_futs = {}
+        if ep not in self._pf_futs:
+            self._pf_futs[ep] = self._pf.submit(self._decode, ep)
+
+    def get(self, ep):
+        if ep in self.cache:
+            return self.cache[ep]
+        if hasattr(self, "_pf_futs") and ep in self._pf_futs:
+            frames = self._pf_futs.pop(ep).result()
+        else:
+            frames = self._decode(ep)
         self.cache[ep] = frames; self.order.append(ep)
         if len(self.order) > self.cap:
             self.cache.pop(self.order.pop(0), None)

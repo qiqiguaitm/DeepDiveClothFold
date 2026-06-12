@@ -61,7 +61,10 @@ def get_args():
     ap.add_argument("--exec_horizon", type=int, default=16); ap.add_argument("--action_chunk", type=int, default=48)
     ap.add_argument("--steps_inf", type=int, default=10); ap.add_argument("--fps", type=int, default=5)
     ap.add_argument("--steps_act", type=int, default=0)
-    ap.add_argument("--frame_cache", type=int, default=4)  # 每进程缓存解码 episode 数;62G 级主机(如 jpsz)用 1  # ANS 动作步数 T_a;0=自动(ANS ckpt→5,其余同步)
+    ap.add_argument("--frame_cache", type=int, default=4)
+    ap.add_argument("--engine", default="stock", choices=["stock", "opt"])  # opt=prefix-KV/compile 优化引擎
+    ap.add_argument("--opt_tier", default="exact", choices=["eager", "exact", "fp8"])
+    ap.add_argument("--opt_bac", type=int, default=0)  # BAC 跳过中段 block 数(0=off)  # 每进程缓存解码 episode 数;62G 级主机(如 jpsz)用 1  # ANS 动作步数 T_a;0=自动(ANS ckpt→5,其余同步)
     ap.add_argument("--delta_mask", default="")  # 空=从 --stats_path 内嵌 delta_mask 取(默认);传 "1,1,..,0" 覆盖
     ap.add_argument("--width", type=int, default=768); ap.add_argument("--height", type=int, default=192)
     return ap.parse_args()
@@ -120,13 +123,42 @@ def main():
     STEPS_ACT = (args.steps_act or None) if not ANS else (args.steps_act or 5)
     if ANS:
         print(f"[report shard {sid}/{n}] async_noise=True -> T_a={STEPS_ACT}/T_O={args.steps_inf}", flush=True)
+    OPT = args.engine == "opt"
+    if OPT:
+        from scripts.opt_ans import AnsPrefixRunner, opt_call
+        from scripts.prefix_cache import PrefixCachedRunner
+        if args.opt_tier == "fp8":
+            from scripts.fp8_linear import swap_linears_to_fp8
+            print(f"[report shard {sid}/{n}] fp8 swapped {swap_linears_to_fp8(tf.blocks)} linears", flush=True)
+        if args.opt_tier in ("exact", "fp8"):
+            for _mod in tf.modules():
+                if hasattr(_mod, "fuse_projections") and hasattr(_mod, "set_processor"):
+                    try: _mod.fuse_projections()
+                    except Exception: pass
+        _runner = AnsPrefixRunner(tf) if LOOKAHEAD else PrefixCachedRunner(tf)
+        if args.opt_tier in ("exact", "fp8"):
+            _runner.compile_prepare("reduce-overhead")
+            (_runner.compile_step_ans if LOOKAHEAD else _runner.compile_step)("reduce-overhead")
+        if args.opt_bac:
+            _runner.init_bac(len(tf.blocks))
+            if args.opt_tier in ("exact", "fp8"):
+                (_runner.compile_bac_ans if LOOKAHEAD else _runner.compile_bac)()
+        print(f"[report shard {sid}/{n}] engine=opt tier={args.opt_tier} runner={type(_runner).__name__}", flush=True)
 
     def infer(gi, want_video):
         d = ds[int(gi)]; ep, f = info[int(gi)]; fr = fc.get(ep)
         ref = build_ref_image(images={k: _hwc_to_chw01(fr[k][f]) for k in VK}, dst_size=(args.width, args.height), crop_mode="center")
         st = d["observation.state"].float().unsqueeze(0).to(dev); ns = normalize_state(st, norm, mode="zscore").to(dev, dt)
         with torch.no_grad():
-            out = raw_pipe(height=args.height, width=args.width, action_chunk=args.action_chunk, state=ns, num_frames=5,
+            if OPT and not want_video:
+                act = opt_call(raw_pipe, _runner, image=ref, state=ns,
+                               prompt_embeds=t5.unsqueeze(0).to(dev, torch.float32),
+                               height=args.height, width=args.width, num_frames=5, action_chunk=args.action_chunk,
+                               num_inference_steps=args.steps_inf, action_num_inference_steps=STEPS_ACT,
+                               is_ans=LOOKAHEAD, bac_skip=args.opt_bac)
+                out = (None, act)
+            else:
+                out = raw_pipe(height=args.height, width=args.width, action_chunk=args.action_chunk, state=ns, num_frames=5,
                            guidance_scale=0.0, num_inference_steps=args.steps_inf, image=ref,
                            action_only=(not want_video) and not LOOKAHEAD,
                            action_num_inference_steps=STEPS_ACT, finish_video=want_video or STEPS_ACT is None,
@@ -156,11 +188,14 @@ def main():
         for _ in range(2): infer(g0, False)
         torch.cuda.synchronize(); t = time.time(); [infer(g0, False) for _ in range(5)]; torch.cuda.synchronize()
         latency["action_ms"] = (time.time() - t) / 5 * 1000
-        torch.cuda.synchronize(); t = time.time(); [infer(g0, True) for _ in range(3)]; torch.cuda.synchronize()
-        latency["video_ms"] = (time.time() - t) / 3 * 1000
+        if not OPT:  # opt 引擎只出动作,跳过带视频路径的延迟测量(stock 前向与 read 模式 processor 不兼容)
+            torch.cuda.synchronize(); t = time.time(); [infer(g0, True) for _ in range(3)]; torch.cuda.synchronize()
+            latency["video_ms"] = (time.time() - t) / 3 * 1000
 
     rows = {}
     for k, ep in enumerate(my_metric):
+        if k + 1 < len(my_metric):
+            fc.prefetch(my_metric[k + 1])  # 藏解码:后台预取下一个 episode
         wins = ep2win[ep]; is_v = ep in vset
         em = {kk: [] for kk in ["action_mae"] + [f"mae@{h}" for h in HOR]}
         if not is_v:
