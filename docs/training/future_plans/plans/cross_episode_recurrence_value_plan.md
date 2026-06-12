@@ -114,7 +114,16 @@
 
 - **覆盖率峰真实存在且时间局域化**:c4 **92%**@t=0.78、c36 78%@t=0.78、c23 72%@t=0.44(`coverage_curve.png`);
 - **dom(单 episode 占比)全部 7-15%** → 高覆盖簇真跨 episode,非个体伪影;
-- 代表帧网格(`milestone_clusters.png`)肉眼可辨任务阶段(摊开/伸臂/半折/已折),且**同簇混不同布色**(绿/橙/白同行)→ DINOv2 主要抓状态而非颜色(颜色主导担忧初步缓解,但低覆盖簇仍有 item 分型,见 (c))。
+- 代表帧网格肉眼可辨任务阶段(摊开/伸臂/半折/已折),且**同簇混不同布色**(绿/橙/白同行)→ DINOv2 主要抓状态而非颜色(颜色主导担忧初步缓解,但低覆盖簇仍有 item 分型,见 (c))。
+
+![v0 smooth800 覆盖率曲线](../../../visualization/cross_episode_recurrence_value/v0_smooth800_coverage_curve.png)
+*覆盖率 vs 簇时间位置:峰=候选 milestone(c4=92%@t0.78)*
+
+![v0 smooth800 milestone 代表帧](../../../visualization/cross_episode_recurrence_value/v0_smooth800_milestone_clusters.png)
+*高覆盖簇代表帧(每行一簇 × 4 个不同 episode):可辨任务阶段、同簇混布色*
+
+![v0 smooth800 episode 时间线](../../../visualization/cross_episode_recurrence_value/v0_smooth800_episode_timeline.png)
+*每 episode 时间线按帧所属簇覆盖率着色(红=低覆盖候选段)*
 
 **(b) GT 验证(kai0_advantage 有 `stage_progress_gt`,50 ep)— `temp/recurrence_v0_kai0/gt_validation.png`**
 
@@ -127,10 +136,18 @@
 
 → **零标注逼近监督回归器**。诚实标注:episode 内与 GT 的高 τ 有"时间单调"成分;鉴别性在 (d)。已见局限:后段 milestone 稀疏 → V 饱和于 ~0.7(可加密后段 milestone 修)。
 
+![零训练 value vs GT](../../../visualization/cross_episode_recurrence_value/v0_kai0_gt_validation.png)
+*红阶梯=V_milestone(零训练)单调跟随 GT(黑);蓝点=V_tpos*
+
 **(c) ⭐ 低覆盖段审计 — 假说后半的"第三类"占主导**
 
 bottom-decile 簇(cov 4-10%)的段落缩略图人工抽看:**主要是稀有衣物类型(深色 T 恤、白长袖;smooth800 主流为方巾)**——既非 error 也非 recovery,而是 **item 级多样性**。
 → **"低重复=negative"被进一步证伪**:硬标 negative 会系统性惩罚稀有衣物品类。处理只能:软降权 + **按衣物/策略分组后再挖 recurrence**(= §2 预注册缓解的实证确认)。
+
+| 低覆盖段审计样例(三数据集一致:稀有 item 主导) | | |
+|---|---|---|
+| ![T恤](../../../visualization/cross_episode_recurrence_value/audit_smooth800_lowcov_rare_tshirt.jpg) | ![白长袖](../../../visualization/cross_episode_recurrence_value/audit_smooth800_lowcov_rare_whitesleeve.jpg) | ![红长裤](../../../visualization/cross_episode_recurrence_value/audit_dagger_lowcov_rare_redpants.jpg) |
+| smooth800: 深色 T 恤 | smooth800: 白长袖 | dagger: 红长裤 |
 
 **(d) ⭐ 鉴别性实验:demo 挖的 milestone → 真机 rollout(跨数据集,零训练)— `temp/recurrence_v0/rollout_value_compare.png`**
 
@@ -138,11 +155,19 @@ smooth800(demo)挖的 10 个 milestone,KMeans 质心直接 assign 到 autonomy r
 - **V_milestone(windowed)复现了与监督 pi0-AE 一致的多段重试结构**(~3000/~5000 帧处回落重爬),corr(V_ms, pi0-AE)=0.275、corr(pi0-AE, ViVa)=0.418;
 - 说明 recurrence value 是**状态触发**的(时间线性信号不可能在重试处回落)→ 假说的核心机制(重复状态=任务锚点)在真机数据上可迁移。
 
+![rollout 三 value 对比](../../../visualization/cross_episode_recurrence_value/rollout_smooth800milestone_vs_learned_values.png)
+*洋红=V_milestone(零训练,demo 挖掘跨数据集);绿=pi0-AE(监督);蓝=ViVa。重试处(~3000/~5000帧)同步回落*
+
+![autonomy 四模型同步帧](../../../visualization/cross_episode_recurrence_value/rollout_autonomy_4model_sync_frame.png)
+*四 value 同步视频抽帧(完整视频 `temp/autonomy_ep0_4model_value_sync.mp4`,2560×840×7676帧):第四面板紫色阶梯=recurrence value*
+
 **V0 判据结论**:前半 ✅ 进 V1;后半 → 软处理 + 分组(已实证);颜色主导 → 高覆盖簇 OK、低覆盖簇受 item 分型影响(分组可解)。
 
 **(e) vis_dagger 探针(2026-06-09-v2,50 ep)— `temp/recurrence_v0_dagger/`**
 
 覆盖率比 smooth800 更高(median 53% vs 25%,峰 88%)→ dagger 数据更同质;12 个低覆盖段待审计(dagger 含纠错段,是"低重复=错误"半边在有错数据上的测试场)。
+
+![v0 dagger 覆盖率](../../../visualization/cross_episode_recurrence_value/v0_dagger_coverage_curve.png)
 
 ### 5.2 ⭐ 自动 milestone vs ViVa-DSM 手标 — 同 episode 直接对比(task_a_0509v2,30 ep)
 
@@ -157,6 +182,9 @@ smooth800(demo)挖的 10 个 milestone,KMeans 质心直接 assign 到 autonomy r
 
 → **自动挖掘能以 ~4% 时长精度复现 DSM 手标边界** —— "替代 ViVa-DSM 手标"的核心主张获得同 episode 直接证据。
 
+![自动 vs 手标 milestone](../../../visualization/cross_episode_recurrence_value/milestones_auto_vs_dsm_hand_0509.png)
+*紫点=自动挖掘 milestone 首入时刻;黑竖线=DSM 手标边界(30 episodes)*
+
 ### 5.3 全量挖掘(集群 8×A100 提特征 + 本地 CPU 挖掘)— milestone 跨规模稳定
 
 | 数据集 | eps/帧 | 覆盖率 | milestone(局部峰值) |
@@ -164,7 +192,13 @@ smooth800(demo)挖的 10 个 milestone,KMeans 质心直接 assign 到 autonomy r
 | kai0_advantage | **3055** / 337k | med 36%,max 79% | 11 个峰横跨全程;**中段峰 t≈0.44-0.46(71-79%)与 50-ep 探针一致**;dom≈0% |
 | smooth800 | 806 / 94k | med 27%,max 63% | 峰 t=0.37-0.46(51-61%)+ t=0.85(63%);覆盖率整体更低 = 跨 10 日期/多衣物的多样性(分组挖掘可提) |
 
-工件:`temp/full_mining_{kai0,smooth800}/`(mining.npz 含质心/覆盖率/milestone,full_coverage_curve.png)。
+工件:`temp/full_mining_{kai0,smooth800}/`(mining.npz 含质心/覆盖率/milestone)。
+
+![kai0 全量挖掘](../../../visualization/cross_episode_recurrence_value/full_kai0_3055ep_coverage.png)
+*kai0_advantage 3055 episodes:红★=milestone(局部峰)*
+
+![smooth800 全量挖掘](../../../visualization/cross_episode_recurrence_value/full_smooth800_806ep_coverage.png)
+*smooth800 806 episodes(多日期/多衣物 → 覆盖率整体更低)*
 
 ### 5.4 TCC 复现/适配(迭代中)
 
@@ -172,6 +206,12 @@ smooth800(demo)挖的 10 个 milestone,KMeans 质心直接 assign 到 autonomy r
 - **v1(2000步,默认参)→ 塌缩**:loss 恒 0.0815≈Var(U(0,1))=1/12(soft-NN 均匀的局部最优),val τ≈−0.14(raw DINO 距离 τ 也≈−0.11 → 冻结特征上"到goal距离"天然不是好进度信号,与 V0 中 V_milestone≫V_tpos 一致)。
 - **修复迭代**:v2 = `normalize_embeddings=True` + lr 1e-3 + 4000 步;发现并修 XIRL `one_hot` 的 device bug(`torch.eye` CPU × CUDA 索引,torch2.4 必崩/2.7 容忍,已 patch 克隆仓);round3 `t-20260611234053-jzr7z` 跑完。
 - **TCC verdict(本轮)**:kai0 val 上 TCC-value τ=**−0.31**(方向反转且弱;raw DINO 距离 −0.11)→ **冻结 DINOv2+MLP head 的 XIRL 距离式 value 远不如零训练 milestone(0.81)**。归因:goal=末帧嵌入(臂悬布上)与中段视觉相近、冻结特征空间"到 goal 距离"非单调;XIRL 原方是**端到端训练 backbone** —— 列为后续(V1 步 c 修订:**聚类-milestone 路线为已验证主线,TCC 端到端为可选增强**)。
+
+![TCC loss](../../../visualization/cross_episode_recurrence_value/tcc_kai0_loss_curve.png)
+*v1 塌缩:loss 恒 ≈1/12(soft-NN 均匀局部最优)*
+
+![TCC value 曲线](../../../visualization/cross_episode_recurrence_value/tcc_kai0_value_curves.png)
+*XIRL 式 value=−‖emb−goal‖ 在 val episodes 上非单调 → verdict 弱*
 
 ### 5.4b dagger 低覆盖审计(补)
 
