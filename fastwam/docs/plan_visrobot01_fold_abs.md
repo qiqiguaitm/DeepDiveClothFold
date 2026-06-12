@@ -1,6 +1,23 @@
 # 方案:FastWAM 在 visrobot01 叠衣服数据上的 abs-angle 训练与多模型对比评测
 
-状态:方案(待执行)。基线与协议引用 `giga_world_policy/docs/wam_mae_root_cause_and_optimization.md`(终局结果 v2)。
+状态:**执行中(2026-06-12)**。基线与协议引用 `giga_world_policy/docs/wam_mae_root_cause_and_optimization.md`(终局结果 v2)。
+
+## 执行日志
+
+| 项 | 状态 | 备注 |
+|---|---|---|
+| M1 venv | ✅(返工一次) | python3.10 缺系统头文件 → triton JIT 编译失败 → **改 python3.11**(box 有 py311-dev);torch 2.7.1+cu128 |
+| M1 权重 | ✅ 零下载 | dreamzero 有完整 Wan-AI 原始 repo(DiT 3 shards/VAE.pth/T5.pth/tokenizer),软链至 `checkpoints/Wan-AI/Wan2.2-TI2V-5B`;**`configs/model/fastwam.yaml` 已改 `redirect_common_files: false`**(用本地 .pth,勿改回) |
+| M1 ActionDiT 插值 | ✅ | 2.0GB payload,copied=300/interpolated=520/skipped=4(skip 为 action_dim 相关层,训练时按 14 维新建) |
+| M1 T5 缓存 | ✅ | 单 prompt("Flatten and fold the cloth.")1 个缓存文件 |
+| M1 dataset_stats | ✅ | `data/visrobot01_fold/dataset_stats.json`;1879 eps / 2.78M 窗口;action q01/q99 为 abs 关节角量纲(±3 rad、夹爪 [0,0.08])✓;注意首次计算需 `mkdir runs`(save 到 work_dir 的已知小坑) |
+| M1 config | ✅ | `configs/data/visrobot01_fold.yaml` + `configs/task/visrobot01_fold_uncond_1e-4.yaml`(chunk48=num_frames49) |
+| M2 smoke | ⏳ | 首次因 triton/py3.10 头文件失败;venv311 重建后重跑 |
+| M3 AIHC 5n8g | 未起 | 多机要点:`train_zero1.sh` 仅同步 RUN_ID,**accelerate launch 需补 --num_machines/--machine_rank/--main_process_ip/--main_process_port**;wrapper 待写 |
+| M4 eval 适配器 | 未起 | |
+
+旁支:abs-best 200ep 复测(同 ckpt 重采样)→ .0912@48 vs 原 .0916,**协议运行间方差 ±0.0005~0.0015**,
+为终表 v2 的"打平"结论提供不确定度标尺。
 
 ## 0. 科学问题(为什么值得做)
 
