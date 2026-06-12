@@ -29,11 +29,13 @@ ANS(arXiv 2604.26694 Eq.4)训练耦合采样保证 σ_video ≥ σ_action(覆盖
   `episode_report.py` ANS ckpt 自动 T_a=5/T_O=10;`configs/visrobot01_fold_abs_ans.py`。
 - 验证:t_O≥t_a 不变量单测 0 违反;6 步真数据 smoke 通过;默认关闭时逐位等价。
 
-## 实验
-| 任务 | jobId | 说明 |
+## 实验(已收敛,200-ep 严格同协议终评见 docs/wam_mae_root_cause_and_optimization.md 终局结果 v2)
+| 任务 | jobId | 结果(200ep:@1/@10/@24/@48,act 延迟) |
 |---|---|---|
-| naive lookahead | job-i3ngi7f23gi5 | 复现 GigaWorld Table 6(同步噪声 → exposure bias) |
-| ANS(本 PR 核心) | job-3am80jbendcf | 异步耦合,预期兑现 lookahead 的 0.0598 上限 + 延迟减半 |
+| naive lookahead | job-i3ngi7f23gi5 | 复现 GigaWorld Table 6:同步 attend 略差于切断,负迁移随 horizon 放大 |
+| **ANS(本 PR 核心)** | job-3am80jbendcf | **.0063/.0288/.0574/.0918 @283ms** —— @10/@24/@48 全面超 delta-5x(.1128@48)与 pi0.5(.1155@48),延迟约一半;@1 输 delta(锚定结构优势) |
+
+注:per-1k 曲线用的 60-ep 子集系统性偏难,跨家族对比一律以 200-ep 终评为准(勘误详见根因文档)。
 
 ## 后续
 - ANS 终值出后补全 A/B(naive vs ANS vs abs-best);eval 指标拟换 best-of-N + 闭环 SR(MAE 是弱代理)。
