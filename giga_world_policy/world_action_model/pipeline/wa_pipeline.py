@@ -59,7 +59,7 @@ def retrieve_latents(encoder_output: torch.Tensor, generator: Optional[torch.Gen
 class WAPipeline(DiffusionPipeline, WanLoraLoaderMixin):
     model_cpu_offload_seq = "text_encoder->image_encoder->transformer->transformer_2->vae"
     _callback_tensor_inputs = ["latents", "prompt_embeds", "negative_prompt_embeds"]
-    _optional_components = ["transformer", "transformer_2", "image_encoder", "image_processor"]
+    _optional_components = ["transformer", "transformer_2", "image_encoder", "image_processor", "text_encoder"]  # text_encoder 可缺省:prompt_embeds 预计算场景(如 jpsz 裁剪 base)无须加载 11G T5
 
     def __init__(
         self,
