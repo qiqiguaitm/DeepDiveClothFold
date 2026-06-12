@@ -85,9 +85,13 @@ Entrypoint: |
     RESUME_FLAG="--overwrite"; echo "[resume] no ckpt yet -> fresh --overwrite"
   fi
 
+  # save-interval 500 (CLI override of config's 2000): 闲时 H20 被频繁抢占 (~每 49min),
+  # 2000 步 (~83min) 存盘间隔 > 抢占间隔 → 每次都从旧 ckpt 重启零进度. 500 步 (~21min) 确保
+  # 每个 borrow 窗口内至少存一次盘 → 抢占可续. (entrypoint 内嵌于 submit 请求, 不依赖 gf3 config.)
   exec python -u scripts/train.py pi05_kaivis_from_paligemma \
     --exp-name "$EXP" \
     --no-wandb-enabled \
+    --save-interval 500 \
     $RESUME_FLAG
 
 RetryOptions:
