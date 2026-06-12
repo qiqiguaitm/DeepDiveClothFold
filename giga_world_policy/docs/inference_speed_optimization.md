@@ -370,3 +370,57 @@ CUDA_VISIBLE_DEVICES=3 $PY -m scripts.test_bac --skip_middle 12 --fuse --fp8 --c
   多线程解码(thread_type=AUTO)+ 下一 episode 后台预取(`prefetch()`),解码完全藏入计算;
 - **BAC×多进程×max-autotune 是危险组合**(pinned 内存耗尽),若启用 BAC 须单进程标定后静态部署;
 - 跨机注意:32G 消费卡上 exact 档 CUDA-Graph 池 ~12.2G/进程,与桌面/他人任务共卡时留余量。
+
+---
+
+## 10. 进一步降延迟:实测瓶颈剖析 + 前沿调研(2026-06-13)
+
+§9 把延迟压到 gwp_ans 全栈 87ms。本节回答"还能怎么降",方法 = **先实测拆解定位靶子,
+再对齐前沿调研**(深度 web 调研,2024-26 论文/库,见会话记录)。
+
+### 10.1 实测延迟剖析(`scripts/prof_latency.py`,jpsz 5090,gwp_ans fp8 T_a=3,纯推理)
+
+```
+preprocess          0.2ms   0%
+VAE encode          8.8ms  14%
+prepare(前缀30层)  12.4ms  19%   一次性
+steps(3)           43.8ms  67%   ← per-step 14.6ms,绝对大头
+TOTAL              65.2ms        (87ms 全栈多出的 ~22ms = episode_report 数据加载/
+                                  GT对齐/CPU拷贝,真实 serving 不含 → 部署延迟 ≈65ms)
+```
+
+**决定性洞察:ANS per-step 14.6ms = action-only(~6ms)的 2.4×**,因为每步算 192 token
+(48 action + 144 noisy-video)。192 token 下**已脱离纯带宽主导、进入计算主导**
+(14.6ms = 5.3× 带宽下限)——这一条直接判定哪些方法有效。
+**勘误:此前估"VAE 占全栈 45%/39ms"是错的(混入了 episode_report 开销);VAE 实测仅 8.8ms。**
+
+### 10.2 候选(按"攻击 67% 大头"× 性价比 × 证据排序)
+
+| # | 候选 | 攻击什么 | 预期 | 成本 | 风险 | 证据 |
+|---|---|---|---|---|---|---|
+| **1** | **few-step 动作蒸馏(SnapFlow 式)** T_a 3→1 | steps 67% | −29ms(43.8→~15) | 一次小蒸馏 ~12 GPU-h,骨干冻结 | 低 | **直接**:SnapFlow(2604.05656)同族 π₀.₅ flow-matching 10→1步,LIBERO 97.75%→98.75%(≥teacher),e2e 274→83ms;OFP(2603.12480)/OneDP(2410.21257)佐证 |
+| **2** | **架构蒸馏→小 action 专家**(去 144 video token 分支) | per-step 计算根因 | 可能 5-20× 全栈 | 一次训练(大) | 中 | 转移:VITA-VLA(2510.09607,精度反升)/TinyVLA(~20×);**与 fastwam 线合流** |
+| **3** | **NVFP4 权重**(FP8 W8A8→4bit) | per-step 带宽部分 | 1.4-1.6× | 推理改(torch2.12+torchao nightly) | 中 | 直接(B200 Flux/LTX);**sm_120 消费卡 FP4 GEMM 不成熟,小 M 常回退,必须实测自身形状** |
+| **4** | **VAE latent 跨控制步缓存 + lighttaew2_2** | VAE 8.8ms | −7ms | 推理改/验证 | 低 | 转移(AdaCache/ReFrame 原理;taew2_2 编码 3.25×);latent 非逐位等价需复核 MSE |
+| 5 | W4 weight-only(action GEMM,M<78) | per-step 带宽 | ≤2×但与 prefix-cache 部分重叠 | 推理改 | 中 | roofline 直接,形状转移 |
+| 6 | GPU 预处理/帧留 GPU | preprocess 0.2ms | ~0(已极小) | 低 | 无 | 本场景不值得 |
+
+### 10.3 机理+证据双负,明确不做
+
+| 方法 | 否定理由 |
+|---|---|
+| W4A4 激活量化 / 任何小 M GEMM 量化 | M=48-192 < 1024,激活量化开销 > 收益(torchao 官方建议 min(M,K,N)<1024 跳过) |
+| FlashAttention-3/4、FlashInfer | 注意力非瓶颈(n<d,FFN O(n·d²) 主导;且无权重读取);FA4 仅 sm_100,5090(sm_120)用不了;cuDNN SDPA 已 ~97% SOL |
+| TensorRT / torch-TRT | 所有公开提速都是 vs eager FP16,其收益(fusion+FP8+消启动开销)CUDA Graphs 已吃掉;且丢失自定义 prefix-KV 缓存 |
+| 张量并行 2×5090 | 无 NVLink,PCIe AllReduce 在 bs=1 小 token 净负;xDiT(2411.01738)明确弃 TP |
+| TeaCache/ToCa/FBCache/Δ-DiT | 动态分支破 CUDA Graphs,或 = 已否决的 BAC 残差缓存族;少步(5-10)regime 也无 30-250 步论文的空间 |
+| 投机/级联扩散 | 仅减半 NFE,我们已在 ~10 步,无空间;且多为 diffusion-LLM 文本解码,非连续 latent |
+| DC-AE/DC-VideoGen 高压缩 VAE | 需重训进新 latent 空间,短期不适用 |
+
+### 10.4 战略读数
+- **最干净的下一步 = #1 few-step 动作蒸馏**:同族直接证据、低成本、唯一攻击 67% steps 大头;
+- 长线天花板 = #2 架构蒸馏(去 video 分支,正是 per-step 贵的根因,与 fastwam 路线天然合流);
+- #3/#4 是边际项(量化看 sm_120 FP4 成熟度;VAE 只 8.8ms 空间有限);
+- **bs=1 小 M decode regime 的特殊性**:图像/视频 DiT 的主流提速(大 M 量化、稀疏注意力、TP)
+  大多不转移——我们的杠杆集中在**步数(蒸馏)**和**模型规模(架构蒸馏)**,而非单步内核优化;
+- 铁律不变:任何蒸馏/量化必须真实 ckpt + 动作 MSE 复核。
