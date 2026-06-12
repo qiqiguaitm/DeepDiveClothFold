@@ -532,6 +532,25 @@ milestone-value 重打 smooth800 advantage 标签 → AWBC 训练,对照现 pi0-
 
 **实验排期**:E1 校准全量化(smooth800+kai0,半天,CPU)→ E2 循环三票一致性审计(出图核对哪些 milestone 被判循环,半天)→ E3 相对 milestone 三种处理消融(当绝对 / 忽略 / 内插,GT MAE 判,半天)→ E4 V2 标签接 `discretize_advantage.py`,统计与 pi0-AE 标签的分歧帧分布(1 天)→ 汇入 §4.3 AWBC 对照训练。
 
+#### 4.4.4 快速验证结果(E1-E3 已跑,2026-06-12)
+
+**E1 校准**(图35,kai0 held-out):MAE 0.199 → **0.128**(−36%),τ/Pearson 持平 ✅。
+
+**E2 循环三票审计**:
+- **kai0**:判循环 **M11/M12/M14**(t̄ 0.53-0.66 整平带;M11 runs/ep=1.57 最高)——与"反复拎起-铺开"的预期段落吻合;**票2(首入分布 GMM 多模态)过敏**(对 14/20 个 milestone 报阳)→ 降权,可靠票 = runs/ep(票1)+ 隔段重入率(票3);
+- **smooth800**:严格循环 **0/20**(M7/M9 边缘,runs/ep=1.31 + 重入票)——demo 数据(尤其 smooth 系列)循环性温和;**循环处理的真正用武之地预期在 rollout/失败重试数据**(§2.1d3 的 3 轮 rollout、未来 DAgger 失败段),那里 retry 是常态;
+- **意外收获:P_k 重排序效应在 smooth800 上很大**——M3 的 t̄=0.43 但 P_k=**0.65**、M5 的 0.44→0.56:按全帧均值排第 3 的 milestone 真实首入在中后段。**"M1 未必是初始"被实测证实,V2 必须按 P_k 排序**。
+
+**E3 三种处理消融**(kai0 held-out,循环型=M11/12/14):
+
+| 处理 | τ | Pearson | MAE |
+|---|---|---|---|
+| 当绝对(现状) | 0.850 | 0.902 | 0.128 |
+| **忽略**(不占档位) | 0.831 | 0.903 | **0.123** |
+| **内插**(k/K̂ 相对步进) | **0.853** | **0.904** | 0.127 |
+
+→ 干净 demo 上三者接近(循环型仅 3/20、循环度温和):**MAE 最优 = 忽略,τ/Pearson 最优 = 内插**。决策:V2 demo 打标用"忽略"(最简单且 MAE 最优);**内插版保留给 rollout 重标注**(那里循环占比高,忽略会丢大段信号)。E4(接 discretize_advantage 的标签分歧分析)待 AWBC 决策点一起做。
+
 ---
 
 ## 5. 基础设施与执行记录
@@ -623,3 +642,53 @@ milestone-value 重打 smooth800 advantage 标签 → AWBC 训练,对照现 pi0-
 **特征/挖掘缓存**(`temp/`):`tcc_{smooth800,kai0,dagger_*}/feat_cache`(原始)· `tcc_{smooth800,kai0}_armmask/feat_cache`(臂掩膜)· `full_mining_*/mining.npz` · `armmask/arm_prototypes.npz`。
 
 **外部代码**:`/vePFS/tim/workspace/recurrence_research/google-research/{xirl,tcc}`(XIRL `one_hot` device bug 已 patch)。
+
+---
+
+## 附录 B — V2 调研全文(2026-06-12,三路并行文献深查,供逐篇阅读)
+
+### B.1 任务进度估计(支撑提议①:校准进度值)
+
+| 文献 | 链接 | 内容与对应关系 |
+|---|---|---|
+| **SARM**: Stage-Aware Reward Modeling for Long-Horizon Robot Manipulation(Chen, Yu, Schwager, Abbeel, et al., 2025)⭐ | [arXiv:2509.25358](https://arxiv.org/abs/2509.25358) | **旗舰任务 = T 恤折叠**。demo 按语言标注切 stage,**每 stage 的进度跨度 = 该子任务跨 demo 的平均时间占比**,段内线性插值。= 提议①的有标注版;其动机正是裸 t/T 标签在变长 demo/停顿/变速下的脆弱性。我们的差异:milestone 零标注挖掘 |
+| **GVL**: Vision Language Models are In-Context Value Learners(Ma, Hejna, …, Levine, ICLR 2025)⭐ | [arXiv:2411.04549](https://arxiv.org/abs/2411.04549) · [项目页](https://generative-value-learning.github.io/) | VLM 逐帧输出任务完成百分比作零训练 value;**必须打乱帧序**——有序帧时 VLM 塌缩成"数帧计时器"。与 §2.12 的 τ 饱和/计时器假象互为印证;其 VOC 指标也以归一化时间为参照 |
+| Is there progress in activity progress prediction?(de Boer, van Gemert, et al., ICCVW 2023)⭐ | [arXiv:2308.05533](https://arxiv.org/abs/2308.05533) | 对 ProgressNet 等的批判性复评:真实数据上学习法**打不过朴素数帧基线**(即模型忽略视觉只数时间)。= t/T 直接回归失败模式的最干净陈述;支持我们"视觉 milestone 锚定 + 时间只校准步高"的结构 |
+| **GTCC**: Learning to Predict Activity Progress by Self-Supervised Video Alignment(Donahue & Elhamifar, CVPR 2024)⭐ | [论文](https://www.khoury.northeastern.edu/home/eelhami/publications/cvpr24_GTCC_online_activity_progress.pdf) · [代码](https://github.com/gerardDonahue/GTCC_CVPR2024) | TCC 推广:GMM 多邻居 cycle-back(容许重复动作匹配多个时间位置)+ 可学 drop 率;进度从对齐导出而非裸时间。= 我们校准的"可学习版";其 GMM 多模态判据可直接做循环 milestone 检测 |
+| RSDNet(Twinanda et al., IEEE TMI 2019) | [arXiv:1802.03243](https://arxiv.org/abs/1802.03243) | 无 phase 标注预测剩余手术时长(进度为辅助头)。"归一化/剩余时间作免费监督"的鼻祖;核心困难 = 总时长 T 跨病例方差巨大 → 同一视觉状态对应悬殊 t/T |
+| Multi-Task RNN for Surgical Gesture Recognition and Progress Prediction(van Amsterdam et al., ICRA 2020) | [arXiv:2003.04772](https://arxiv.org/abs/2003.04772) | 联合识别细粒度 gesture + 回归进度;**明确指出 adjustment gestures/冗余动作拉伸时间轴污染时间式进度标签**,建议动作序列式进度——即 milestone 索引式 value |
+| **TimeRewarder**(Liu et al., 2025) | [arXiv:2509.26627](https://arxiv.org/abs/2509.26627) | 从被动视频学 dense reward:预测帧对归一化时间差 (v−u)/(T−1),用进度**差分**作 RL 奖励。= "相对差分比绝对 t/T 鲁棒"的证据;停顿贡献≈0 而非污染全局标签 |
+| ProgressNet: Am I Done? Predicting Action Progress in Videos(Becattini et al., ACM TOMM 2020) | [arXiv:1705.01781](https://arxiv.org/abs/1705.01781) | 动作进度预测任务的开山作;**按 phase 边界锚定进度目标 + 段内插值**(而非纯线性时间);语言学分析哪些动作"有进度可言"(telic vs atelic) |
+| ReWiND(Yang et al., 2025) | [arXiv:2505.10911](https://arxiv.org/abs/2505.10911) | demo 进度式奖励 + 视频倒带增广;指出**episode 末帧 ≠ 真完成时刻**(遥操作延迟)——又一 t/T 标签陷阱 |
+| Multiview Progress Prediction of Robot Activities(Zoppellari et al., 2026) | [arXiv:2603.00151](https://arxiv.org/abs/2603.00151) | 机器人操作进度预测最新工作(多视角治自遮挡),SOTA 框架参照 |
+| ROVER(2025) | [arXiv:2508.01943](https://arxiv.org/abs/2508.01943) | VLM 视频递归推理;主张**步骤占比式进度(步内线性)优于时间线性进度**——直接背书 milestone 校准式定义 |
+
+### B.2 重复动作与循环 milestone(支撑提议②)
+
+| 文献 | 链接 | 内容与对应关系 |
+|---|---|---|
+| **RepNet**: Counting Out Time(Dwibedi et al., CVPR 2020)⭐ | [arXiv:2006.15418](https://arxiv.org/abs/2006.15418) · [博客](https://research.google/blog/repnet-counting-repetitions-in-videos/) | 时间自相似矩阵(TSM)+ 逐帧周期长度/周期性得分。重复段在 TSM 呈对角条带,单调推进段没有。离散版判据 = 簇在单 episode 内 ≥2 个分离 run;其"已数次数 k/K"即段内分数进度 |
+| TransRAC(CVPR 2022 Oral)/ OVR(2024) | [arXiv:2204.01018](https://arxiv.org/abs/2204.01018) / [arXiv:2407.17085](https://arxiv.org/html/2407.17085v1) | 多尺度 TSM + 密度图回归,定位**每一次**重复的起止(变长周期鲁棒);OVR 开放词汇描述"什么在重复"。= 给循环 milestone 的每次出现打"第 k 次"标签的工具 |
+| **Drop-DTW**(Dvornik et al., NeurIPS 2021)⭐ | [arXiv:2108.11996](https://arxiv.org/abs/2108.11996) | DTW 内嵌 drop 代价,对齐时丢弃插入的冗余/重试段。对齐到规范 milestone 序列时,重复出现会被 drop 只留一次——**drop 率 = 循环判据第四票**;幸存匹配 = 绝对锚,被 drop 的只配相对进度 |
+| OTAM(Cao et al., CVPR 2020) | [CVPR 开放获取](https://openaccess.thecvf.com/content_CVPR_2020/html/Cao_Few-Shot_Video_Classification_via_Temporal_Alignment_CVPR_2020_paper.html) | 反面教材:严格单调对齐无重复处理 → 重复出现被强行排上单调路径,虚增进度——正是我们观察到的 bug 的对齐版 |
+| 外科多粒度工作流(IJCARS 2024 等)⭐ | [Springer](https://link.springer.com/article/10.1007/s11548-024-03101-6) · [arXiv:2308.02529](https://arxiv.org/abs/2308.02529) | **phase(单调一次)/ gesture(phase 内循环多次,如每针缝合)两级结构**;进度只在 phase 级算,gesture 以计数/质量计入(第 k 针/约 K 针 ≈ phase 内分数进度)。= 相对 milestone 的最成熟工程模板 |
+| McGovern & Barto(ICML 2001) | [ScholarWorks](https://scholarworks.umass.edu/cs_faculty_pubs/8/) | 瓶颈挖掘的 first-visit 预处理 + 高频状态静态过滤——**对 episode 内重访只做过滤不做利用**;提议② = 该过滤规则的严格推广(空白点) |
+| Şimşek & Barto(NeurIPS 2008) | [NeurIPS](https://papers.nips.cc/paper/2008/hash/934815ad542a4a7c5e8a2dfa04fea9f5-Abstract.html) | betweenness 子目标;延伸:milestone 转移图上找有向环/SCC = 循环 milestone 的图结构判据;环收缩(SCC condensation)后得单调主干 = 提议②最干净的形式化 |
+
+### B.3 规范时间轴与子目标值标定(支撑提议①的实现选型)
+
+| 文献 | 链接 | 内容与对应关系 |
+|---|---|---|
+| CTW(NeurIPS 2009)/ GCTW(TPAMI 2016) | [CTW](https://www.researchgate.net/publication/221619408_Canonical_Time_Warping_for_Alignment_of_Human_Behavior) / [GCTW](https://www.researchgate.net/publication/276906402_Generalized_Canonical_Time_Warping) | 多序列联合 warp 到共享潜时间轴(单调基函数参数化)。milestone 的规范位置可从 warp 直接读出——P_k 的"重型"替代方案 |
+| soft-DTW barycenter(Cuturi & Blondel, ICML 2017) | [arXiv:1703.01541](https://arxiv.org/abs/1703.01541) · [tslearn](https://tslearn.readthedocs.io/en/stable/user_guide/dtw.html) | 规范"重心"demo 的标准构造;[弧长式 warp(2024)](https://arxiv.org/pdf/2410.13322) 指出时间式 warp 被停顿/重试偏置——与我们选首入统计同因 |
+| StepFormer(CVPR 2023) | [arXiv:2304.13265](https://arxiv.org/abs/2304.13265) | 无监督发现**有序** step 槽并**逐视频定位起止**(非均匀时长份额)——keystep 文献里"步骤占时间轴非均匀区间"的最强先例;但打分仍均匀档位 |
+| CnC / EgoProceL(ECCV 2022) | [arXiv:2207.10883](https://arxiv.org/abs/2207.10883) | 跨视频对应→聚类挖 keystep(与我们配方同构);均匀档位打分 = 我们要改进的基线 |
+| Elhamifar 无监督过程学习(ICCV 2019) | [论文](https://openaccess.thecvf.com/content_ICCV_2019/papers/Elhamifar_Unsupervised_Procedure_Learning_via_Joint_Dynamic_Summarization_ICCV_2019_paper.pdf) | 同线;评排序不评校准进度值 |
+| Okudo & Yamada 子目标 shaping(IEEE Access 2021/2023)⭐ | [arXiv:2104.06411](https://arxiv.org/abs/2104.06411) · [学习版](https://ieeexplore.ieee.org/document/10047888/) | potential = 已达子目标链索引(= 首入阶梯的 RL 形式化);2023 版把均匀增量换成**学习的逐子目标 potential**——非均匀 milestone 值的 RL 侧直接先例(在线学习版,我们用到达时间统计零训练获得) |
+| XIRL(CoRL 2021)/ VIP(ICLR 2023) | [arXiv:2106.03911](https://arxiv.org/abs/2106.03911) / [arXiv:2210.00030](https://arxiv.org/abs/2210.00030) | value = 到 goal 嵌入负距离 / 隐式 time-to-go——"value 本质是任务时间轴位置"的连续版;XIRL 用轨迹统计校准尺度 = 校准思想先例 |
+| 首达时间(MFPT)理论 | [综述](https://www.sciencedirect.com/topics/mathematics/first-passage-time) | 首达时间分布重尾、离群敏感 → **中位数/截尾估计**的理论依据 |
+
+### B.4 新颖性结论(调研确认的两个空白)
+
+1. **首达时间鲁棒分位数定位挖掘子目标**:对齐文献(CTW/barycenter)与 shaping 文献(Okudo-Yamada)各管一半,无人组合成"零训练读 demo 到达统计";
+2. **重访状态 → 相对进度信号**:瓶颈挖掘一脉(McGovern 起)只做 first-visit 过滤;keystep 一脉(StepFormer/CnC)定位了非均匀时长但打分仍均匀。两个空白 + "recurrence→milestone→AWBC 标签"全链 = 三个可发表贡献点。
