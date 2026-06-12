@@ -5,7 +5,7 @@
 > **上游**:AWBC pipeline([awbc_implementation_plan.md](../../../deployment/strategy/awbc_implementation_plan.md));ViVa 对比([awbc_viva_value_comparison_plan.md](awbc_viva_value_comparison_plan.md),其 DSM-r30 变体**手标** milestone——本方案已证明可自动挖出,§2.3)。
 > **动机(现有 pipeline 病根)**:pi0-AE 是单帧视觉回归器,`absolute_advantage = V(t+50)−V(t)` 二阶差分放大噪声(corr 0.896→0.3-0.4);完全不利用跨 episode 结构;且 AE 训练数据在完成瞬间截止 → vis episode 尾段 value 系统性下坠(end-drop,已实证)。
 
-图像目录:`docs/visualization/cross_episode_recurrence_value/`(本文图 1-39 均相对引用,GitHub 直接渲染);视频默认不入 git(路径见附录 A),**阶段示例视频已入 git**:[milestone_ep_s800_660_final_v4gated_sync.mp4](../../../visualization/cross_episode_recurrence_value/milestone_ep_s800_660_final_v4gated_sync.mp4)(终版配方 + 置信门控,held-out ep660,图33 为抽帧)。
+图像目录:`docs/visualization/cross_episode_recurrence_value/`(本文图 1-40 均相对引用,GitHub 直接渲染);视频默认不入 git(路径见附录 A),**阶段示例视频已入 git**:[milestone_ep_s800_660_final_v4gated_sync.mp4](../../../visualization/cross_episode_recurrence_value/milestone_ep_s800_660_final_v4gated_sync.mp4)(终版配方 + 置信门控,held-out ep660,图33 为抽帧)。
 
 ---
 
@@ -607,7 +607,36 @@ milestone-value 重打 smooth800 advantage 标签 → AWBC 训练,对照现 pi0-
 
 多模式思想保留:真正多轮结构(rollout 三轮叠衣)下 anchor 重入序列自然切分轮次,无需额外机制。**待验证排期**:F1 干净 demo 退步误报率(预期≈0,CPU);F2 真机 3 轮 rollout 上 V 应在两轮边界回落(需集群提 autonomy armmask 特征);F3 退步段 ΔV<0 帧分布审计(接 AWBC 负标签)。
 
----
+#### 4.4.7 两线合流实测 + advantage 层结构性发现(2026-06-12)
+
+> §4.4.5 提出的"TCC 作段内插值"落地实测(`v2_tcc_hybrid_value.py`),并首次把评测推进到 **advantage(ΔV)层**——即 §4.3 offline 判据所在层。
+
+**(a) 混合 value(V 层)**:V_hybrid(t) = cummax(clip(p_tcc(t), A(t), N(t))),A/N = 校准阶梯的当前/下一锚位。kai0 held-out 50 GT ep:
+
+| value | τ | Pearson | MAE |
+|---|---|---|---|
+| 等步长阶梯 | 0.831 | 0.891 | 0.147 |
+| **校准阶梯(V2)** | 0.831 | 0.903 | **0.123** |
+| TCC-only(cummax) | 0.916 | 0.884 | 0.220 |
+| **hybrid** | **0.876** | **0.903** | 0.136 |
+
+hybrid 取得最优 τ/Pearson 组合(段内增量来自状态对齐而非时间);锚区间 clip 把 TCC-only 的早期高估(MAE 0.220)拦回 0.136。**拼接判别**:边界回落 0.49、第二段重爬 τ=0.70——段内插值同样是状态触发的。**图40** 为曲线与拼接测试。
+
+![图40](../../../visualization/cross_episode_recurrence_value/hybrid_v2tcc_kai0.png)
+
+**(b) advantage 层(ΔV over 50 帧)——结构性反转,§4.3 offline 判据需要修订**:
+
+| 来源 | corr(ΔV,ΔGT) | V-MAE | V-τ |
+|---|---|---|---|
+| 校准阶梯 | 0.094 | 0.123 | 0.831 |
+| hybrid | 0.053 | 0.136 | 0.876 |
+| hybrid 平滑(k=9) | 0.085 | 0.130 | 0.926 |
+| 段间时间线性插值(SARM 式) | **−0.295** | 0.156 | 0.986 |
+| **pi0-AE(监督)** | **0.430** | — | — |
+
+三个发现:① **V 层赢 ≠ ΔV 层赢**——阶梯求导后是尖峰串(平台≡0),与平滑的 ΔGT 相关性结构性偏低,平滑/插值救不回来;② **时间插值是陷阱的又一次显形**:V-τ 飙到 0.986(= 变成计时器,§2.12)而 ΔV corr 反而 **−0.295**;③ **corr(ΔV,ΔGT) 本身偏向回归式模型**——stage_progress_gt 是人工分段线性标注,该指标实测的是"局部斜率与标注函数斜率的一致性",pi0-AE 逐帧回归 GT 自然得 0.43,这是拟合标注函数的能力而非理解状态的能力(与 §2.12 τ 饱和同源的指标病)。
+
+**结论(§4.3 判据修订)**:milestone 系 value 的 advantage 是**稀疏事件型**(跨越 milestone 时刻 = 真进步证据),pi0-AE 是**平滑回归型**;corr(ΔV,ΔGT) 天然偏向后者,不应作为标签优劣的 offline 判据。修订后的对照轴:① 二值标签层对比(discretize 后的 prompt 标签翻转率与位置分布);② 负 advantage 的语义审计(pi0-AE 的负标签集中在 value 噪声/end-drop,milestone 系的负标签只会来自退步重入 §4.4.6——后者语义更干净);③ **真机/rollout 数据为终判**(demo 上 GT 单调,二值标签近乎全正,根本区分不开两类标签;状态触发 vs 时间回归的差异只在含失败/重试的数据上显现)。
 
 ## 5. 基础设施与执行记录
 
@@ -674,7 +703,7 @@ milestone-value 重打 smooth800 advantage 标签 → AWBC 训练,对照现 pi0-
 
 ## 附录 A — 工件清单
 
-**图像**(图1-39):`docs/visualization/cross_episode_recurrence_value/`(40+ 张,命名规范 `<阶段>_<数据集>_<内容>`)。
+**图像**(图1-40):`docs/visualization/cross_episode_recurrence_value/`(40+ 张,命名规范 `<阶段>_<数据集>_<内容>`)。
 
 **示例视频(入 git)**:`docs/visualization/cross_episode_recurrence_value/milestone_ep_s800_660_final_v4gated_sync.mp4`(终版配方 + 门控,held-out ep660,~2MB,图33 为抽帧)。
 
@@ -695,7 +724,7 @@ milestone-value 重打 smooth800 advantage 标签 → AWBC 训练,对照现 pi0-
 | `milestone_ep_s800_660_v5_calibrated_sync.mp4` | V2 校准标签版(P_k 非均匀阶梯 + 循环灰显 + V1/V2 对照) | 图37 为抽帧 |
 | `tcc_align_kai0_87_97.mp4` | TCC v3 两 episode 对齐演示(实时对齐帧 + 路径图 raw/TCC 对照) | 图39 为抽帧 |
 
-**脚本**(`train_scripts/kai/data/`):`recurrence_v0_probe.py`(探针)· `recurrence_v0_gt_validation.py`(GT 验证)· `recurrence_value_on_rollout.py`(rollout 迁移)· `recurrence_vs_dsm_milestones.py`(手标对比)· `recurrence_full_mining.py`(全量挖掘)· `tcc_train_features.py`(TCC 适配 + 集群分片)· `build_arm_prototypes.py` / `extract_masked_features.py` / `armmask_compare.py`(臂掩膜三件套)· `recurrence_cluster_audit.py`(聚类审计,图23-25)· 视频脚本五代:`make_milestone_ep_video.py`(M=10,图26)/ `_all48.py`(全簇,图27)/ `_v2.py`(⊕proprio,图31)/ `_v3.py`(N/k/M 参数化,图32)/ `_v4.py` + `_v4_batch.py`(置信门控 + 批量,图33/34)/ `_v5.py`(V2 校准标签,图37)· `tcc_v3_armmask.py`(TCC v3 复活,§2.4.1 图36)· `make_tcc_align_video.py`(两 ep 对齐演示,图39)。集群 YAML:`train_scripts/kai/volc/recurrence_*.yaml`。
+**脚本**(`train_scripts/kai/data/`):`recurrence_v0_probe.py`(探针)· `recurrence_v0_gt_validation.py`(GT 验证)· `recurrence_value_on_rollout.py`(rollout 迁移)· `recurrence_vs_dsm_milestones.py`(手标对比)· `recurrence_full_mining.py`(全量挖掘)· `tcc_train_features.py`(TCC 适配 + 集群分片)· `build_arm_prototypes.py` / `extract_masked_features.py` / `armmask_compare.py`(臂掩膜三件套)· `recurrence_cluster_audit.py`(聚类审计,图23-25)· 视频脚本五代:`make_milestone_ep_video.py`(M=10,图26)/ `_all48.py`(全簇,图27)/ `_v2.py`(⊕proprio,图31)/ `_v3.py`(N/k/M 参数化,图32)/ `_v4.py` + `_v4_batch.py`(置信门控 + 批量,图33/34)/ `_v5.py`(V2 校准标签,图37)· `tcc_v3_armmask.py`(TCC v3 复活,§2.4.1 图36)· `make_tcc_align_video.py`(两 ep 对齐演示,图39)· `v2_tcc_hybrid_value.py`(两线合流 + advantage 层分析,§4.4.7 图40)。集群 YAML:`train_scripts/kai/volc/recurrence_*.yaml`。
 
 **特征/挖掘缓存**(`temp/`):`tcc_{smooth800,kai0,dagger_*}/feat_cache`(原始)· `tcc_{smooth800,kai0}_armmask/feat_cache`(臂掩膜)· `full_mining_*/mining.npz` · `armmask/arm_prototypes.npz`。
 
