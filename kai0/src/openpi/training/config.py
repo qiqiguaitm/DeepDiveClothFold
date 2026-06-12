@@ -1853,6 +1853,35 @@ _CONFIGS = [
         inline_eval_every=4,
     ),
 
+    # ===== Task_AV1 (Vertical Fold v1 新 SOP) 首次基线 (plan: future_plans/plans/pi05_task_av1_vertical_fold_v1_baseline.md) =====
+    # clone of pi05_flatten_fold_A_smooth800_dagger_full, cnsh 路径. 数据=Task_AV1_200 (200ep date-ordered),
+    # warm-start mixed_1_clean, prompt=B 规范 (train==deploy 一字不差), val=Task_AV1_200_val (45ep 留出). cnsh 8 A100, 50k.
+    TrainConfig(
+        name="pi05_task_av1_vfold_v1_200",
+        model=pi0_config.Pi0Config(pi05=True),
+        data=LerobotAgilexDataConfig(
+            repo_id="/vePFS/tim/workspace/deepdive_kai0/kai0/data/Task_AV1_200",
+            default_prompt="Flatten and fold the cloth. Vertical Fold v1.",
+            use_delta_joint_actions=False,
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader(
+            "/vePFS/tim/shared_ckpt/Task_A/mixed_1_clean/params"
+        ),
+        lr_schedule=_optimizer.CosineDecaySchedule(
+            warmup_steps=1_000, peak_lr=1.5e-5, decay_steps=50_000, decay_lr=1.5e-6,
+        ),
+        ema_decay=0.9999,
+        num_train_steps=50_000,
+        keep_period=10_000,
+        save_interval=2_000,
+        num_workers=16,
+        batch_size=128,
+        fsdp_devices=8,
+        inline_eval_val_root="/vePFS/tim/workspace/deepdive_kai0/kai0/data/Task_AV1_200_val",
+        inline_eval_n_frames=200,
+        inline_eval_every=4,
+    ),
+
     # 夹爪 action 裁剪实验 (gripper_action_clip_experiment.md §4) — clone of
     # pi05_flatten_fold_A_smooth800_dagger_full, 仅数据集换成 clip 版 (action[:,[6,13]] ≤5mm→0,
     # state/arm 不动) + cnsh 路径 + 各自 norm_stats。单变量 = 夹爪 action 裁剪。cnsh 8卡 (Robot-GPU 开发机队列)。
