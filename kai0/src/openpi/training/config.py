@@ -1026,6 +1026,27 @@ _CONFIGS = [
         num_train_steps=100_000,
     ),
 
+    # Vis-native AWBC pipeline S2 (plan: awbc_vis_task_a_full_pipeline_plan.md) — retrain AE on
+    # the freshly stage-labeled vis set (vis_awbc_merged_stage = 1699ep, stage_progress_gt∈{0.25,0.75}).
+    # model MUST be AdvantageEstimatorConfig (train_pytorch asserts it); loss_value=1/loss_action=0
+    # (only regress stage-progress diff). Init pi05_base (strict=False, value head new). PyTorch torchrun.
+    TrainConfig(
+        name="ADVANTAGE_TORCH_VIS_AWBC",
+        model=pi0_config.AdvantageEstimatorConfig(
+            pi05=True, action_dim=32, action_horizon=50, max_token_len=200,
+            loss_action_weight=0.0, loss_value_weight=1.0,
+        ),
+        data=LerobotAgilexDataConfig(
+            repo_id="/vePFS/tim/workspace/deepdive_kai0/kai0/data/Task_A/self_built/vis_awbc_merged_stage",
+            default_prompt="Flatten and fold the cloth.",
+        ),
+        pytorch_weight_path="/vePFS/tim/workspace/openpi_cache/modelscope_cache/lerobot/pi05_base",
+        advantage_estimator=True,
+        num_train_steps=100_000,
+        save_interval=10_000,
+        batch_size=144,
+    ),
+
     # ===== Cross-embodiment: per-DS-norm + Action-Head conditioning (2026-06-05) =====
     # Single PRE-MERGED kai+vis dataset `kai_vis_merged` (kai0_base+kai0_dagger=domain0 6512ep,
     # A_smooth800_dagger_full=domain1/vis 1033ep) → healthy single-source path (NOT datasets_yaml).
