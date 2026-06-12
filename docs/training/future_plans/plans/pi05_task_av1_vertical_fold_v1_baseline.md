@@ -2,7 +2,7 @@
 
 > **建立**: 2026-06-12
 > **目的**: 用**我们自己新设计的"竖向折叠 (Vertical Fold v1)"流程**采集的数据集 `Task_AV1`,取 **200 episode** 做 pi05 的**首次基线训练**(50k step),验证新 SOP 数据能否训出可部署的叠衣策略,并**正式记录新 SOP**(本文档 §1)。
-> **状态**: 📋 **规划草稿** — 本次仅文档;**待用户补全 SOP 细节(§1)+ 确认配置**后再 build + 训练。
+> **状态**: 📋 **规划定稿(配置全定档)** — 5 个决策已定(§7);**仅待 ① 用户补全 §1.2 SOP 物理流程 ② 用户发话"开始实施"**,即 build + 训练。本次仍只更新文档,不实施。
 > ⚠️ **铁律**: 真机为终判;VLA 训练报告先看 **val MAE**(不是 train loss)。
 
 ---
@@ -57,7 +57,7 @@
 
 ## 4. 训练规格(克隆现有 flatten-fold pi05 config)
 - **config** 新建 `pi05_task_av1_vfold_v1_200`(克隆 `pi05_flatten_fold_A_smooth800_dagger_full` config.py:1798):
-  - `repo_id` → `Task_AV1_200`;`default_prompt` = **§7.5 待定**(A 原样 / B 规范化,推荐 B `"Flatten and fold the cloth. Vertical Fold v1."`);`use_delta_joint_actions=False`。
+  - `repo_id` → `Task_AV1_200`;✅ **`default_prompt="Flatten and fold the cloth. Vertical Fold v1."`**(B 规范化,用户定;部署须用同一串);`use_delta_joint_actions=False`。
   - init `CheckpointWeightLoader("mixed_1_clean/params")`;cosine **warmup 1k / peak 1.5e-5 / decay 50k → 1.5e-6**;EMA **0.9999**;**50k step**;batch **128**;**fsdp 8**;save 每 2k / keep 10k;`inline_eval_val_root` → Task_AV1 留出 val。
 - **资源**:单节点 **8 卡**(cnsh A100 / cnbj H20)。
 
@@ -85,10 +85,8 @@
 2. ✅ **init = warm-start `mixed_1_clean/params`**。
 3. ✅ **夹爪 = 原始 action**(不裁;裁剪版留作后续独立对照)。
 4. ✅ **val = Task_AV1 留出**(末 ~45 ep)。
-5. ⏳ **prompt(待用户定,我已介绍区别)**:
-   - **A. 原样**:`"Flatten and fold the cloth. Vertical Flod v1. "`(含 typo "Flod" + 尾空格)。
-   - **B. 规范化(推荐)**:`"Flatten and fold the cloth. Vertical Fold v1."`(修 typo + 去尾空格)。
-   - **要点**:决定性的是 **train==deploy prompt 一字不差**;typo "Flod" 非真词、VLM 无 grounding,规范化能蹭 warm-start pi05 的语言理解 + 更干净;但单任务单 prompt 下两者都 work。**训练实际用的是 config `default_prompt`**(覆盖数据 tasks.jsonl 的 "Flod"),所以这是"default_prompt 设成哪串"的选择。→ **建议 B**,待你拍板。
+5. ✅ **prompt = B 规范化** `"Flatten and fold the cloth. Vertical Fold v1."`(用户定;修 typo Flod→Fold + 去尾空格)。
+   - ⚠️ **train==deploy 一字不差**:训练 config `default_prompt` 与真机部署 prompt 都用这一串(覆盖数据 tasks.jsonl 里的 "Flod" 原值)。
 
 ---
 
