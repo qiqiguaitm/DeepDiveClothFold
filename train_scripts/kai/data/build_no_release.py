@@ -37,6 +37,8 @@ _REPO = os.environ.get("KAI0_REPO_ROOT", "/vePFS/tim/workspace/deepdive_kai0")
 VIS_BASE = Path(f"{_REPO}/kai0/data/Task_A/vis_base/v2")          # 源: v2 各日期 <date>-v2
 V3_ROOT = Path(f"{_REPO}/kai0/data/Task_A/vis_base/v3")           # per-date 模式输出: <date>-v3
 V3_2_ROOT = Path(f"{_REPO}/kai0/data/Task_A/vis_base/v3.2")       # idle_downsample 输出: <date>-v3.2 (v3 前端裁 + 中段选择性)
+VIS_DAGGER_V2 = Path(f"{_REPO}/kai0/data/Task_A/vis_dagger/v2")   # dagger 源: v2 各日期 <date>-v2
+VIS_DAGGER_V3 = Path(f"{_REPO}/kai0/data/Task_A/vis_dagger/v3")   # dagger v3 输出: <date>-v3 (同 base 前端裁 + drop depth)
 DST_ROOT = Path(f"{_REPO}/kai0/data/Task_A/self_built")           # 合并模式输出 (原 A_0522_0526_*)
 DATES = ["2026-05-22-v2", "2026-05-26-v2"]
 CAMERAS = ("observation.images.top_head", "observation.images.hand_left", "observation.images.hand_right")
@@ -247,15 +249,19 @@ def _maybe_norm_stats(dst, compute: bool, action_dim: int):
               f"     {manual}", flush=True)
 
 
-def build_per_date_v3(date_v2: str, dry_run: bool = False, compute_norm: bool = True, action_dim: int = 32) -> dict:
-    """Per-date v3: trim 投放 static head from every episode of vis_base/v2/<date>-v2,
-    write vis_base/v3/<date>-v3. PRESERVES original episode_index (no merge/renumber),
+def build_per_date_v3(date_v2: str, dry_run: bool = False, compute_norm: bool = True, action_dim: int = 32,
+                      src_root: Path | None = None, dst_root: Path | None = None) -> dict:
+    """Per-date v3: trim 投放 static head from every episode of <src_root>/<date>-v2,
+    write <dst_root>/<date>-v3. PRESERVES original episode_index (no merge/renumber),
     drops depth (RGB-only), per-ep assert video frames == parquet rows.
+    src_root/dst_root default to vis_base v2/v3; pass VIS_DAGGER_V2/V3 for dagger.
 
     Returns a report dict. Reuses motion_onset / trim_video_pyav / per_episode_stats."""
-    src = VIS_BASE / date_v2
+    src_root = src_root or VIS_BASE
+    dst_root = dst_root or V3_ROOT
+    src = src_root / date_v2
     date_v3 = date_v2.replace("-v2", "-v3")
-    dst = V3_ROOT / date_v3
+    dst = dst_root / date_v3
     if not src.exists():
         raise FileNotFoundError(f"src date dir not found: {src}")
 
@@ -442,8 +448,10 @@ def main():
     ap.add_argument("--mode", choices=["raw", "no_release"],
                     help="legacy merge mode: 5-22+5-26 → single self_built/A_0522_0526_{raw,no_release}")
     ap.add_argument("--per-date", nargs="+", metavar="DATE",
-                    help="per-date v3 mode: trim 投放 head, write vis_base/v3/<date>-v3 (preserve ep ids, "
-                         "no depth). Pass dates like 2026-05-22-v2, or 'all' for every <date>-v2 under vis_base/v2.")
+                    help="per-date v3 mode: trim 投放 head, write <root>/v3/<date>-v3 (preserve ep ids, "
+                         "no depth). Pass dates like 2026-05-22-v2, or 'all' for every <date>-v2 under the chosen root.")
+    ap.add_argument("--src-kind", choices=["base", "dagger"], default="base",
+                    help="per-date v3 source: 'base' (vis_base/v2→v3, default) or 'dagger' (vis_dagger/v2→v3).")
     ap.add_argument("--symlink-video", action="store_true",
                     help="raw mode only: symlink videos instead of copy (saves disk)")
     ap.add_argument("--dry-run", action="store_true", help="compute cuts + report, write nothing")
@@ -488,13 +496,15 @@ def main():
 
     # ---- per-date v3 mode ----
     if args.per_date:
+        src_root, dst_root = (VIS_DAGGER_V2, VIS_DAGGER_V3) if args.src_kind == "dagger" else (VIS_BASE, V3_ROOT)
         if args.per_date == ["all"]:
-            dates = sorted(d.name for d in VIS_BASE.iterdir() if d.is_dir() and d.name.endswith("-v2"))
+            dates = sorted(d.name for d in src_root.iterdir() if d.is_dir() and d.name.endswith("-v2"))
         else:
             dates = args.per_date
-        print(f"per-date v3: {len(dates)} dates → vis_base/v3/", flush=True)
+        print(f"per-date v3 ({args.src_kind}): {len(dates)} dates → {dst_root}", flush=True)
         reps = [build_per_date_v3(d, dry_run=args.dry_run,
-                                  compute_norm=not args.no_norm_stats, action_dim=args.action_dim) for d in dates]
+                                  compute_norm=not args.no_norm_stats, action_dim=args.action_dim,
+                                  src_root=src_root, dst_root=dst_root) for d in dates]
         print("\n=== per-date v3 summary ===")
         for r in reps:
             if r.get("skipped"):

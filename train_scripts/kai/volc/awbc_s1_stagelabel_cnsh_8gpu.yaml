@@ -1,0 +1,96 @@
+# AWBC vis-native S1 — stage-label vis_awbc_merged with reused E1 classifier (V-JEPA 2.1 Large)
+#   plan: docs/training/future_plans/plans/awbc_vis_task_a_full_pipeline_plan.md (user-directed vis-native)
+#   REUSE E1_baseline/best.pt (NOT retrain labeler). infer_dagger.py 8-way GPU shard, offline V-JEPA via TORCH_HOME.
+#   IN : self_built/vis_awbc_merged (12 base-v3 ≤05-18 + 8 dagger-v3)   OUT: self_built/vis_awbc_merged_stage (+stage_progress_gt)
+#   短期卡任务 (~3-5 min on 8 A100). Robot-GPU开发机队列.
+# Submit: source ~/.volc_creds && kai0/.venv/bin/python train_scripts/kai/volc/submit_yaml.py train_scripts/kai/volc/awbc_s1_stagelabel_cnsh_8gpu.yaml
+
+TaskName: "awbc-s1-stagelabel-cnsh-8gpu"
+Description: "AWBC vis-native S1: stage-label vis_awbc_merged via reused E1 (V-JEPA), 8-GPU shard"
+Tags: []
+
+ImageUrl: "visincept-cn-shanghai.cr.volces.com/grasp/h2r:1.0"
+ResourceQueueName: "Robot-GPU开发机队列"
+Framework: "PyTorch"
+
+TaskRoleSpecs:
+  - RoleName: "worker"
+    RoleReplicas: 1
+    Flavor: "ml.hpcpni2.28xlarge"   # 8× A100-80G single node
+
+ActiveDeadlineSeconds: 14400
+EnableTensorBoard: false
+
+Storages:
+  - Type: "Vepfs"
+    VepfsId: "vepfs-cnsh075262e1f815"
+    SubPath: ""
+    MountPath: "/vePFS"
+
+CacheType: "Cloudfs"
+
+Envs:
+  - Name: HF_HUB_OFFLINE
+    Value: "1"
+  - Name: TRANSFORMERS_OFFLINE
+    Value: "1"
+  - Name: TORCH_HOME
+    Value: "/vePFS/tim/workspace/openpi_cache/torch_hub"
+  - Name: TOKENIZERS_PARALLELISM
+    Value: "false"
+  - Name: OMP_NUM_THREADS
+    Value: "8"
+
+Entrypoint: |
+  set -uo pipefail
+  STAMP=$(date -u +%Y%m%d_%H%M%S)
+  LOG_DIR=/vePFS/tim/workspace/deepdive_kai0/logs
+  mkdir -p "$LOG_DIR"
+  LOG="$LOG_DIR/awbc_s1_stagelabel_${STAMP}.log"
+  exec >> "$LOG" 2>&1
+  echo "=== S1 stage-label start $(date) (8-GPU V-JEPA shard) ==="
+  set -x
+  nvidia-smi -L
+  REPO=/vePFS/tim/workspace/deepdive_kai0
+  cd "$REPO/kai0"
+  source .venv/bin/activate
+  export TORCH_HOME=/vePFS/tim/workspace/openpi_cache/torch_hub
+
+  SRC=$REPO/kai0/data/Task_A/self_built/vis_awbc_merged
+  OUT=$REPO/kai0/data/Task_A/self_built/vis_awbc_merged_stage
+  CKPT=$REPO/kai0/checkpoints/stage_classifier_vjepa2_1_large/E1_baseline/best.pt
+  VJEPA=$TORCH_HOME/hub/checkpoints/vjepa2_1_vitl_dist_vitG_384.pt
+  [ -f "$SRC/meta/episodes.jsonl" ] || { echo "FATAL: src vis_awbc_merged missing $SRC" >&2; exit 13; }
+  [ -f "$CKPT" ]                    || { echo "FATAL: E1 classifier ckpt missing $CKPT" >&2; exit 13; }
+  [ -f "$VJEPA" ]                   || { echo "FATAL: V-JEPA weight missing $VJEPA" >&2; exit 13; }
+  [ -d "$TORCH_HOME/hub/facebookresearch_vjepa2_main" ] || { echo "FATAL: torch.hub vjepa2 repo missing (offline)" >&2; exit 13; }
+  echo "[$(date)] preflight OK"
+
+  # 8-way GPU shard (episode % 8 == worker_id); resume-aware (skips done parquet).
+  cd "$REPO"
+  pids=""
+  for i in 0 1 2 3 4 5 6 7; do
+    CUDA_VISIBLE_DEVICES=$i python train_scripts/kai/stage_classifier/infer_dagger.py \
+      --dagger-source "$SRC" \
+      --dagger-output "$OUT" \
+      --ckpt "$CKPT" \
+      --backbone vjepa2_1_large \
+      --camera-key top_head \
+      --num-workers 8 --worker-id $i \
+      --metrics-out "$OUT/_label_metrics" &
+    pids="$pids $!"
+  done
+  rc=0
+  for p in $pids; do wait $p || rc=1; done
+  echo "[$(date)] all workers done rc=$rc"
+  # sanity: count labeled parquet vs source
+  NS=$(ls $SRC/data/chunk-000/*.parquet 2>/dev/null | wc -l)
+  NO=$(ls $OUT/data/chunk-000/*.parquet 2>/dev/null | wc -l)
+  echo "labeled $NO / $NS parquet"
+  [ "$rc" = 0 ] && [ "$NO" = "$NS" ] && echo "S1_DONE_OK" || { echo "S1_INCOMPLETE rc=$rc $NO/$NS" >&2; exit 14; }
+
+RetryOptions:
+    EnableRetry: true
+    MaxRetryTimes: 2
+
+AccessType: "Public"
