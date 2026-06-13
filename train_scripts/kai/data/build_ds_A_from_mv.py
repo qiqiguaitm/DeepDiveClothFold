@@ -69,9 +69,9 @@ def main():
         n = len(df)
         if len(mv) != n:  # defensive align
             mv = np.resize(mv, n) if len(mv) else np.zeros(n, np.float32)
-        # staircase → continuous: 95% smoothed V2.4 milestone value + 5% time-prior (breaks the exact-zero
-        # plateau ties so the 50-frame advantage is continuous → discretize can quantile-match C's 25.2%neg).
-        mv = (0.95 * smooth_monotone(mv) + 0.05 * np.linspace(0, 1, n, dtype=np.float32)).astype(np.float32)
+        # staircase → continuous (smooth only; NO time-prior). discretize 用 advantage>=0 → positive:
+        # milestone-value 里 plateau(adv==0=守住里程碑不退步)= 正, 只有真退步(adv<0)= 负.
+        mv = smooth_monotone(mv)
         adv = np.clip(mv[np.minimum(np.arange(n) + WIN, n - 1)] - mv, -1.0, 1.0).astype(np.float32)
         df = df.reset_index(drop=True)
         df["episode_index"] = np.int64(new_ep)
