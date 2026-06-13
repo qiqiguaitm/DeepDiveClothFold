@@ -814,7 +814,9 @@ hybrid 取得最优 τ/Pearson 组合(段内增量来自状态对齐而非时间
 
 **文献(10 篇,调研一致)**:① XIRL/VIP/LIV 的"距离=value"是**靠训练 encoder(TCC/time-contrastive)把 embedding 造成进度单调**才成立,frozen DINOv2 无此前提;② ICCV2025 **PROGRESSOR** 双锚(init+goal)估进度但用**学习回归器**+对抗 refinement,非固定距离比——双锚思想对、欧氏比是弱环节;③ **欧氏 vs 测地**:弯曲流形上弦距离有偏非单调,正解=沿轨迹累积的测地距离;④ Drop-DTW/GTCC 专为单调+连续+outlier 剔除而生,逐点距离比重引入 aliasing/振荡(τ 降铁证);⑤ cloth-folding 专论(Verleysen 2023)、TimeRewarder(ICML2026)均**学习度量、beat raw 距离**。
 
-**裁决**:双锚欧氏插值 **likely worse than DP 与 pi0-AE**。vs pi0-AE 的 MAE 0.054 是循环论证(absolute_value=pi0-AE 输出、stage_progress_gt=其训练目标),真优劣在鲁棒性(pi0-AE end-drop/跨域失效 §4.4.8 vs 零训练跨天 16/16)+ 标注成本。**正解=geodesic-ize DP**:把 DP 内欧氏特征距离换成"沿 demo 轨迹累积帧间距离"(milestone 间真实流形长度),既保 DP 全局单调/连续/抗噪,又让段内插值基于真进度。用户连续化直觉对,实现应为测地距离嵌入 DP 而非逐点欧氏插值替代 DP。**列 V2.4 待验证**。文献入 §6 续。
+**裁决**:双锚欧氏插值 **likely worse than DP 与 pi0-AE**。vs pi0-AE 的 MAE 0.054 是循环论证(absolute_value=pi0-AE 输出、stage_progress_gt=其训练目标),真优劣在鲁棒性(pi0-AE end-drop/跨域失效 §4.4.8 vs 零训练跨天 16/16)+ 标注成本。**正解=geodesic-ize DP**:把 DP 内欧氏特征距离换成"沿 demo 轨迹累积帧间距离"(milestone 间真实流形长度),既保 DP 全局单调/连续/抗噪,又让段内插值基于真进度。用户连续化直觉对,实现应为测地距离嵌入 DP 而非逐点欧氏插值替代 DP。**V2.4 测地化实测(图48)**:段内插值距离从欧氏弦改为"沿 ep 轨迹累积特征位移"(测地)。kai0 GT:欧氏 MAE0.125/τ0.702 → **测地 MAE0.135/τ0.805**(τ +0.10 验证文献"测地>欧氏")。**但关键张力**:测地 τ 高恰因累积位移**强制段内单调**,而欧氏 τ 低因允许段内非单调(布料展开-收拢特征来回)——**与用户"value 段内不必绝对单调"观点矛盾**。测地仍 < DP(τ0.862/MAE0.113)。**裁决靠指标定不了**:段内起伏是真实状态变化(欧氏对)还是欧氏噪声(测地对),须对画面逐帧核对(用户方法论)。下一步:渲欧氏插值+画面同步视频核对段内起伏真实性。`v24_geodesic_interp.py` 入库。
+
+![图48](../../../visualization/cross_episode_recurrence_value/v24_geodesic_interp_kai0.png)
 
 ## 5. 基础设施与执行记录
 
