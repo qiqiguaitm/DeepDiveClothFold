@@ -818,6 +818,12 @@ hybrid 取得最优 τ/Pearson 组合(段内增量来自状态对齐而非时间
 
 ![图48](../../../visualization/cross_episode_recurrence_value/v24_geodesic_interp_kai0.png)
 
+**簇内距离修正实测失败(图49)**:用户进一步提议——milestone 帧 value 按"到匹配簇中心距离"修正(最近两簇距离反比加权)使曲线更平滑。实测**全面更差**:MAE 0.184/τ 0.501/平滑度 **0.082(比 DP 0.029 更抖)**。根因:纯逐帧"最近两簇"加权**无时序约束**,相邻帧最近两簇组合跳变 + 别名簇混入 → value 剧烈抖动(Drop-DTW/GTCC 预警的逐点 aliasing+振荡)。
+
+**方法论收敛(三轮平滑探索的统一结论)**:双锚欧氏插值(τ降)、测地插值(强制单调)、簇内 2-NN 修正(更抖)——**共同病根 = 逐帧距离调制脱离了 DP 的全局时序约束**;越局部越无约束抖得越厉害。**距离信息有用,但须在 DP/对齐框架内用,不能逐帧独立用**。平滑连续 value 的正解 = ① DP 提供骨架(全局单调连续+抗噪+抗别名)② 段内用测地距离细分 ③ 簇中心距离当**置信度**(而非直接当 value)——这才是用户簇内修正想法的正确落点。
+
+![图49](../../../visualization/cross_episode_recurrence_value/cluster_refine_kai0.png)
+
 ## 5. 基础设施与执行记录
 
 **表11 — 集群任务**(均 cnsh;pod venv = `xvla/X-VLA-env/.venv`)
