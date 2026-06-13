@@ -104,6 +104,7 @@ done
 
 # ---- 2. bring up cameras + arms + kai0 policy_inference_node (websocket -> gwp server) ----
 echo "[gwp] launching kai0 autonomy stack (websocket :$WS_PORT)..."
-exec ./start_scripts/kai/start_autonomy.sh \
+# 不用 exec: 保留本脚本的 cleanup trap, 这样 Ctrl-C 时能杀掉 gwp server (否则它被孤儿化, 残留占 8003 → 下次启动撞死)
+./start_scripts/kai/start_autonomy.sh \
     --mode websocket --ws-port "$WS_PORT" --execution-mode joint $EXECUTE_FLAG \
     "${CTRL_ARGS[@]}" "${EXTRA_ARGS[@]}"
