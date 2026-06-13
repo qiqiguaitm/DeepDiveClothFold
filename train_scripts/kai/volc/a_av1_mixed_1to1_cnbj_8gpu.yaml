@@ -81,11 +81,11 @@ Entrypoint: |
   CKPT_DIR=$REPO/kai0/checkpoints/pi05_task_a_av1_mixed_1to1/$EXP
   if ls -d "$CKPT_DIR"/[0-9]*/ >/dev/null 2>&1; then RESUME_FLAG="--resume"; echo "[resume] found ckpt -> --resume"; else RESUME_FLAG="--overwrite"; echo "[resume] fresh --overwrite"; fi
 
-  # save-interval 500 (override config 2000): 闲时频繁抢占, 确保每 borrow 窗口内存盘可续
+  # save-interval 4000 (override config 2000): 闲时被抢占可从最近 ckpt 续; 4000 步存盘频率适中(避免 500 过频 ckpt churn)
   exec python -u scripts/train.py pi05_task_a_av1_mixed_1to1 \
     --exp-name "$EXP" \
     --no-wandb-enabled \
-    --save-interval 500 \
+    --save-interval 4000 \
     $RESUME_FLAG
 
 RetryOptions:
