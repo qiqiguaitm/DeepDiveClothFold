@@ -920,6 +920,51 @@ ep7 过程(抓起→摊开→叠好)对照四 value:
 ![图55](../../../visualization/cross_episode_recurrence_value/vis0526_v24_milestones.png)
 ![图56](../../../visualization/cross_episode_recurrence_value/vis0526_ep7_v24_value.png)
 
+## 4.5 V2 完整实现配方表(收口 §4.4.6-4.4.18,2026-06-13)
+
+**输入**:demo episodes(lerobot:top_head 视频 + observation.state 14维)。**特征本地/集群 GPU 提,挖掘+value CPU。**
+
+### Pipeline(照此实现)
+
+| # | 步骤 | 方法 | 关键参数 | 依据 |
+|---|---|---|---|---|
+| 1 | 特征 | **三路** raw-DINOv2 patch-mean ⊕ armmask-DINOv2 ⊕ proprio(state+Δstate) | DINOv2-small,3Hz(stride10),各 L2 归一后拼接(384+384+28) | §2.6/2.10/4.4.14 |
+| 2 | 聚类 | KMeans | k=96(N≈500;经验 N×10→k×2),n_init≥2,seed=0 | §2.11 |
+| 3 | **coverage 修正** | 增分子 `(hits+miss)/N` | miss=P_start>tpos[c]+0.1 的 ep 数;P_start=ep 前3帧最近簇 tpos 中位 | §4.4.17 |
+| 4 | **milestone 选择** | 进度均匀分桶(非 top-K!) | tpos 每 0.1 区间选 cov_n 最高 2 簇 → ~20 | §4.4.17/18 |
+| 5 | P_k 标定 | 门控首入时刻中位数 | 命中=驻留≥2帧 ∨ margin≤0.8 | §2.5/4.4 |
+| 6 | 多模式别名 | GMM(1-2,BIC)检测双峰簇 | 两峰间距>0.35 → 该簇多 value 消歧 | §4.4.11 |
+| 7 | 端点锚 | start 原型(首帧 KMeans8)→P=0 / end→P=1 | 时间门控:start 仅前 30%,end 仅后 40% | §4.4.13 |
+| 8 | **value 读出** | 连续性 Viterbi DP | λ=8,硬边界 V[首帧]=0,末帧奖 bin20,中值 W9 | §4.4.11/13 |
+| 9 | 退步(rollout) | anchor 持续置信重入 → 回落该 anchor 的 P | P≤V−0.15,驻留≥1s(demo 域可省,GT 单调) | §4.4.6 |
+
+### 否决的死路(实证排除,勿重试)
+
+| 死路 | 失败原因 | 章节 |
+|---|---|---|
+| value 层逐帧距离调制(双锚欧氏/测地/簇内 2-NN) | 脱离 DP 全局约束→抖动/τ降/aliasing | §4.4.15 |
+| 因果/时序硬约束 | milestone 顺序是统计概率非强因果,错杀合法变体 | §4.4.16 |
+| task-specific(夹爪规则/布料占比门槛) | 不泛化,只适叠衣 | §4.4.14 |
+| min-max 归一化 value | 损单调(0.632→0.542) | §4.4.13 |
+| K==M(全簇皆 milestone) | 退化为计时器,失败段标正 | §2.12 |
+| top-K coverage 选 milestone | 前段空洞(被 partial+动作多样压低) | §4.4.16/17 |
+| TCC 冻结特征 / 多路分歧消歧 | 塌缩 / 多模态一致别名躲过分歧 | §2.4/4.4.16 |
+
+### 验证状态(全绿)
+
+| 场景 | 结果 |
+|---|---|
+| demo 域(vis 5-18/5-26) | 干净 0→1 阶梯,前段无误判(ep7 0.95→0.15,5 ep 通病解决) |
+| rollout(3 轮叠衣) | 退步+恢复(空桌峰自动平,初始数据驱动) |
+| 跨天(8 日期) | 16/16 鲁棒 |
+| 撞色稀有衣物(橙 ep37) | 0.99→0.04 修复(三路兜底) |
+| GT 相关(kai0) | τ=0.865-0.922(逼平/反超监督 0.896,τ 已饱和见 §2.12) |
+
+### 待办(可选增强)
+① rollout 全量 raw 特征(集群);② 外观冗余合并(§2.8 item 分组,后段去重);③ 学习 progress-aware 度量(TCC 端到端,根治别名);④ AWBC 对照训练(§4.3,最终用途)。
+
+---
+
 ## 5. 基础设施与执行记录
 
 **表11 — 集群任务**(均 cnsh;pod venv = `xvla/X-VLA-env/.venv`)
