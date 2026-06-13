@@ -841,6 +841,10 @@ ep7 过程(抓起→摊开→叠好)对照四 value:
 
 ![图50](../../../visualization/cross_episode_recurrence_value/vis0526_ep7_4method_check.png)
 
+**ep7 误判机制定位(图51)**:用户要求查 ep7 开头快速上升匹配到哪个簇。逐帧诊断:开头 2-10s(机械臂**抓起半堆衣物**)持续匹配到一连串高 P milestone——c43(P0.68)/c31(0.83)/**c40(0.93)**/c68(0.94)/c28(0.91),DP 因此从 0 爬到 0.95。对比图证实**视觉别名误判**:上排 ep7 抓起的"团" vs 下排 c40 代表帧的"叠好方块"——形态相似(都是 compact 小块衣物),DINOv2 armmask 区分不了"被抓着的团"和"叠好的块"。**更深发现:DP 硬边界 V[0]=0+连续性挡不住**——开头持续一致的高 P 误匹配把 value 说服推高,**value 层压不住特征层的持续别名**。修法回到状态识别层:① proprio 夹爪开合/抓取力区分"抓着 vs 放下"(虽在三路但权重不足,需加强);② 时序/因果约束(完成态不可能出现在抓取展开之前)。`ep7_misjudge_diag.py` 入库。
+
+![图51](../../../visualization/cross_episode_recurrence_value/ep7_rising_cluster_check.png)
+
 ## 5. 基础设施与执行记录
 
 **表11 — 集群任务**(均 cnsh;pod venv = `xvla/X-VLA-env/.venv`)
