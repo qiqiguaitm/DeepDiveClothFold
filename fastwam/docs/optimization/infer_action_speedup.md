@@ -216,6 +216,65 @@ python scripts/benchmark_infer_action.py --gpu 2 --num-inference-steps 2 4 8
 
 ---
 
+---
+
+## § GWP WAM-fold profile 实测（`CasualWorldActionTransformer`，2026-06-13）
+
+> 与 RoboTwin profile 不同：骨干为 **`CasualWorldActionTransformer`**（视频专家 3072 dim + 动作专家 1024 dim），`opt_infer_action.py` 里的 `ActionStepRunner` 走 action-only 快路径（跳过视频去噪，仅让动作 token 穿过动作专家），配合一次性 KV prefill。
+
+### 环境
+
+| 项 | 值 |
+|----|-----|
+| 机器 / GPU | **jpsz（4×RTX 5090 32GB）**——实际部署目标 |
+| 框架 | torch 2.9+sm120 |
+| 模型 | `CasualWorldActionTransformer`，`visrobot01_fold` profile（768×192，5 帧，action\_chunk=48，action\_dim=14） |
+| 权重 | `aihc_5n8g_v3/step_025510.pt`（跳过 Wan2.2 骨干 `skip_dit_load_from_pretrain=true`）|
+| 优化档位 | `exact`：`ActionStepRunner.compile_step("reduce-overhead")`，CUDA Graphs |
+| 评测数据 | `visrobot01_val`，200 episodes（全量），stride=16，eval\_offline\_fold.py |
+
+### 推理速度（RTX 5090，benchmark_speed.py）
+
+| 引擎 | NFE=5 | NFE=10 | NFE=20 | 加速（vs stock NFE=20）|
+|------|-------|--------|--------|----------------------|
+| Stock eager | 293 ms | 539 ms | **982 ms** | 1× |
+| Opt exact (CUDA Graphs) | **74.6 ms** | **96.2 ms** | 146 ms | NFE=5: **13.2×**, NFE=10: **10.2×** |
+
+### 离线 MAE 评测（200 ep × 同协议，stride=16，eval\_offline\_fold.py）
+
+| 配置 | MAE@1 | MAE@10 | MAE@24 | **MAE@48** | act-lat（含 frame prep）|
+|------|-------|--------|--------|------------|------------------------|
+| Stock NFE=20（FastWAM 基线）| — | — | — | **0.0912** | 931 ms |
+| **Opt exact NFE=5** | 0.00409 | 0.0287 | 0.0568 | **0.0905** | **85 ms** |
+| Opt exact NFE=10 | 0.00387 | 0.0291 | 0.0579 | **0.0908** | **107 ms** |
+| pi0.5 参考 | 0.0219 | 0.0425 | 0.0743 | 0.1155 | — |
+
+**结论**：NFE=5 与 NFE=10 MAE@48 统计上与 stock NFE=20 持平（差距 <0.001）。**部署选 NFE=5 exact：精度等价，延迟 85 ms，比 stock 快 10.9×。**
+
+### 复现
+
+```bash
+# jpsz 上，cd 到 fastwam repo root（DIFFSYNTH 使用 ./checkpoints/ 默认路径）
+cd /home/tim/workspace/deepdive_kai0/fastwam
+
+# 速度 benchmark（随机权重，不需要真实 ckpt）
+CUDA_VISIBLE_DEVICES=1 DIFFSYNTH_SKIP_DOWNLOAD=true \
+  /data1/miniconda3/envs/fastwam/bin/python scripts/benchmark_speed.py --nfe 5 10 20
+
+# 离线 MAE 评测（2-shard，各取 100 ep）
+CUDA_VISIBLE_DEVICES=1 LD_LIBRARY_PATH=/data1/miniconda3/pkgs/libnpp-12.2.5.2-0/lib:$LD_LIBRARY_PATH \
+DIFFSYNTH_SKIP_DOWNLOAD=true \
+  /data1/miniconda3/envs/fastwam/bin/python -u scripts/eval_offline_fold.py \
+    --shard_id 0 --num_shards 2 \
+    --weights runs/visrobot01_fold_uncond_1e-4/aihc_5n8g_v3/checkpoints/weights/step_025510.pt \
+    --out_dir /tmp/eval_ep200_nfe5_exact --nfe 5 --engine opt --opt_tier exact \
+    2>&1 | tee /tmp/ev0.log
+# 汇总（两个 shard 均 saved 后）
+python -u scripts/eval_offline_fold.py --aggregate --num_shards 2 --out_dir /tmp/eval_ep200_nfe5_exact
+```
+
+---
+
 ## 8. 注意事项
 
 - **显存**：模型峰值 **~12.7 GiB**。GPU2 与他人的 docker grasp 服务栈（`graspgen/da3/dinox/tracker-worker` 等，镜像 `grasp/forge`、`grasp/sif`）共享，常驻 ~19 GB；这些容器 `restart=unless-stopped` 且会被自动拉起，跑本测试需先 `docker stop` 释放显存（或改用空闲卡）。
