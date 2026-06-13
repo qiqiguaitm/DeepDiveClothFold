@@ -731,6 +731,26 @@ hybrid 取得最优 τ/Pearson 组合(段内增量来自状态对齐而非时间
 
 **V2.2 value 终定**:milestone 簇带 GMM 多峰模式集 → rollout/真机标注用**进度连续性 Viterbi DP(λ≈8)**解码(自动消歧别名+滤异常帧+数据驱动初值+退步);demo 标注 GT 单调仍用单调阶梯。**布料占比门槛弃用**(§4.4.10 残留候选②被本节取代,task-specific)。待验证:更多 rollout/失败数据稳健性 + λ 自适应。
 
+#### 4.4.12 action/proprio 消融:正向还是反向?(用户提问,2026-06-13)
+
+> 用户假设:衣物每次放置位置不同 → 抓取 action 不同 → 同一阶段被 proprio 拆散,可能反向。
+
+三配置在 DP value 下实测(demo 单次叠衣进度≈线性,故 DP-value vs 归一时间 Spearman 作 proxy GT):
+
+| 配置 | demo 单调性(proxy GT) |
+|---|---|
+| img(纯视觉) | 0.325 |
+| full(img⊕prop) | 0.632 |
+| **prop(纯本体)** | **0.711** |
+
+簇内方差 **prop/img = 1.03×**(几乎相等)。
+
+**结论与用户直觉相反:proprio 净正向,且是最强单一信号。** ① 放置担心实测不成立——簇内 proprio 方差仅 1.03× 图像,叠衣动作阶段性主导了放置扰动,影响比图像衣物外观变化还小;② 机理:叠衣是标准化动作序列(抓-提-放-压),关节角轨迹阶段性强且**外观不变**,图像反受衣物外观/首尾别名干扰(img 单调仅 0.325);rollout 上(图44)prop/full 动态范围明显大于 img。
+
+**caveat(诚实)**:① prop 高单调含"动作≈时间"trivial 成分(§2.12 τ 饱和同源),勿单凭此指标;② 当前 smooth800 放置变化或不够极端,**极端放置(衣物在桌面完全不同区域)下 proprio 可能退化,用户直觉在该 regime 仍可能成立**,列后续边界测试。**建议:用 full(img⊕prop)** 最稳——img 单独太弱、prop 单独有时间 proxy 风险且缺视觉语义,full 兼得外观不变性 + 视觉消歧。
+
+![图44](../../../visualization/cross_episode_recurrence_value/rollout_action_ablation.png)
+
 ## 5. 基础设施与执行记录
 
 **表11 — 集群任务**(均 cnsh;pod venv = `xvla/X-VLA-env/.venv`)
