@@ -1088,6 +1088,38 @@ _CONFIGS = [
         inline_eval_dataset_id=1,
     ),
 
+    # Task_A (横向折) + Task_AV1 (竖向折 Vertical Fold v1) 混合 1:1 过采样 co-train (plan:
+    # pi05_task_a_av1_mixed_1to1_plan.md). clone of pi05_kaivis_perdsnorm_cond, cnbj 路径.
+    # domain0=A_smooth800_dagger_full (1.455M帧) / domain1=AV1 304ep snapshot (0.447M帧) → frame-1:1
+    # weight (1.0, 3.256). per-domain prompt (prompt_from_task: domain0 横向 / domain1 竖向), per-domain
+    # norm + domain token. warm-start mixed_1_clean. ⚠️ JAX-only (weighted sampler). BJ Robot-North-H20.
+    TrainConfig(
+        name="pi05_task_a_av1_mixed_1to1",
+        model=pi0_config.Pi0Config(pi05=True, action_head_cond_num_domains=2),
+        data=KaiVisMergedDataConfig(
+            repo_id="/vePFS-North-E/vis_robot/workspace/deepdive_kai0/kai0/data/Task_A/self_built/a_av1_merged",
+            default_prompt=None,
+            base_config=DataConfig(prompt_from_task=True),  # 读 task_index→tasks.jsonl: domain0/1 各自 prompt
+            use_delta_joint_actions=False,
+            domain_weights=(1.0, 3.256),  # FRAME-level 1:1: Task_A 1,455,235 / AV1 446,955 = 3.256
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader(
+            "/vePFS-North-E/vis_robot/shared_ckpt/Task_A/mixed_1_clean/params"
+        ),
+        lr_schedule=_optimizer.CosineDecaySchedule(warmup_steps=1_000, peak_lr=1.5e-5, decay_steps=50_000, decay_lr=1.5e-6),
+        ema_decay=0.9999,
+        num_train_steps=50_000,
+        keep_period=10_000,
+        save_interval=2_000,
+        num_workers=16,
+        batch_size=128,
+        fsdp_devices=8,
+        inline_eval_val_root="/vePFS-North-E/vis_robot/workspace/deepdive_kai0/kai0/data/Task_A/self_built/vis_v2_merged_val",
+        inline_eval_n_frames=200,
+        inline_eval_every=4,
+        inline_eval_dataset_id=0,  # vis_v2_merged_val = 横向折 = domain0 sanity (不退化); AV1 竖向 eval 走 offline/真机
+    ),
+
     # from-PaliGemma 自训 (pi05_from_paligemma_base_training_plan.md 路径 B1, naive-from-base):
     # 不 warm-start PI 的 pi05_base, 改从 PaliGemma VLM base 起 (action expert 随机初始化) → 双本体
     # co-train. 单变量 vs pi05_kaivis_perdsnorm_cond = weight_loader (PaliGemmaLocalWeightLoader, 离线
