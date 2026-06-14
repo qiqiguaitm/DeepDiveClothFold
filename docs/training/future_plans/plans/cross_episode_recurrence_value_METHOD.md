@@ -64,6 +64,12 @@ autonomy 真机 3 轮叠衣(轮1中途衣物被拿走、轮2叠完被弄乱):V2.
 
 ![rollout V2.4](../../../visualization/cross_episode_recurrence_value/rollout_v24_value.png)
 
+### 3.4b 跨数据集泛化(配方逐字不改,零训练)
+
+同一冻结配方套两个全新数据集:**XVLA soft_fold**(新本体/相机/布料,168ep)corr(value,时间) mean **0.956**、≥0.7 占比 **100%**;**互联网真实 ALOHA `lerobot/aloha_static_coffee`**(全新长程"做咖啡"任务,50ep)corr mean **0.988**、单调 100%。证明学的是「跨 demo 重复结构=进度」通用规律而非 kai0 过拟合。详见 [cross_episode_recurrence_value_GENERALIZATION.md](cross_episode_recurrence_value_GENERALIZATION.md)。
+
+![coffee 泛化](../../../visualization/cross_episode_recurrence_value/generalization/coffee_sync_ep30_preview.png)
+
 ### 3.5 跨天鲁棒(V2.3 已验证,V2.4 一致)
 
 milestone 单天挖掘应用到 8 个日期(跨月):16/16 正常 0→1(探索文档 §4.4.14 图47)。V2.4 在 5-18/5-20/5-26 多数据集表现一致。

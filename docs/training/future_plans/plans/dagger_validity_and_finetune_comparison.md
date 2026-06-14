@@ -2,6 +2,7 @@
 
 > **目的**: 验证自采 dagger 数据 (`vis_dagger/v2`, 210 ep) 的有效性, 并对比两种把 dagger 引入的训练方式。
 > **状态**: 🔄 进行中 (2026-06-05) — Exp-B (1:1 微调) ✅ 训练完成 (inline @1=0.0085); Exp-A (从头重训) 🟡 cnbj 排队。**执行状态 + 实测见 §7**。
+> **🆕 Exp-C (2026-06-12)**: v3 早期干净 base(≤5-10,985ep)+ dagger v3 全量(513ep)混合、**单 norm**、重训 pi05 → 📝 规划草稿见 **§8**(待确认)。
 > **关联**:
 > - smooth800 基线: [`../../history/experiments/task_a_new_smooth_800_new_norm_results.md`](../../history/experiments/task_a_new_smooth_800_new_norm_results.md) (811 ep, MAE@1=0.0089, best=step40k)
 > - dagger 同步: [`../../../deployment/training_ops/data_sync_tos.md`](../../../deployment/training_ops/data_sync_tos.md) (sync_vis_dagger, vis_dagger/v2)
@@ -209,6 +210,77 @@
 - **info.json `total_episodes` 用 pre-skip 数** → 幽灵尾索引 → lerobot 文件 assert → offline HF 崩(§3)。已修 build 脚本 + 3 份 info.json。
 - **`chunks_size=1000` < N(1033)** → ep≥1000 找 chunk-001 → 同样 assert 崩(§3)。已修(`chunks_size=max(1000,N)`)。
 - **多机 ckpt-init `sync_global_devices` mismatch** = 上次失败留的残桩 ckpt 目录 → 清目录后重提即过。
+
+---
+
+## 8. ⭐ Exp-C (新, 2026-06-12) — v3 早期干净 base + dagger v3 全量混合重训
+
+> **一句话**: 把 **vis_base/v3 早期段(< 2026-05-18,front-trim 已裁)** 与 **vis_dagger/v3 全量** 混成单一数据集、**一起算一个 norm**、从 `mixed_1_clean` init 重训 pi05,验证"早期干净 base + 全量 dagger 纠错"是否比 smooth800 锚 / 纯 base 真机更好。
+> **状态**: 📝 **规划草稿**,待确认决策(§8.6)。**仅 plan,不实施**。
+> **为什么这么配**(综合两文档最佳结论):
+> - idle 系列 → ① **v3 前端裁有效**(Step 1 ✅);② **5-18~5-27 是真机嫌疑/fail 窗**(Exp-D 假说)→ 取 **≤5-10 早期 work 段**(排嫌疑窗)。见 [`idle_data_trimming_experiments.md`](idle_data_trimming_experiments.md) §2/§3.6/§5.5。
+> - 本文档 → **dagger 是有效纠错数据**(Q1)。这次用 **v3 前裁版 dagger 全量**(8 日期 513ep,比 v2 的 227ep 更多)。
+
+### 8.1 数据范围(已实测,2026-06-12)
+
+| 域 | 来源 | 日期 | ep | 帧 |
+|---|---|---|---:|---:|
+| **base**(v3 前裁,< 5-18)| `vis_base/v3` | 4-23 / 4-24 / 4-25 / 4-28 / 4-29 / 4-30 / 5-06 / 5-07 / 5-08 / 5-09 / 5-10(11 日期,**排 5-16 残缺**)| **985** | **1,194,427** |
+| **dagger**(v3 前裁,全量)| `vis_dagger/v3` | 5-29 / 6-01 / 6-03 / 6-04 / 6-05 / 6-08 / 6-09 / 6-10(8 日期)| **513** | **770,545** |
+| **merged** | `self_built/A_v3early_dagger`(新建)| | **≈1498** | **≈1,964,972** |
+
+> ⚠️⚠️ **关键澄清(请确认)**: 用户说"vis_dagger/v3 **和** vis_base/v3 的 **< 5-18 日期**"。但 **dagger v3 全部日期 ≥ 2026-05-29,没有任何 < 5-18 的日期**(dagger 都是后期采的纠错轨迹)。→ 故"< 5-18"**只对 base 生效**;dagger 取**全量 8 日期**。本 plan 按此解读;若你只想要某些 dagger 日期,见 §8.6-Q1。
+> - 自然比 **base:dagger ≈ 1.55:1**(帧)。**不做过采样/加权**(用户只要"混合+一起算 norm",非 1:1 平衡;如需平衡见 §8.6-Q3)。
+
+### 8.2 schema 对齐(已核实,可直接混)
+
+| 维度 | vis_base/v3 | vis_dagger/v3 | 处理 |
+|---|---|---|---|
+| state/action | 14D absolute joint | 14D absolute joint | ✅ 同 |
+| **action == state** | ✅ | ✅(max\|a−s\|=0.0)| ✅ 同 |
+| `intervention` 列 | ❌ 无 | ✅ 有(int8)| ⚠️ **merge 时删**,对齐 schema(同 §1) |
+| 前端裁 | v3(已裁)| v3(已裁,同 pipeline)| ✅ 单变量干净:两侧都 v3 |
+| fps / 视频 | 30 / 3 路 mp4 | 30 / 3 路 mp4 | symlink 复用 |
+
+### 8.3 build(克隆 `build_smooth800_dagger.py`)
+
+`build_smooth800_dagger.py` 已实现"base 源 + dagger 源 → 单 lerobot:删 intervention + episode_index 重排 + 视频 symlink + 单 norm"。**克隆为 `build_v3early_dagger.py`,把源换掉**:
+- base 源 → `vis_base/v3` 的 **11 个 < 5-18 日期**(非 smooth800)。
+- dagger 源 → `vis_dagger/v3` 的 **全 8 日期**(非 vis_dagger/v2)。
+- 输出 → `kai0/data/Task_A/self_built/A_v3early_dagger`(`chunks_size=max(1000,N)`;`total_episodes`=post-skip,避免幽灵尾索引,见 §7.3 踩坑)。
+- ⭐ **norm**: 对 merged 集**整体算一个 norm**(`compute_norm_states_fast.py`,经真实 dataloader,padding 32D + 分位数)——用户明确"一起算一个 norm",**不分域、不复用任何旧 norm**。
+
+### 8.4 训练 config(克隆 flatten-fold pi05)
+
+新建 `pi05_flatten_fold_v3early_dagger`(克隆 `pi05_flatten_fold_A_smooth800_dagger_full` §3.1):
+- `repo_id` → `A_v3early_dagger`;`use_delta_joint_actions=False`(absolute);`default_prompt="Flatten and fold the cloth."`(横向折,与 base/dagger 同 SOP)。
+- init `CheckpointWeightLoader("mixed_1_clean/params")`;LR cosine warmup1k / peak1.5e-5 / decay50k→1.5e-6;EMA0.9999;**50k step**;bs128;fsdp8;norm 重算;inline-eval `vis_v2_merged_val`(与 idle/v3 系列同 val,可横比)。
+- **集群**: cnbj(Robot-North-H20)或 cnsh 视空闲,8/16 卡(global batch 128 不变)。
+
+### 8.5 评估(真机为终判)
+
+| Tier | 做法 |
+|---|---|
+| Tier 1 offline | `vis_v2_merged_val` inline-eval 逐 ckpt MAE → 收敛 + 选 best。⚠️ idle/慢轨迹 MAE 反指(§铁律),只 sanity。 |
+| Tier 3 真机 | best ckpt 真机叠衣:成功率 / 走停 / 松手脱落 / 抓取到位 = 终判。 |
+| 对照 | ① **smooth800 锚**(真机 work 基准,MAE@1=0.0089);② Exp-A `A_smooth800_dagger_full`(smooth+dagger-v2,§7.2,若训完);③(可选)**纯 v3 base ≤5-10**(无 dagger)control 隔离 dagger 增量。 |
+
+**判据**: merged 真机 **> smooth800 锚 + ≥ Exp-A** → "早期 v3 base + 全量 v3 dagger"是更好配方;若 ≈ → dagger v3 增量被 base 吃掉;若 < → 查 dagger v3 质量 / base 早期段覆盖。
+
+### 8.6 待确认(动手前)
+1. **dagger 范围**: 用 vis_dagger/v3 **全 8 日期 513ep**(默认,因无 <5-18 dagger)?还是只取某些日期?
+2. **base 5-16**: 确认**排除**(16ep 残缺,无争议)?
+3. **配比**: 自然混(base:dagger≈1.55:1,默认)还是要 1:1 平衡(需 per-domain 加权,改用 `KaiVisMergedDataConfig`,见 [`pi05_task_a_av1_mixed_1to1_plan.md`](pi05_task_a_av1_mixed_1to1_plan.md))?**用户只说"一起算一个 norm"→ 默认自然混 + 单 norm。**
+4. **集群 / 步数**: cnbj or cnsh?50k 确认?
+5. **init**: `mixed_1_clean`(沿用)确认?
+
+### 8.7 实施步骤(待"开始实施")
+1. 克隆 `build_v3early_dagger.py`(base=v3 11日期 + dagger=v3 8日期,删 intervention)→ build `A_v3early_dagger`(≈1498ep)。
+2. `compute_norm_states_fast.py` 对 merged **整体算单 norm**。
+3. 注册 config `pi05_flatten_fold_v3early_dagger`,commit/push。
+4. 提交训练(cnbj/cnsh,50k,inline-eval)。
+5. offline 选 ckpt → **真机对比**(vs smooth800 锚 / Exp-A / 纯 base)。
+6. 回填结论 + results.md + master history。
 
 ---
 
