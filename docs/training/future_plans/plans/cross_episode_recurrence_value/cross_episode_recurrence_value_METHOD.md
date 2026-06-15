@@ -93,6 +93,13 @@ autonomy 真机 3 轮叠衣(轮1中途衣物被拿走、轮2叠完被弄乱):V2.
 
 milestone 单天挖掘应用到 8 个日期(跨月):16/16 正常 0→1(探索文档 §4.4.14 图47)。V2.4 在 5-18/5-20/5-26 多数据集表现一致。
 
+### 3.6 簇间流转可视化(可解释性)
+
+把单个 episode 投到 CRAVE 特征空间(PCA,PC1≈进度轴),直观看它**逐帧从一个 milestone 簇流转到下一个**:milestone 簇=按进度 P_k 着色的星标,轨迹按帧时间(紫→黄)着色。CRAVE 的本质就是"沿 demo 反复走过的簇链单调前进"——value 即这条链上的进度位置。kai0_base ep2302:2D 流转图 + 3D PCA 旋转彗星视频(相机帧 + 当前点/拖尾 + 当前最近 milestone 高亮)。脚本 `train_scripts/kai/data/crave_cluster_flow_viz.py`(2D)/`crave_cluster_flow_3d.py`(3D+视频)。
+
+![3D 簇间流转](../../../../visualization/cross_episode_recurrence_value/crave_cluster_flow_3d_ep2302.png)
+![2D 簇间流转](../../../../visualization/cross_episode_recurrence_value/crave_cluster_flow_ep2302.png)
+
 ---
 
 ## 4. 否决的死路(实证排除,勿重试;详见探索文档)
