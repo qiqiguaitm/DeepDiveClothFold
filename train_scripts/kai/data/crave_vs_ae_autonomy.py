@@ -22,14 +22,15 @@ if os.path.exists(_sh): fm.fontManager.addfont(_sh)
 plt.rcParams["font.sans-serif"] = ["SimHei", "DejaVu Sans"]; plt.rcParams["axes.unicode_minus"] = False
 
 REPO = Path("/vePFS/tim/workspace/deepdive_kai0")
-DS = REPO / "kai0/data/Task_A/self_built/A_smooth800_dagger_all"
-ARM = REPO / "temp/tcc_smooth800_dagger_armmask/feat_cache"
-RAW = REPO / "temp/tcc_smooth800_dagger_raw/feat_cache"
+# 与规范 rollout_v24_sync_video.py 完全一致: autonomy 属 vis 域, CRAVE 挖矿源 = vis0526 全集
+DS = REPO / "kai0/data/Task_A/vis_base/v3/2026-05-26-v3"
+ARM = REPO / "temp/tcc_vis0526_armmask/feat_cache"
+RAW = REPO / "temp/tcc_vis0526_raw/feat_cache"
 AROLL = REPO / "temp/tcc_autonomy_armmask/feat_cache"
 RROLL = REPO / "temp/tcc_autonomy_raw/feat_cache"
 ROLLDS = REPO / "temp/autonomy"
 AE_NPY = REPO / "temp/autonomy_pi0ae.npy"
-MINE_N = 500; W = 50
+W = 50
 csDS = json.load(open(DS / "meta/info.json"))["chunks_size"]
 
 
@@ -50,8 +51,8 @@ def mkp(s):
 
 rawset = set(int(p.stem[2:]) for p in RAW.glob("ep*.npz"))
 all_eps = sorted(e for e in (int(p.stem[2:]) for p in ARM.glob("ep*.npz")) if e in rawset)
-mined = sorted(np.random.RandomState(0).permutation(all_eps)[:min(MINE_N, len(all_eps))].tolist())
-print(f"mining {len(mined)} dagger eps", flush=True)
+mined = all_eps   # 全集挖矿(同规范 rollout, TEST=-1)
+print(f"mining {len(mined)} vis0526 eps (规范源)", flush=True)
 Sall = [loadep(e)[2] for e in mined]; Pm = mkp(np.concatenate(Sall)); PMU, PSD = Pm.mean(0), Pm.std(0) + 1e-8
 
 
