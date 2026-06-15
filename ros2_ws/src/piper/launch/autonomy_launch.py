@@ -230,6 +230,18 @@ def generate_launch_description():
     transport_arg = DeclareLaunchArgument('transport',
         default_value='ws',
         description='V1 path: ws (default, backward compat) | shm (POSIX shm, low-latency)')
+    # CPU affinity / scheduling prefix wrappers (default '' = no wrapping → legacy
+    # behavior bit-identical). The dagger scripts set these to e.g.
+    # 'taskset -c 0-11,32-43' so the inference loop and the camera grab run on
+    # dedicated physical cores, isolated from the recorder/servo encode load that
+    # was starving the V1 20 Hz loop. Empty string performs to shlex.split('')==[]
+    # → ExecuteProcess prepends nothing.
+    policy_cpu_prefix_arg = DeclareLaunchArgument('policy_cpu_prefix',
+        default_value='',
+        description="Launch prefix for policy_inference (e.g. 'taskset -c 0-11,32-43'); '' = none")
+    camera_cpu_prefix_arg = DeclareLaunchArgument('camera_cpu_prefix',
+        default_value='',
+        description="Launch prefix for multi_camera (e.g. 'taskset -c 12-15,44-47'); '' = none")
     # ── EE-mode (Cartesian-output models, e.g. X-VLA) — multimodal protocol §B.6 ──
     # joint  : server emits [H,14] joint, publish directly (default, legacy path).
     # ee_pose: server emits [H,16] world EE (action_kind="ee"); node IK→joints (link6,
@@ -302,6 +314,7 @@ def generate_launch_description():
     multi_cam = Node(
         package='piper', executable='multi_camera_node.py',
         name='multi_camera', output='screen',
+        prefix=LaunchConfiguration('camera_cpu_prefix'),
         parameters=[{
             'cam_f_serial': _CAM_F_SERIAL,
             'cam_l_serial': _CAM_L_SERIAL,
@@ -320,6 +333,7 @@ def generate_launch_description():
     policy_node = Node(
         package='piper', executable='policy_inference_node.py',
         name='policy_inference', output='screen',
+        prefix=LaunchConfiguration('policy_cpu_prefix'),
         parameters=[{
             'mode': LaunchConfiguration('mode'),
             'config_name': LaunchConfiguration('config_name'),
@@ -465,6 +479,7 @@ def generate_launch_description():
         inference_rate_arg, latency_k_arg, min_smooth_steps_arg, publish_rate_arg,
         cam_fps_arg, enable_head_depth_arg, enable_left_depth_arg, enable_right_depth_arg,
         fast_obs_pipeline_arg, pipelined_obs_arg, transport_arg,
+        policy_cpu_prefix_arg, camera_cpu_prefix_arg,
         execution_mode_arg, urdf_path_arg, calibration_yaml_arg,
         record_enable_arg, record_task_arg, record_prompt_arg, record_subset_arg,
         cleanup,

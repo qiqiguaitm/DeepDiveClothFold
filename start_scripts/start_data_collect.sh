@@ -166,6 +166,27 @@ export KAI0_ACTION_EQ_STATE="${KAI0_ACTION_EQ_STATE:-1}"
 # Set either to 0 to opt back out (e.g. legacy V2 capture).
 export KAI0_FRONT_TRIM="${KAI0_FRONT_TRIM:-1}"
 export KAI0_GRIPPER_FROM_MASTER="${KAI0_GRIPPER_FROM_MASTER:-1}"
+# Dataset CONTENT version → auto-creates a version folder and tags the date leaf.
+# Layout: KAI0/<Task>/<subset>/<vN>/<date>-<vN>/  (e.g. Task_A/base/v3/2026-06-15-v3).
+# The recorder mkdir's the full path, so the v2/v3 folder is created on the fly
+# and each episode lands under its version's subtree (train v2/v3 separately).
+#   V3 = online front-trim + gripper-action-from-master; else legacy v2.
+#   Override the version explicitly with KAI0_DATASET_VERSION=vN.
+if [[ "$KAI0_FRONT_TRIM" == "1" && "$KAI0_GRIPPER_FROM_MASTER" != "0" ]]; then
+    export KAI0_DATASET_VERSION="${KAI0_DATASET_VERSION:-v3}"
+else
+    export KAI0_DATASET_VERSION="${KAI0_DATASET_VERSION:-v2}"
+fi
+export KAI0_DATE_SUFFIX="-${KAI0_DATASET_VERSION}"   # date leaf suffix (layout.py)
+# GPU video encode (2026-06-15): the teleop recorder runs under
+# web/data_manager/backend/.venv (PyAV 17, NVENC-capable), so offload the 3×
+# mp4 encode to the GPU hardware encoder — frees CPU and uses an otherwise-idle
+# 5090. Output is still standard H.264/mp4 (decodes everywhere incl. the LeRobot
+# loader). KAI0_NVENC_GPU picks the encode card; KAI0_VIDEO_CODEC=h264 reverts
+# to CPU libx264. (The dagger recorder uses kai0/.venv PyAV 13 which lacks NVENC
+# → it auto-falls back to libx264; that path is isolated via CPU affinity.)
+export KAI0_VIDEO_CODEC="${KAI0_VIDEO_CODEC:-nvenc}"
+export KAI0_NVENC_GPU="${KAI0_NVENC_GPU:-0}"
 if [[ "${ACTION:-start}" == "start" || "${ACTION:-start}" == "restart" ]]; then
     if [[ "$KAI0_ACTION_EQ_STATE" == "1" ]]; then
         info "data convention: action == state (KAI0 official); gripper-from-master=$KAI0_GRIPPER_FROM_MASTER (dims 6,13 ← teleop leader)"
@@ -173,6 +194,8 @@ if [[ "${ACTION:-start}" == "start" || "${ACTION:-start}" == "restart" ]]; then
         info "data convention: action = master (legacy bilateral; falls back to state if master topic missing)"
     fi
     info "V3 front-trim: $([ "$KAI0_FRONT_TRIM" = "1" ] && echo 'ON (leading-idle trimmed at record time, keep 15-frame lead-in)' || echo 'OFF (raw V2 capture)')"
+    info "dataset version: $KAI0_DATASET_VERSION → auto folder <task>/<subset>/$KAI0_DATASET_VERSION/$(date +%Y-%m-%d)$KAI0_DATE_SUFFIX/"
+    info "video codec: $KAI0_VIDEO_CODEC$([ "$KAI0_VIDEO_CODEC" = "nvenc" ] && echo " (GPU h264_nvenc @ GPU $KAI0_NVENC_GPU; auto-falls back to libx264 if unavailable)")"
 fi
 
 exec bash "$RUN_SH" "$ACTION" "${@:2}"

@@ -133,8 +133,11 @@ PROFILE_ENV=""
 #
 # V1 RTC overrides (2026-05-25 task-friendly retune from idle-only k=2/exec=4):
 #   inference_rate=20  latency_k=6  min_smooth_steps=8  rtc_execute_horizon=12
-#   publish_rate=80 (EMA phase lag 12.5ms; Piper 1kHz PD 在 cmd 间隔内插足够细,
-#     无可感知差异; 比 180Hz 省 ~56% cmd-path CPU, 对 sim01 内存压力更友好)
+#   publish_rate=30 — _publish_action pops exactly ONE action per tick
+#     (StreamActionBuffer.pop_next_action), so publish_rate IS the action
+#     playback rate and MUST equal the ckpt's action resolution. kai0 data = 30
+#     fps → 30 Hz. (Was 80 → replayed the 30 Hz chunk ~2.67× too fast; note the
+#     RTC math below already assumes 33ms/step = 30 Hz, so 80 was self-inconsistent.)
 # Rationale (2026-05-25 vis_v2_full real-machine task A/B/C):
 #   - k=2/exec=4 (旧 V1 idle-optimized): task EE reversal 1.27/s (走3退1 现象明显)
 #   - k=6/exec=12 (本配置): task EE reversal 0.24/s (-81%) ← 显著减少 chunk
@@ -155,7 +158,7 @@ env $PROFILE_ENV nohup "$REPO/start_scripts/kai/start_autonomy.sh" \
     "latency_k:=6" \
     "min_smooth_steps:=8" \
     "rtc_execute_horizon:=12" \
-    "publish_rate:=80" \
+    "publish_rate:=30" \
     "publish_smooth_alpha:=0.7" \
     "cam_fps:=30" \
     "enable_head_depth:=false" \

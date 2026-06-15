@@ -20,8 +20,11 @@ import pandas as pd
 import torch
 import torchvision.transforms.functional as TF
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src"))
-VAL = "../kai0/data/wam_fold_v1/visrobot01_val"
+_SCRIPT_DIR = Path(__file__).resolve().parent
+_REPO_DIR = _SCRIPT_DIR.parent          # fastwam/
+_WS_DIR = _REPO_DIR.parent             # deepdive_kai0/
+sys.path.insert(0, str(_REPO_DIR / "src"))
+VAL = str(_WS_DIR / "kai0" / "data" / "wam_fold_v1" / "visrobot01_val")
 VK = ["cam_high", "cam_left_wrist", "cam_right_wrist"]
 HOR = [1, 10, 24, 48]
 
@@ -31,8 +34,9 @@ def build_model(weights, device="cuda"):
     from hydra.utils import instantiate
     with initialize(version_base=None, config_path="../configs"):
         cfg = compose(config_name="train",
-                      overrides=["data=visrobot01_fold", "model=fastwam", "task=visrobot01_fold_uncond_1e-4"])
-    model = instantiate(cfg.model)  # create_fastwam(已含 ActionDiT backbone 初始化)
+                      overrides=["data=visrobot01_fold", "model=fastwam", "task=visrobot01_fold_uncond_1e-4",
+                                 "model.skip_dit_load_from_pretrain=true"])  # skip Wan2.2 backbone weights (overwritten by ckpt anyway)
+    model = instantiate(cfg.model)  # create_fastwam — architecture only, no pretrained weights
     sd = torch.load(weights, map_location="cpu", weights_only=False, mmap=True)
     # trainer 落盘结构:{"mot": mixtures.video/action.* 全量, "proprio_encoder": ..., "step", "torch_dtype"}
     model.mot.load_state_dict(sd["mot"], strict=True)
@@ -69,7 +73,7 @@ def main():
                     help="stock=model.infer_action  opt=opt_infer_action(compile+可选FP8)")
     ap.add_argument("--opt_tier", default="exact", choices=["eager", "exact", "fp8"],
                     help="opt 引擎的加速档位(仅 --engine opt 生效)")
-    ap.add_argument("--stats", default="data/visrobot01_fold/dataset_stats.json")
+    ap.add_argument("--stats", default=str(_REPO_DIR / "data" / "visrobot01_fold" / "dataset_stats.json"))
     ap.add_argument("--aggregate", action="store_true")
     args = ap.parse_args()
     os.makedirs(f"{args.out_dir}/shards", exist_ok=True)
@@ -94,7 +98,7 @@ def main():
     s_mean = np.array(stats["state"]["default"]["global_mean"]); s_std = np.array(stats["state"]["default"]["global_std"])
 
     # t5 缓存(单 prompt)
-    cache = list(Path("data/text_embeds_cache/visrobot01_fold").glob("*.pt"))[0]
+    cache = list((_REPO_DIR / "data" / "text_embeds_cache" / "visrobot01_fold").glob("*.pt"))[0]
     t5 = torch.load(cache, map_location="cpu", weights_only=False)
     ctx = t5["context"]                  # [L,D];缓存键 = context/mask(对齐 _get_cached_text_context)
     cmask = t5["mask"].bool()            # [L]

@@ -85,6 +85,7 @@ def _load_depth_flags() -> tuple[str, ...]:
     import won't reach it. Falls back to () if the macro file is missing.
     """
     here = Path(__file__).resolve()
+    cams: tuple[str, ...] = ()
     for parent in here.parents:
         candidate = parent / "config" / "camera_depth_flags.py"
         if candidate.is_file():
@@ -93,8 +94,16 @@ def _load_depth_flags() -> tuple[str, ...]:
             mod = importlib.util.module_from_spec(spec)
             assert spec.loader is not None
             spec.loader.exec_module(mod)
-            return tuple(mod.DEPTH_CAMERAS)
-    return ()
+            cams = tuple(mod.DEPTH_CAMERAS)
+            break
+    # Per-run head-depth override: KAI0_HEAD_DEPTH=0 (set by start_dagger_collect.sh
+    # for V1/v0 dagger) drops top_head from the recorded set, so we don't subscribe
+    # to / allocate a top_head depth zarr that would otherwise fill with zeros once
+    # multi_camera stops publishing head depth. Env UNSET → keep the file default
+    # (teleop path is unaffected). Only "0" disables; any other value is a no-op.
+    if os.environ.get("KAI0_HEAD_DEPTH") == "0":
+        cams = tuple(c for c in cams if c != "top_head")
+    return cams
 
 
 CAMERAS = ("top_head", "hand_left", "hand_right")
@@ -121,12 +130,32 @@ def task_subset_root(task: str, subset: str) -> Path:
 
 
 def pick_codec() -> tuple[str, str, dict]:
-    """Pick video codec — h264 (default, broad compatibility) or av1 (compact).
+    """Pick video codec — h264 (default, broad compatibility), av1 (compact),
+    or nvenc (GPU hardware H.264, keeps the mp4 encode off the CPU).
 
-    KAI0_VIDEO_CODEC=av1 selects libsvtav1 → libaom-av1 → falls back to h264.
+    KAI0_VIDEO_CODEC:
+      h264   (default) — libx264 veryfast (CPU).
+      av1              — libsvtav1 → libaom-av1 → falls back to h264 (CPU).
+      nvenc | gpu      — h264_nvenc (GPU). Encodes on KAI0_NVENC_GPU (default
+                         '0' = first CUDA-visible device); point it at an *idle*
+                         card so the encode steals neither inference CPU cores
+                         nor the inference GPU. Falls back to libx264 when the
+                         linked PyAV/ffmpeg has no NVENC — e.g. kai0/.venv pins
+                         av==13 (no nvenc), while backend/.venv PyAV 17 has it,
+                         so the teleop recorder gets GPU encode and the dagger
+                         recorder degrades gracefully to libx264.
     """
     choice = os.environ.get("KAI0_VIDEO_CODEC", "h264").lower()
     avail = set(av.codecs_available)
+    if choice in ("nvenc", "gpu", "h264_nvenc"):
+        if "h264_nvenc" in avail:
+            gpu = os.environ.get("KAI0_NVENC_GPU", "0")
+            # p4 = balanced preset; vbr+cq for constant-quality ≈ libx264 crf 23.
+            return "h264", "h264_nvenc", {
+                "preset": "p4", "tune": "ll", "rc": "vbr", "cq": "23",
+                "gpu": str(gpu),
+            }
+        log.warning("h264_nvenc not in this PyAV build, falling back to libx264")
     if choice == "av1":
         if "libsvtav1" in avail:
             return "av1", "libsvtav1", {"preset": "8", "crf": "32"}

@@ -80,7 +80,8 @@ def generate_launch_description():
     rtc_execute_horizon_arg = DeclareLaunchArgument('rtc_execute_horizon', default_value='16',
         description='RTC guidance horizon (JAX legacy 16, V1 overrides 12)')
     publish_rate_arg = DeclareLaunchArgument('publish_rate', default_value='30',
-        description='Hz of command publish loop (JAX legacy 30, V1 overrides 80)')
+        description='Hz of command publish loop = action playback rate (one pop/tick); '
+                    'must match ckpt action resolution. kai0 30fps → 30 for both JAX and V1.')
     publish_smooth_alpha_arg = DeclareLaunchArgument('publish_smooth_alpha', default_value='0.5',
         description='Publish-time EMA factor (Layer 1.1E); shared across v0/v1')
     rtc_smooth_method_arg = DeclareLaunchArgument('rtc_smooth_method', default_value='min_jerk',
@@ -91,6 +92,11 @@ def generate_launch_description():
         description='V1: ObsPrefetchWorker pre-fetch obs. JAX keeps false.')
     transport_arg = DeclareLaunchArgument('transport', default_value='ws',
         description='V1: ws (default) | shm (POSIX shm, low-latency). JAX path n/a.')
+    # CPU affinity prefix — pin the inference loop (+ ObsPrefetchWorker) to
+    # dedicated physical cores so the dagger recorder/servo encode load can't
+    # steal them. Default '' = no pinning. Set by start_dagger_session.sh.
+    policy_cpu_prefix_arg = DeclareLaunchArgument('policy_cpu_prefix', default_value='',
+        description="Launch prefix for policy_inference (e.g. 'taskset -c 0-11,32-43'); '' = none")
 
     # Mirror env variables data_manager uses for venv resolution. Path order:
     # kai0/.venv site-packages → .pth-derived dirs → kai0/src. Keep identical
@@ -134,6 +140,7 @@ def generate_launch_description():
     policy_node = Node(
         package='piper', executable='policy_inference_node.py',
         name='policy_inference', output='screen',
+        prefix=LaunchConfiguration('policy_cpu_prefix'),
         parameters=[{
             'mode': LaunchConfiguration('mode'),
             'config_name': LaunchConfiguration('config_name'),
@@ -174,6 +181,6 @@ def generate_launch_description():
         inference_rate_arg, latency_k_arg, min_smooth_steps_arg,
         rtc_execute_horizon_arg, publish_rate_arg, publish_smooth_alpha_arg,
         rtc_smooth_method_arg, fast_obs_pipeline_arg, pipelined_obs_arg,
-        transport_arg,
+        transport_arg, policy_cpu_prefix_arg,
         policy_node,
     ])

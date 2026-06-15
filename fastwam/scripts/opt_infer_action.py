@@ -186,7 +186,10 @@ class ActionStepRunner:
         ctx = context.to(dev, dt, non_blocking=True)
         cmask = context_mask.to(dev, non_blocking=True)
         if proprio is not None:
-            ctx, cmask = m._append_proprio_to_context(ctx, cmask, proprio.to(dev, dt))
+            p = proprio.to(dev, dt)
+            if p.ndim == 1:
+                p = p.unsqueeze(0)  # (D,) → (1, D)
+            ctx, cmask = m._append_proprio_to_context(ctx, cmask, p)
 
         # context_emb: ActionDiT.text_embedding(ctx) — 跨步恒定
         self._ctx_emb = ae.text_embedding(ctx).contiguous()  # [1, L', hidden_dim]

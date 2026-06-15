@@ -111,6 +111,49 @@ export OPENPI_EXTRA_CONFIG="$SIDECAR"
 #                              12 arm dims stay = slave state. Set 0 to opt out.
 export KAI0_FRONT_TRIM="${KAI0_FRONT_TRIM:-1}"
 export KAI0_GRIPPER_FROM_MASTER="${KAI0_GRIPPER_FROM_MASTER:-1}"
+# Dataset CONTENT version → auto-creates a version folder and tags the date leaf.
+# Layout: KAI0/<Task>/<subset>/<vN>/<date>-<vN>/ (e.g. Task_A/dagger/v3/2026-06-15-v3).
+# dagger_recorder_node inherits this env; the recorder mkdir's the full path, so
+# the v2/v3 folder is created on the fly and data lands in its version's subtree.
+#   V3 = online front-trim + gripper-action-from-master; else legacy v2.
+#   Override the version explicitly with KAI0_DATASET_VERSION=vN.
+if [[ "$KAI0_FRONT_TRIM" == "1" && "$KAI0_GRIPPER_FROM_MASTER" != "0" ]]; then
+    export KAI0_DATASET_VERSION="${KAI0_DATASET_VERSION:-v3}"
+else
+    export KAI0_DATASET_VERSION="${KAI0_DATASET_VERSION:-v2}"
+fi
+export KAI0_DATE_SUFFIX="-${KAI0_DATASET_VERSION}"   # date leaf suffix (layout.py)
+
+# ── V1/v0 inference efficiency (2026-06-15) ──────────────────────────────────
+# The dagger infra adds dagger_recorder (PyAV mp4×3 + zarr) + 2× master_servo on
+# top of the V1 20 Hz (50 ms) inference loop; on a shared box that contention
+# dropped the achieved rate below 20 Hz → RTC ran off-design → different real-
+# machine behavior than standalone V1. Two mitigations, both opt-out:
+#   1. Head (D435) depth OFF — V1/v0 don't consume depth; the depth grab added
+#      USB3 bandwidth + color-frame jitter. KAI0_HEAD_DEPTH=1 re-enables it.
+#   2. CPU affinity — pin recorder/servo/cameras to dedicated physical cores
+#      (64-thread EPYC; SMT sibling = core+32) so they can't steal the inference
+#      cores (those are pinned by start_dagger_session.sh). KAI0_CPU_PIN=0 off.
+# These reach dagger_launch.py as launch args (forwarded via start_autonomy.sh
+# EXTRA_ARGS). See docs/deployment/inference/dagger_v1_inference_tuning.md.
+# Export so the dagger_recorder node (inherits this env) drops top_head from its
+# recorded depth set in lockstep with the camera — otherwise the writer would
+# keep allocating a top_head depth zarr and fill it with zeros (dataset_writer
+# _load_depth_flags honors KAI0_HEAD_DEPTH=0).
+export KAI0_HEAD_DEPTH="${KAI0_HEAD_DEPTH:-0}"
+HEAD_DEPTH="$([ "$KAI0_HEAD_DEPTH" = "1" ] && echo true || echo false)"
+TUNE_ARGS=( "enable_head_depth:=$HEAD_DEPTH" )
+if [[ "${KAI0_CPU_PIN:-1}" == "1" ]]; then
+    AFF_CAM="${KAI0_AFFINITY_CAMERAS:-12-15,44-47}"
+    AFF_REC="${KAI0_AFFINITY_RECORDER:-16-23,48-55}"
+    AFF_SRV="${KAI0_AFFINITY_SERVO:-24-27,56-59}"
+    REC_NICE="${KAI0_RECORDER_NICE:-10}"
+    TUNE_ARGS+=(
+        "camera_cpu_prefix:=taskset -c $AFF_CAM"
+        "recorder_cpu_prefix:=nice -n $REC_NICE ionice -c2 -n7 taskset -c $AFF_REC"
+        "servo_cpu_prefix:=taskset -c $AFF_SRV"
+    )
+fi
 
 if [[ -z "$CONFIG_NAME" ]]; then
     CONFIG_NAME=$(/data1/miniconda3/bin/python -c \
@@ -129,6 +172,7 @@ echo " kai0 DAgger Collection (delegates to start_autonomy.sh --dagger)"
 echo " checkpoint : $CHECKPOINT_DIR"
 echo " task       : ${TASK_NAME:-<infer-from-ckpt>}"
 echo " subset     : $SUBSET"
+echo " leaf suffix: $KAI0_DATE_SUFFIX (<task>/<subset>/<date>$KAI0_DATE_SUFFIX; head_depth=$KAI0_HEAD_DEPTH)"
 echo " inference  : $([ "$RECORD_INFERENCE" = "true" ] && echo 'ON (Form C: dagger/ + inference/)' || echo 'OFF (dagger/ only)')"
 echo " prompt     : ${PROMPT:-<infer-from-ckpt>}"
 echo " config     : $CONFIG_NAME"
@@ -208,11 +252,14 @@ trap stop_web EXIT INT TERM HUP
 AUTONOMY_SH="$SCRIPT_DIR/kai/start_autonomy.sh"
 [[ -x "$AUTONOMY_SH" ]] || AUTONOMY_SH="$SCRIPT_DIR/start_autonomy.sh"
 
+# TUNE_ARGS (head-depth + cpu-affinity) land before EXTRA_ARGS so an explicit
+# user override on the CLI still wins (ros2 launch: last key:=value wins).
 "$AUTONOMY_SH" --dagger \
     "${RERUN_FLAG[@]}" \
     "config_name:=$CONFIG_NAME" \
     "checkpoint_dir:=$CHECKPOINT_DIR" \
     "${DAGGER_ARGS[@]}" \
+    "${TUNE_ARGS[@]}" \
     "${EXTRA_ARGS[@]}" \
     || true
 
