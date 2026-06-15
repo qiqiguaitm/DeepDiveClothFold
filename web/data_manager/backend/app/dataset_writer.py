@@ -103,6 +103,15 @@ FPS = 30
 WIDTH = 640
 HEIGHT = 480
 
+# ── V3 online front-trim (leading-idle trim at record time) ──
+# Same semantics/constants as train_scripts/kai/data/build_no_release.py
+# (motion_onset + cut = max(0, onset - MARGIN)). Lets the collection pipeline
+# emit V3 datasets directly instead of a post-hoc build_no_release pass.
+TRIM_ARM_DIMS = list(range(0, 6)) + list(range(7, 13))  # 12 arm dims (exclude grippers 6,13)
+TRIM_THR = 3e-3   # rad/frame: sustained mean |Δaction| over arm dims => "moving"
+TRIM_WIN = 10     # frames of sustained motion to call it the onset
+TRIM_MARGIN = 15  # keep this many frames before onset (lead-in; NOT a full delete)
+
 log = logging.getLogger(__name__)
 
 
@@ -135,7 +144,8 @@ class EpisodeWriter:
     """
 
     def __init__(self, task: str, subset: str, ep: int, prompt: str,
-                 template_id: str, operator: str) -> None:
+                 template_id: str, operator: str,
+                 front_trim: bool | None = None) -> None:
         self.task = task
         self.subset = subset
         self.ep = ep
@@ -185,46 +195,102 @@ class EpisodeWriter:
         self._rows_action: list[list[float]] = []
         self._rows_ts: list[float] = []
         self._rows_intervention: list[int] = []  # int8: 0=policy, 1=human, -1=N/A
-        self._frame_idx = 0
+        self._frame_idx = 0   # count of EMITTED (kept) frames → pts + parquet index
         self._t0 = time.time()
+
+        # V3 front-trim: rolling-buffer the leading ticks until motion onset,
+        # then flush [onset-MARGIN:] and stream the rest. Zero re-encode,
+        # memory bounded to (MARGIN+WIN) frames. Default from KAI0_FRONT_TRIM
+        # env (off unless a collection entry script opts in — keeps the
+        # autonomy diagnostic recorder un-trimmed).
+        if front_trim is None:
+            front_trim = os.environ.get("KAI0_FRONT_TRIM", "0") == "1"
+        self._front_trim = bool(front_trim)
+        self._onset_found = not self._front_trim   # off → everything streams now
+        self._buf: list[tuple] = []                # pending (cam_arrs, depth_arrs, s, a, ts, iv)
+        self._prev_action: np.ndarray | None = None
+        self._run = 0                              # consecutive-moving frame counter
 
     def write_tick(self, frames: dict[str, np.ndarray],
                    state: list[float], action: list[float], ts: float,
                    depth_frames: dict[str, np.ndarray] | None = None,
                    intervention: int = -1) -> None:
+        # Prep all per-tick payloads up front so the front-trim buffer holds
+        # final-size, contiguous arrays (cheap to flush later).
+        cam_arrs = {cam: self._prep_rgb(frames.get(cam)) for cam in CAMERAS}
+        if self._depth_arrays:
+            depth_frames = depth_frames or {}
+            depth_arrs = {cam: self._prep_depth(depth_frames.get(cam)) for cam in DEPTH_CAMERAS}
+        else:
+            depth_arrs = {}
+        s = [float(x) for x in (list(state)[:14] + [0.0] * max(0, 14 - len(state)))]
+        a = [float(x) for x in (list(action)[:14] + [0.0] * max(0, 14 - len(action)))]
+        iv = max(-1, min(1, int(intervention)))  # clamp to int8 (clawvla format)
+
+        # Fast path: trim off, or onset already passed → stream immediately.
+        if self._onset_found:
+            self._emit_tick(cam_arrs, depth_arrs, s, a, ts, iv)
+            return
+
+        # ── V3 front-trim: buffer + incremental onset detection ──
+        self._buf.append((cam_arrs, depth_arrs, s, a, ts, iv))
+        a_np = np.asarray(a, dtype=np.float64)
+        if self._prev_action is not None:
+            da = float(np.abs(a_np[TRIM_ARM_DIMS] - self._prev_action[TRIM_ARM_DIMS]).mean())
+            self._run = self._run + 1 if da > TRIM_THR else 0
+        self._prev_action = a_np
+
+        if self._run >= TRIM_WIN:
+            # onset reached; the rolling buffer holds exactly [onset-MARGIN : now]
+            # (proof: cap=MARGIN+WIN ⇒ buf_start = max(0, onset-MARGIN) = cut).
+            self._onset_found = True
+            for tk in self._buf:
+                self._emit_tick(*tk)
+            self._buf = []
+            return
+
+        # Cap the rolling window. Dropped frames are provably earlier than any
+        # future cut (cut = future_onset - MARGIN > dropped index), so safe.
+        if len(self._buf) > TRIM_MARGIN + TRIM_WIN:
+            self._buf.pop(0)
+
+    def _emit_tick(self, cam_arrs: dict, depth_arrs: dict,
+                   s: list[float], a: list[float], ts: float, iv: int) -> None:
+        """Encode one kept tick → mp4 + depth zarr + parquet rows. pts/frame_index
+        count only emitted (kept) frames, so trimmed output starts from 0."""
         for cam in CAMERAS:
-            arr = frames.get(cam)
+            arr = cam_arrs.get(cam)
             if arr is None:
                 arr = np.zeros((HEIGHT, WIDTH, 3), dtype=np.uint8)
-            else:
-                arr = self._ensure_size(arr)
             frame = av.VideoFrame.from_ndarray(arr, format="rgb24")
             frame.pts = self._frame_idx
             for packet in self._streams[cam].encode(frame):
                 self._containers[cam].mux(packet)
 
         if self._depth_arrays:
-            depth_frames = depth_frames or {}
             for cam in DEPTH_CAMERAS:
                 z = self._depth_arrays.get(cam)
                 if z is None:
                     continue
-                d = depth_frames.get(cam)
-                if d is None or d.shape != (HEIGHT, WIDTH):
+                d = depth_arrs.get(cam)
+                if d is None:
                     d = np.zeros((HEIGHT, WIDTH), dtype=np.uint16)
-                else:
-                    d = np.ascontiguousarray(d.astype(np.uint16, copy=False))
                 _append_depth_frame(z, d)
 
-        s = list(state)[:14] + [0.0] * max(0, 14 - len(state))
-        a = list(action)[:14] + [0.0] * max(0, 14 - len(action))
-        self._rows_state.append([float(x) for x in s])
-        self._rows_action.append([float(x) for x in a])
+        self._rows_state.append(s)
+        self._rows_action.append(a)
         self._rows_ts.append(float(ts - self._t0))
-        # Clamp to int8 range and stored as int8 (matches clawvla format)
-        iv = max(-1, min(1, int(intervention)))
         self._rows_intervention.append(iv)
         self._frame_idx += 1
+
+    def _prep_rgb(self, arr: np.ndarray | None) -> np.ndarray | None:
+        return None if arr is None else self._ensure_size(arr)
+
+    @staticmethod
+    def _prep_depth(d: np.ndarray | None) -> np.ndarray | None:
+        if d is None or getattr(d, "shape", None) != (HEIGHT, WIDTH):
+            return None
+        return np.ascontiguousarray(d.astype(np.uint16, copy=False))
 
     @staticmethod
     def _ensure_size(arr: np.ndarray) -> np.ndarray:
@@ -235,6 +301,13 @@ class EpisodeWriter:
         return np.asarray(img, dtype=np.uint8)
 
     def finalize(self) -> None:
+        # Front-trim with no motion onset (degenerate/never-moved episode): keep
+        # only the last MARGIN frames — matches build_no_release (cut=len-MARGIN).
+        if self._front_trim and not self._onset_found and self._buf:
+            for tk in self._buf[-TRIM_MARGIN:]:
+                self._emit_tick(*tk)
+            self._buf = []
+            self._onset_found = True
         for cam, stream in self._streams.items():
             for packet in stream.encode():
                 self._containers[cam].mux(packet)
@@ -244,6 +317,7 @@ class EpisodeWriter:
         self._write_parquet()
 
     def abort(self) -> None:
+        self._buf = []  # drop any un-flushed front-trim buffer
         for container in self._containers.values():
             try:
                 container.close()

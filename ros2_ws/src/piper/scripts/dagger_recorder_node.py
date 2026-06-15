@@ -48,8 +48,10 @@ freedrive switches one at a time, drag only engages after BOTH are on
 docs/deployment/strategy/dagger_implementation_plan.md §4.5.
 
 state/action convention (KAI0 official, KAI0_ACTION_EQ_STATE=1):
-  state  = puppet  left[7] + puppet  right[7]  (slave joint feedback)
-  action = state (same — official kai0_dagger uses this)
+  state  = puppet left[7] + puppet right[7]  (slave joint feedback)
+  action = state for the 12 arm joints; the 2 gripper dims (6=L, 13=R) follow the
+           master (teleop leader) grasp command when KAI0_GRIPPER_FROM_MASTER=1
+           (default), falling back to slave gripper until a master topic arrives.
 """
 from __future__ import annotations
 
@@ -259,6 +261,12 @@ class DaggerRecorder(Node):
         self._q_slave_right: list[float] = [0.0] * 7
         self._q_master_left:  list[float] = [0.0] * 7
         self._q_master_right: list[float] = [0.0] * 7
+        # Whether a master (teleop leader) JointState has actually arrived — gates
+        # the V3 gripper-from-master action override (fall back to slave gripper
+        # until the master topic is live). See KAI0_GRIPPER_FROM_MASTER below.
+        self._got_master_left = False
+        self._got_master_right = False
+        self._grip_from_master = os.environ.get("KAI0_GRIPPER_FROM_MASTER", "1") == "1"
         self._align_target_left:  Optional[list[float]] = None
         self._align_target_right: Optional[list[float]] = None
 
@@ -429,8 +437,10 @@ class DaggerRecorder(Node):
         with self._lock:
             if side == "L":
                 self._q_master_left = pos
+                self._got_master_left = True
             else:
                 self._q_master_right = pos
+                self._got_master_right = True
 
     def _on_button(self, side: str, msg: Bool) -> None:
         """Per-arm freedrive-button state from arm_master_servo's teach_status poll.
@@ -911,8 +921,18 @@ class DaggerRecorder(Node):
             dag_writer = self._writer
             inf_writer = self._inference_writer
             state = self._q_slave_left + self._q_slave_right
-            # KAI0_ACTION_EQ_STATE=1 convention — official kai0_dagger format
+            # KAI0_ACTION_EQ_STATE=1 convention — official kai0_dagger format.
+            # V3: 12 arm-joint action dims = slave state; 2 gripper dims (6=L,
+            # 13=R) follow the master (teleop leader) grasp command. During
+            # HUMAN_RECORD the master encoder publishes the human's intent; during
+            # POLICY_RUN the master mirrors the slave so it ≈ state. Falls back to
+            # slave gripper until a master JointState arrives.
             action = list(state)
+            if self._grip_from_master:
+                if self._got_master_left:
+                    action[6] = self._q_master_left[6]
+                if self._got_master_right:
+                    action[13] = self._q_master_right[6]
             frames = {cam: self._rgb[cam] for cam in CAMERAS}
             depth_frames = {cam: self._depth.get(cam) for cam in DEPTH_CAMERAS}
             now = time.time()

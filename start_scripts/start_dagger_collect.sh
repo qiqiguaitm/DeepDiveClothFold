@@ -104,6 +104,14 @@ SIDECAR="$CHECKPOINT_DIR/train_config.json"
 # Without this env var, policy uses base-config defaults → different actions.
 export OPENPI_EXTRA_CONFIG="$SIDECAR"
 
+# V3 collection (2026-06-15): inherited by dagger_recorder_node via env.
+#   KAI0_FRONT_TRIM=1          online leading-idle trim in EpisodeWriter (keeps
+#                              15-frame lead-in; same semantics as build_no_release).
+#   KAI0_GRIPPER_FROM_MASTER=1 action gripper dims (6,13) ← master grasp command;
+#                              12 arm dims stay = slave state. Set 0 to opt out.
+export KAI0_FRONT_TRIM="${KAI0_FRONT_TRIM:-1}"
+export KAI0_GRIPPER_FROM_MASTER="${KAI0_GRIPPER_FROM_MASTER:-1}"
+
 if [[ -z "$CONFIG_NAME" ]]; then
     CONFIG_NAME=$(/data1/miniconda3/bin/python -c \
         "import json; print(json.load(open('$SIDECAR'))['base_config_name'])")

@@ -157,12 +157,22 @@ export CAM_FPS=30
 # bilateral capture (master command goes into action). Consumed by
 # web/data_manager/backend/app/ros_bridge.py::get_state_action.
 export KAI0_ACTION_EQ_STATE="${KAI0_ACTION_EQ_STATE:-1}"
+# V3 collection (2026-06-15): generate V3 datasets directly at record time.
+#   KAI0_FRONT_TRIM=1         online leading-idle trim (EpisodeWriter rolling
+#                             buffer; same semantics as build_no_release, keeps
+#                             MARGIN=15 lead-in — NOT a full delete).
+#   KAI0_GRIPPER_FROM_MASTER=1 action gripper dims (6,13) follow the master
+#                             (teleop leader) grasp command; 12 arm dims stay = state.
+# Set either to 0 to opt back out (e.g. legacy V2 capture).
+export KAI0_FRONT_TRIM="${KAI0_FRONT_TRIM:-1}"
+export KAI0_GRIPPER_FROM_MASTER="${KAI0_GRIPPER_FROM_MASTER:-1}"
 if [[ "${ACTION:-start}" == "start" || "${ACTION:-start}" == "restart" ]]; then
     if [[ "$KAI0_ACTION_EQ_STATE" == "1" ]]; then
-        info "data convention: action == state (KAI0 official; master topic ignored for action field)"
+        info "data convention: action == state (KAI0 official); gripper-from-master=$KAI0_GRIPPER_FROM_MASTER (dims 6,13 ← teleop leader)"
     else
         info "data convention: action = master (legacy bilateral; falls back to state if master topic missing)"
     fi
+    info "V3 front-trim: $([ "$KAI0_FRONT_TRIM" = "1" ] && echo 'ON (leading-idle trimmed at record time, keep 15-frame lead-in)' || echo 'OFF (raw V2 capture)')"
 fi
 
 exec bash "$RUN_SH" "$ACTION" "${@:2}"
