@@ -10,7 +10,7 @@
 > **三支柱**:① 跨 episode 统计重复性揭示任务结构 → ② 重复态 = 自动 milestone → ③ 零训练产稠密 value。
 > 已验证:demo 域干净 0→1、撞色衣物兜底、跨天 16/16、rollout 退步+恢复、kai0 GT MAE 0.105;
 > **跨数据集强泛化**(新本体 XVLA corr 0.956 / 真实 ALOHA coffee corr 0.988);
-> 分布外单 episode 对比(dagger ep808 + autonomy 真机 rollout)中**反超**监督 pi0-AE——AE 欠读/退步信号失真,CRAVE 仍干净 0→1(见 METHOD §3.3b)。
+> 单 episode 对比监督 pi0-AE(METHOD §3.3b,等价设定):**in-distribution**(kai0_base,同域 base+dagger 挖矿)与 AE 平手且更平滑(corr 0.82,单调 100% vs 52%);**out-of-distribution**(真机 rollout)明显更稳(AE 欠读 end 0.33 + 退步噪声)。
 
 ## 文档导航
 
