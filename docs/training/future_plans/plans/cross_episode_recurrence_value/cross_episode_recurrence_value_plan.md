@@ -10,7 +10,7 @@
 > **上游**:AWBC pipeline([awbc_implementation_plan.md](../../../../deployment/strategy/awbc_implementation_plan.md));ViVa 对比([awbc_viva_value_comparison_plan.md](../awbc_viva_value_comparison_plan.md),其 DSM-r30 变体**手标** milestone——本方案已证明可自动挖出,§2.3)。
 > **动机(现有 pipeline 病根)**:pi0-AE 是单帧视觉回归器,`absolute_advantage = V(t+50)−V(t)` 二阶差分放大噪声(corr 0.896→0.3-0.4);完全不利用跨 episode 结构;且 AE 训练数据在完成瞬间截止 → vis episode 尾段 value 系统性下坠(end-drop,已实证)。
 
-图像目录:`docs/visualization/cross_episode_recurrence_value/`(本文图 1-47 均相对引用,GitHub 直接渲染);视频默认不入 git(路径见附录 A),**阶段示例视频已入 git**:[milestone_ep_s800_660_final_v4gated_sync.mp4](../../../../visualization/cross_episode_recurrence_value/milestone_ep_s800_660_final_v4gated_sync.mp4)(终版配方 + 置信门控,held-out ep660,图33 为抽帧)。
+图像目录:`docs/visualization/cross_episode_recurrence_value/`(本文图 1-48 均相对引用,GitHub 直接渲染);视频默认不入 git(路径见附录 A),**阶段示例视频已入 git**:[milestone_ep_s800_660_final_v4gated_sync.mp4](../../../../visualization/cross_episode_recurrence_value/milestone_ep_s800_660_final_v4gated_sync.mp4)(终版配方 + 置信门控,held-out ep660,图33 为抽帧)。
 
 ---
 
@@ -1099,6 +1099,12 @@ ep7 过程(抓起→摊开→叠好)对照四 value:
 
 视频:`temp/tcc_ae_kai0base_ep2047_sync.mp4`(离散/TCC/AE 三曲线 × top_head 帧同步)。
 
+**图48 — 真 30Hz 逐帧解算**(`solve_ep2047_30hz.py`,stride-1 提取 2629 帧重算,非 3Hz-repeat):3Hz 版 CRAVE 是 0.1s 宽的粗台阶,30Hz 逐帧后阶梯变细密、TCC 连续曲线更平滑。30Hz 指标:CRAVE end1.00 单调100%;TCC end0.96 单调81%(逐帧噪声使单调率低于 3Hz 版的 98%,中值窗已放大到 27 帧≈0.9s);AE end0.90 单调52%(原生即 30Hz,不变)。结论不变——TCC 连续、终值近完成且远比 AE 单调。
+
+![图48](../../../../visualization/cross_episode_recurrence_value/solve_ep2047_30hz.png)
+
+视频:`temp/tcc_ae_kai0base_ep2047_30hz_sync.mp4`(30Hz 逐帧解算 × 视频同步)。
+
 ---
 
 ## 5. 基础设施与执行记录
@@ -1166,7 +1172,7 @@ ep7 过程(抓起→摊开→叠好)对照四 value:
 
 ## 附录 A — 工件清单
 
-**图像**(图1-47):`docs/visualization/cross_episode_recurrence_value/`(40+ 张,命名规范 `<阶段>_<数据集>_<内容>`)。
+**图像**(图1-48):`docs/visualization/cross_episode_recurrence_value/`(40+ 张,命名规范 `<阶段>_<数据集>_<内容>`)。
 
 **示例视频(入 git)**:`docs/visualization/cross_episode_recurrence_value/milestone_ep_s800_660_final_v4gated_sync.mp4`(终版配方 + 门控,held-out ep660,~2MB,图33 为抽帧)。
 
