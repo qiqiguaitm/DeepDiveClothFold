@@ -10,7 +10,7 @@
 > **上游**:AWBC pipeline([awbc_implementation_plan.md](../../../../deployment/strategy/awbc_implementation_plan.md));ViVa 对比([awbc_viva_value_comparison_plan.md](../awbc_viva_value_comparison_plan.md),其 DSM-r30 变体**手标** milestone——本方案已证明可自动挖出,§2.3)。
 > **动机(现有 pipeline 病根)**:pi0-AE 是单帧视觉回归器,`absolute_advantage = V(t+50)−V(t)` 二阶差分放大噪声(corr 0.896→0.3-0.4);完全不利用跨 episode 结构;且 AE 训练数据在完成瞬间截止 → vis episode 尾段 value 系统性下坠(end-drop,已实证)。
 
-图像目录:`docs/visualization/cross_episode_recurrence_value/`(本文图 1-52 均相对引用,GitHub 直接渲染);视频默认不入 git(路径见附录 A),**阶段示例视频已入 git**:[milestone_ep_s800_660_final_v4gated_sync.mp4](../../../../visualization/cross_episode_recurrence_value/milestone_ep_s800_660_final_v4gated_sync.mp4)(终版配方 + 置信门控,held-out ep660,图33 为抽帧)。
+图像目录:`docs/visualization/cross_episode_recurrence_value/`(本文图 1-53 均相对引用,GitHub 直接渲染);视频默认不入 git(路径见附录 A),**阶段示例视频已入 git**:[milestone_ep_s800_660_final_v4gated_sync.mp4](../../../../visualization/cross_episode_recurrence_value/milestone_ep_s800_660_final_v4gated_sync.mp4)(终版配方 + 置信门控,held-out ep660,图33 为抽帧)。
 
 ---
 
@@ -1159,6 +1159,18 @@ ep7 过程(抓起→摊开→叠好)对照四 value:
 
 ![图52](../../../../visualization/cross_episode_recurrence_value/e2e_dp_readout_ep2047.png)
 
+**图53 — 最终连续 value(用户指出图52 DP 又量化成阶梯 → 修)**:图52 的 DP 跑在 21 个离散 bin 上,`bins[path]` 必然量化成 21 级阶梯、连续性丢失。修法:**bin 数 21→201(分辨率 0.005)+ DP 路径邻域 ±8 bin 内做相似度 softmax 软期望细化**。结果(ep2047,`final_continuous_value_ep2047_v2.png`):
+
+| | 单调率 | adv 密度 | fold 凹口 | 终值 | 抖动 |
+|---|---|---|---|---|---|
+| 无 DP argmax | 89% | 94% | **0.26** | 0.86 | — |
+| 离散 DP(NB=21) | 100% | 30%(阶梯) | 消除 | 1.00 | — |
+| **最终连续(NB=201+软细化)** | 80% | **81%** | **压住(0.52)** | **0.97** | 0.00125 |
+
+**这才是真连续 value**:平滑曲线(非阶梯,adv 81%),在 argmax 崩塌处(中段 1350-1800 掉到 0.2-0.4、末段 fold 凹口 0.26)稳稳保持 ~0.53、最后平滑升到 0.97——fold 凹口与中段崩塌都被时序证据压住。残留:单调率 80%(几处小幅平滑起伏,抖动仅 0.00125=非崩塌,可能反映真实小回退);要更单调可加轻微单调偏置。**收口形态 = 端到端 TCC 进度感知特征 + 细 bin DP 时序证据 + 子 bin 软期望**——连续、平滑、无 fold 崩塌、达 0.97。
+
+![图53](../../../../visualization/cross_episode_recurrence_value/final_continuous_value_ep2047_v2.png)
+
 ---
 
 ## 5. 基础设施与执行记录
@@ -1226,7 +1238,7 @@ ep7 过程(抓起→摊开→叠好)对照四 value:
 
 ## 附录 A — 工件清单
 
-**图像**(图1-52):`docs/visualization/cross_episode_recurrence_value/`(40+ 张,命名规范 `<阶段>_<数据集>_<内容>`)。
+**图像**(图1-53):`docs/visualization/cross_episode_recurrence_value/`(40+ 张,命名规范 `<阶段>_<数据集>_<内容>`)。
 
 **示例视频(入 git)**:`docs/visualization/cross_episode_recurrence_value/milestone_ep_s800_660_final_v4gated_sync.mp4`(终版配方 + 门控,held-out ep660,~2MB,图33 为抽帧)。
 
