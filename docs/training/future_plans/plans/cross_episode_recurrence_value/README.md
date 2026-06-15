@@ -1,7 +1,16 @@
 # 跨 Episode 重复度挖掘 → 自动 Milestone / Value(零训练 milestone-value 工作集)
 
-> 一条独立工作线的归档目录。核心:**同任务多条 demo 中反复出现的状态 = 任务必经 milestone**,
-> 从跨 episode 结构挖 value,**零训练**(frozen DINOv2-small + KMeans + Viterbi-DP)替代 AWBC 的逐帧监督回归。
+> **Method name: CRAVE** — **C**ross-episode **R**ecurrence **a**s **V**alue **E**stimation
+> *(Training-free dense value from what demonstrations repeat. 实现代号 = milestone-value / V2.4。)*
+
+> 一条独立工作线的归档目录。核心命题:**同任务多条 demo 中反复出现的状态 = 任务必经 milestone**;
+> 把跨 episode 的统计重复性 → 自动浮现的 milestone → 经 Viterbi-DP 读出为稠密单调 progress value,
+> **全程零训练**(frozen DINOv2-small + KMeans + Viterbi-DP,零梯度更新),替代 AWBC 逐帧监督回归(pi0-AE)。
+>
+> **三支柱**:① 跨 episode 统计重复性揭示任务结构 → ② 重复态 = 自动 milestone → ③ 零训练产稠密 value。
+> 已验证:demo 域干净 0→1、撞色衣物兜底、跨天 16/16、rollout 退步+恢复、kai0 GT MAE 0.105;
+> **跨数据集强泛化**(新本体 XVLA corr 0.956 / 真实 ALOHA coffee corr 0.988);
+> 分布外单 episode 对比(dagger ep808 + autonomy 真机 rollout)中**反超**监督 pi0-AE——AE 欠读/退步信号失真,CRAVE 仍干净 0→1(见 METHOD §3.3b)。
 
 ## 文档导航
 
