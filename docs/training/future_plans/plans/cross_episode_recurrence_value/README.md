@@ -22,6 +22,7 @@
 | [awbc_milestone_value_AB_plan.md](awbc_milestone_value_AB_plan.md) | **下游落地 A/B 对照 plan**:A=V2.4 直接当 value 源 / B=蒸馏训 AE,对照已跑的 C=pi0-AE。 |
 | [value_advantage_methods_comparison.md](value_advantage_methods_comparison.md) | **方法论证对比**:kai0-AE(监督进度差)vs π*0.6-RECAP(RL 分布式回报优势)vs CRAVE(零训练离散),含逐维表 + 分场景结论 + 文献定位。 |
 | [CRAVE_roadmap_and_positioning.md](CRAVE_roadmap_and_positioning.md) | **定位与可行方案**:重定位为"零标签结构/技能引擎"(value 是副产品)+ 四组工作流(能做什么/怎么做/对标 SOTA 优势)+ 分阶段安排 + B1 决定性实验。 |
+| [frequency_window_params.md](frequency_window_params.md) | **频率相关参数**:不同图像频率需不同窗(lam ∝ fps、时间窗按秒);3Hz/30Hz 落表 + 标定规则 + 离线/在线读出 + 实测(窗标定让抖动降 8×)。 |
 
 ## 两条 value 形态
 - **离散 CRAVE V2.4**(主交付,METHOD 文档):milestone 阶梯,零训练,跨数据集强泛化。
