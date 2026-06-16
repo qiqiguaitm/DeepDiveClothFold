@@ -83,4 +83,5 @@ ax.axhline(1,color="#ddd",ls=":",lw=1); ax.set_xlim(0,x[-1]); ax.set_ylim(-0.05,
 ax.set_xlabel("frame(30Hz)"); ax.set_ylabel("value"); ax.grid(alpha=.25); ax.legend(fontsize=9,loc="upper left")
 ax.set_title(f"跨数据泛化 [{a.tag}] 最长 ep{TEST}({lens[TEST]*10}f): 离散CRAVE vs 连续TCC+DP",fontsize=11)
 out=Path("docs/visualization/cross_episode_recurrence_value")/f"generalize_continuous_{a.tag}.png"
-fig.tight_layout(); fig.savefig(out,dpi=125); print("SAVED",out,flush=True); print("DONE")
+fig.tight_layout(); fig.savefig(out,dpi=125); print("SAVED",out,flush=True)
+np.savez(f"temp/_gen_{a.tag}.npz", cont=cont, disc=disc, test=TEST, nframes=lens[TEST]); print("DONE")
