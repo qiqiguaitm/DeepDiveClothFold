@@ -42,9 +42,32 @@ export NCCL_SOCKET_IFNAME=${NCCL_SOCKET_IFNAME:-eth0}  # bootstrap/带外
 export NCCL_DEBUG=${NCCL_DEBUG:-WARN}
 
 CONFIG=${CONFIG:-world_action_model.configs.visrobot01_fold_16gpu.config}
+
+# stdout/stderr 落盘，方便在 PFS 上直接查错误（类似 fastwam run_train_aihc.sh）
+LOG_DIR="$REPO/runs/$(echo "$CONFIG" | python3 -c 'import sys; p=sys.stdin.read().strip().split(".")[-2]; print(p)')/aihc_logs"
+mkdir -p "$LOG_DIR"
+exec > >(tee -a "$LOG_DIR/pod_${NODE_RANK:-0}.stdout") 2>&1
+
 echo "[aihc] node $NODE_RANK/$NNODES  gpus/node=$NUM_GPUS  total=$NPROC_TOTAL  master=$MASTER_ADDR:$MASTER_PORT"
 echo "[aihc] IB=$([ "$NCCL_IB_DISABLE" = 0 ] && echo on || echo off) ibdev='$HAS_IB' config=$CONFIG"
 python -c 'import torch;print("[aihc] torch",torch.__version__,"cuda",torch.cuda.is_available(),"gpus",torch.cuda.device_count())' || true
+
+# ---- 预热 HF datasets arrow cache(单进程),规避多 rank 并发重建竞态 ----
+# parquet 改动会让 cache 失效;若 40 个 rank(跨节点、共享 PFS)同时重建 → 半成品 arrow →
+# FileNotFoundError(...incomplete...) / check_timestamps_sync IndexError → 整个 job 崩。
+# 仅 NODE_RANK 0 单进程 warm(idempotent:cache 在则秒读),其余节点等 sentinel。
+WARM_SENTINEL="$LOG_DIR/.cache_ready"
+if [ "${NODE_RANK:-0}" = "0" ]; then
+    rm -f "$WARM_SENTINEL"
+    echo "[aihc] node 0 warming dataset cache (single-process)..."
+    python -m scripts.aihc.warm_cache --config "$CONFIG" || echo "[aihc] WARN cache warm failed (non-fatal)"
+    touch "$WARM_SENTINEL"; echo "[aihc] cache warm done -> $WARM_SENTINEL"
+else
+    sleep 10  # 给 node 0 先删旧 sentinel 的窗口
+    echo "[aihc] node $NODE_RANK waiting for cache warm (sentinel $WARM_SENTINEL)..."
+    for _ in $(seq 1 240); do [ -f "$WARM_SENTINEL" ] && break; sleep 5; done
+    echo "[aihc] node $NODE_RANK proceeding (sentinel $([ -f "$WARM_SENTINEL" ] && echo found || echo TIMEOUT))"
+fi
 
 # ---- accelerate launch(DeepSpeed ZeRO-2,standard 多机 launcher:每 pod 独立起,不依赖 pdsh)----
 exec accelerate launch \

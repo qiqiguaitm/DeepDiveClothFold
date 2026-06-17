@@ -24,17 +24,21 @@ _SCRIPT_DIR = Path(__file__).resolve().parent
 _REPO_DIR = _SCRIPT_DIR.parent          # fastwam/
 _WS_DIR = _REPO_DIR.parent             # deepdive_kai0/
 sys.path.insert(0, str(_REPO_DIR / "src"))
-VAL = str(_WS_DIR / "kai0" / "data" / "wam_fold_v1" / "visrobot01_val")
-VK = ["cam_high", "cam_left_wrist", "cam_right_wrist"]
+# v1 默认;v3 评测用 env 覆盖(EVAL_VAL_ROOT / EVAL_VIEW_KEYS / EVAL_DATA / EVAL_TASK / EVAL_TEXT_EMB)。
+# VK 按角色顺序 [top, left_wrist, right_wrist] —— prep_image 按位置取,不依赖具体相机名。
+VAL = os.environ.get("EVAL_VAL_ROOT") or str(_WS_DIR / "kai0" / "data" / "wam_fold_v1" / "visrobot01_val")
+VK = (os.environ.get("EVAL_VIEW_KEYS") or "cam_high,cam_left_wrist,cam_right_wrist").split(",")
 HOR = [1, 10, 24, 48]
 
 
 def build_model(weights, device="cuda"):
     from hydra import compose, initialize
     from hydra.utils import instantiate
+    _data = os.environ.get("EVAL_DATA", "visrobot01_fold")
+    _task = os.environ.get("EVAL_TASK", "visrobot01_fold_uncond_1e-4")
     with initialize(version_base=None, config_path="../configs"):
         cfg = compose(config_name="train",
-                      overrides=["data=visrobot01_fold", "model=fastwam", "task=visrobot01_fold_uncond_1e-4",
+                      overrides=[f"data={_data}", "model=fastwam", f"task={_task}",
                                  "model.skip_dit_load_from_pretrain=true"])  # skip Wan2.2 backbone weights (overwritten by ckpt anyway)
     model = instantiate(cfg.model)  # create_fastwam — architecture only, no pretrained weights
     sd = torch.load(weights, map_location="cpu", weights_only=False, mmap=True)
@@ -55,9 +59,9 @@ def prep_image(frames_by_cam):
     for k, v in frames_by_cam.items():
         x = torch.from_numpy(v).permute(2, 0, 1).float().unsqueeze(0) / 255.0
         t[k] = TF.resize(x, [240, 320], antialias=True)[0]
-    top = TF.resize(t["cam_high"].unsqueeze(0), [256, 320], antialias=True)[0]
-    lf = TF.resize(t["cam_left_wrist"].unsqueeze(0), [128, 160], antialias=True)[0]
-    rt = TF.resize(t["cam_right_wrist"].unsqueeze(0), [128, 160], antialias=True)[0]
+    top = TF.resize(t[VK[0]].unsqueeze(0), [256, 320], antialias=True)[0]   # VK[0]=top (cam_high / top_head)
+    lf = TF.resize(t[VK[1]].unsqueeze(0), [128, 160], antialias=True)[0]    # VK[1]=left wrist
+    rt = TF.resize(t[VK[2]].unsqueeze(0), [128, 160], antialias=True)[0]    # VK[2]=right wrist
     img = torch.cat([top, torch.cat([lf, rt], dim=-1)], dim=-2)  # [3,384,320] in [0,1]
     return img * 2.0 - 1.0  # [-1,1],对齐训练 Normalize((x-0.5)/0.5)
 
@@ -97,8 +101,9 @@ def main():
     a_mean = np.array(stats["action"]["default"]["global_mean"]); a_std = np.array(stats["action"]["default"]["global_std"])
     s_mean = np.array(stats["state"]["default"]["global_mean"]); s_std = np.array(stats["state"]["default"]["global_std"])
 
-    # t5 缓存(单 prompt)
-    cache = list((_REPO_DIR / "data" / "text_embeds_cache" / "visrobot01_fold").glob("*.pt"))[0]
+    # t5 缓存(单 prompt);v3 用 EVAL_TEXT_EMB=visrobot01_v3_fold
+    _te = os.environ.get("EVAL_TEXT_EMB", "visrobot01_fold")
+    cache = list((_REPO_DIR / "data" / "text_embeds_cache" / _te).glob("*.pt"))[0]
     t5 = torch.load(cache, map_location="cpu", weights_only=False)
     ctx = t5["context"]                  # [L,D];缓存键 = context/mask(对齐 _get_cached_text_context)
     cmask = t5["mask"].bool()            # [L]

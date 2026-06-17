@@ -67,6 +67,7 @@ def get_args():
     ap.add_argument("--opt_bac", type=int, default=0)  # BAC 跳过中段 block 数(0=off)  # 每进程缓存解码 episode 数;62G 级主机(如 jpsz)用 1  # ANS 动作步数 T_a;0=自动(ANS ckpt→5,其余同步)
     ap.add_argument("--delta_mask", default="")  # 空=从 --stats_path 内嵌 delta_mask 取(默认);传 "1,1,..,0" 覆盖
     ap.add_argument("--width", type=int, default=768); ap.add_argument("--height", type=int, default=192)
+    ap.add_argument("--view_keys", default="", help="逗号分隔的相机键名;空=用默认 v1 键名")
     return ap.parse_args()
 
 
@@ -105,7 +106,8 @@ def main():
     dm = torch.tensor(_dm, device=dev, dtype=torch.bool)
     ve = dict(_class_name="LeRobotDataset", data_path=args.val_root, delta_info={"action": args.action_chunk},
               skip_video_decoding=True, embodiment="visrobot01", tolerance_s=1e-3)
-    ds = load_dataset([ve]); fc = EpisodeFrameCache(args.val_root, VK, args.frame_cache)
+    vk = [k.strip() for k in args.view_keys.split(",")] if args.view_keys.strip() else VK
+    ds = load_dataset([ve]); fc = EpisodeFrameCache(args.val_root, vk, args.frame_cache)
     vae = AutoencoderKLWan.from_pretrained(args.model_id, subfolder="vae", torch_dtype=dt)
     sid, n = args.shard_id, args.num_shards
     my_metric = metric_eps[sid::n]; vset = set(viz_eps)
@@ -147,7 +149,7 @@ def main():
 
     def infer(gi, want_video):
         d = ds[int(gi)]; ep, f = info[int(gi)]; fr = fc.get(ep)
-        ref = build_ref_image(images={k: _hwc_to_chw01(fr[k][f]) for k in VK}, dst_size=(args.width, args.height), crop_mode="center")
+        ref = build_ref_image(images={k: _hwc_to_chw01(fr[k][f]) for k in vk}, dst_size=(args.width, args.height), crop_mode="center")
         st = d["observation.state"].float().unsqueeze(0).to(dev); ns = normalize_state(st, norm, mode="zscore").to(dev, dt)
         with torch.no_grad():
             if OPT and not want_video:
@@ -171,15 +173,15 @@ def main():
         gv = None
         if want_video:
             offs = [0, args.action_chunk // 4, args.action_chunk // 2, 3 * args.action_chunk // 4, args.action_chunk]
-            Lf = fr[VK[0]].shape[0]
-            gv = np.stack([np.array(build_ref_image(images={k: _hwc_to_chw01(fr[k][min(f + o, Lf - 1)]) for k in VK},
+            Lf = fr[vk[0]].shape[0]
+            gv = np.stack([np.array(build_ref_image(images={k: _hwc_to_chw01(fr[k][min(f + o, Lf - 1)]) for k in vk},
                           dst_size=(args.width, args.height), crop_mode="center")) for o in offs])
         return ep, f, pa, gt, pv, gv
 
     def metrics(pa, gt):
         L = min(len(pa), len(gt)); ae = np.abs(pa[:L] - gt[:L]); m = {"action_mae": float(ae.mean())}
         for h in HOR:
-            if h <= L: m[f"mae@{h}"] = float(ae[h - 1].mean())
+            if h <= L: m[f"mae@{h}"] = float(ae[:h].mean())
         return m
 
     latency = {}

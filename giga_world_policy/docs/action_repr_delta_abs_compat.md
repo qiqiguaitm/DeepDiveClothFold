@@ -6,6 +6,8 @@
 
 > 关键判断(背景):delta/abs 的取舍由 **base checkpoint 的预训练分布**决定,不是第一性原理。pi0.5 base 训于 absolute → kai0 fold 用 abs;GWP/Policy-DROID base 训于 delta → 用 delta。两者机制等价(per-embodiment mask),abs 只是 mask 全 False。详见 `docs/gigaworld_policy_recipe_vs_experiment.md` 与项目记忆 `wam-delta-action-fix`。
 
+> 各模型 MAE 横向对比(delta vs abs vs FastWAM 实测数,2026-06-15):见 [`docs/model_mae_comparison.md`](model_mae_comparison.md)。要点:共享 DiT 内 delta(0.1128)优于 abs(0.1492);FastWAM 独立 ActionDiT 让 abs 追平官方至 0.091。
+
 ---
 
 ## Part A — 当前版本基线快照(v1)

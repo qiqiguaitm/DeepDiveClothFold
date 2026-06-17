@@ -1,0 +1,55 @@
+{
+  "name": "fastwam-recompute-v3-latent-fix",
+  "queue": "aihcq-z4v1apdppzwy",
+  "jobFramework": "pytorch",
+  "jobSpec": {
+    "command": "bash /mnt/pfs/p46h4f/cosmos/deepdive_kai0/fastwam/scripts/aihc/run_compute_latents_v3fix_aihc.sh",
+    "image": "ccr-249evs6f-vpc.cnc.bj.baidubce.com/visrobot/cosmos:v4.0_QHcnix_20260531063553_QHcnix_20260603200802",
+    "imageConfig": {
+      "username": "root",
+      "password": ""
+    },
+    "replicas": 1,
+    "resources": [
+      {
+        "name": "baidu.com/a100_80g_cgpu",
+        "quantity": 8
+      },
+      {
+        "name": "sharedMemory",
+        "quantity": 0
+      }
+    ],
+    "envs": [
+      {
+        "name": "NUM_GPUS",
+        "value": "8"
+      }
+    ],
+    "enableRDMA": false,
+    "hostNetwork": true
+  },
+  "faultTolerance": false,
+  "priority": "normal",
+  "datasources": [
+    {
+      "id": "",
+      "type": "pfsl2",
+      "sourcePath": "/visdata",
+      "mountPath": "/mnt/pfs/p46h4f",
+      "name": "pfs-fDgaop",
+      "options": {
+        "sizeLimit": 0,
+        "medium": "",
+        "readOnly": false,
+        "pfsL1ClusterPort": "8888",
+        "pfsL2MountTargetId": [
+          "mt-zSSaab"
+        ],
+        "pfsL2HostMountPath": "/pfs/visdata",
+        "cfsInstanceId": "",
+        "cfsMountPoint": ""
+      }
+    }
+  ]
+}

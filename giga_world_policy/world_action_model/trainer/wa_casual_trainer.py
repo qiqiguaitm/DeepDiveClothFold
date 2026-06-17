@@ -82,6 +82,22 @@ class CasualWATrainer(Trainer):
         self.ans_p = float(model_config.get("ans_p", 0.1))          # 分支A(t_a=0)概率,论文未公开
         self.ans_beta = tuple(model_config.get("ans_beta", (1.5, 1.0)))
         transformer.register_to_config(async_noise=self.async_noise)
+        # Gaussian training_weight: bell centered at t=500 (σ=0.5), normalized to mean≈1
+        # over the flow_shift-warped training distribution.  Aligns with fastwam-v4 —
+        # upweights the low-noise regime that controls abs-action fidelity.
+        self.training_weight_enabled = bool(model_config.get("training_weight", False))
+        if self.training_weight_enabled:
+            _steps = 1000
+            _u = torch.linspace(1.0, 0.0, _steps + 1, dtype=torch.float64)[:-1]
+            _s = self.flow_shift * _u / (1 + (self.flow_shift - 1) * _u)
+            _t = _s * _steps
+            _y = torch.exp(-2.0 * ((_t - _steps / 2.0) / _steps) ** 2)
+            self._tw_y_min = float(_y.min().item())
+            self._tw_norm_const = float((_y - self._tw_y_min).mean().item())
+        # Independent action sigma (fastwam-v4 style): t_action re-sampled fresh each step,
+        # completely decoupled from t_video.  Distinct from async_noise/ANS which enforces
+        # t_video >= t_action coupling.  Fills action token slots in the timestep tensor.
+        self.independent_action_sigma = bool(model_config.get("independent_action_sigma", False))
         transformer_cfg = model_config.get('transformer', dict())
         transformer = process_transformer(transformer, transformer_cfg)
         transformer.to(self.device, dtype=self.dtype)
@@ -92,6 +108,10 @@ class CasualWATrainer(Trainer):
         self.load_checkpoint(checkpoint, list(model.values()), strict=strict)
         model = ModuleDict(model)
         model.train()
+        # 内联 fold 评测配置(全 val sharded MAE@{1,10,chunk/2,chunk},复用训练 rank;见 eval_fold_gwp.py)
+        self._pretrained_path = pretrained
+        self.eval_fold_cfg = dict(model_config.get("eval_fold", {}) or {})
+        self._eval_pipe = None  # WAPipeline 懒构建一次复用
         return model
 
     def forward_step(self, batch_dict):
@@ -111,6 +131,10 @@ class CasualWATrainer(Trainer):
         else:
             timestep, sigma = self.get_timestep_and_sigma(_bs, _ndim)
             ans_action_sigma = ans_action_ts = ans_clean = None
+        _ts_per_sample = timestep.float()  # [bs] — save before expand_timesteps overwrites
+        # fastwam-v4: action timestep sampled completely independently from video
+        if self.independent_action_sigma and not self.async_noise:
+            ans_action_ts, ans_action_sigma = self.get_timestep_and_sigma(_bs, ndim=3)  # [bs], [bs,1,1]
         action = batch_dict['action']
         state = batch_dict['state']
         self.vae_decode(action=action, sign='input_action')
@@ -125,8 +149,8 @@ class CasualWATrainer(Trainer):
         visual_noise = torch.randn_like(visual_latents)
         visual_target = visual_noise - visual_latents
         noisy_latents = visual_noise * sigma + visual_latents * (1 - sigma)
-        # ANS:action 用自己的(更低)sigma;否则与视频共享
-        action_sigma = ans_action_sigma if self.async_noise else sigma.squeeze(-1).squeeze(-1)
+        # ANS / independent:action 用自己的 sigma;否则与视频共享
+        action_sigma = ans_action_sigma if (self.async_noise or self.independent_action_sigma) else sigma.squeeze(-1).squeeze(-1)
         action_noise = torch.randn_like(action)
         action_target = action_noise - action
         noisy_action = action_noise * action_sigma + action * (1 - action_sigma)
@@ -183,8 +207,8 @@ class CasualWATrainer(Trainer):
         num_clean_latent_tokens = frame_per_tokens
         num_noisy_latent_tokens = num_latent_tokens - num_clean_latent_tokens
         timestep[:, num_state_tokens + num_clean_latent_tokens:] = noise_t
-        if self.async_noise:
-            # token 序与模型一致 [state | ref(clean) | action | noisy]:action 切片填 t_a,其余仍 t_O
+        if self.async_noise or self.independent_action_sigma:
+            # ANS / independent: action token 切片填入各自的 t_a;其余 token 仍为 t_video
             a0 = num_state_tokens + num_clean_latent_tokens
             timestep[:, a0:a0 + num_action_tokens] = ans_action_ts.to(timestep.dtype)[:, None]
         visual_pred, action_pred = transformer(
@@ -198,7 +222,11 @@ class CasualWATrainer(Trainer):
         )
         if self.if_visualize():
             with torch.no_grad():
-                pred_x0 = noisy_latents - visual_pred * sigma
+                # expand_timesteps path splits noisy_latents → ref(T=1)+noisy(T=3) but model
+                # returns visual_pred for all T frames. Use insert_noisy_latents (T=total) to
+                # match visual_pred shape; non-expand path uses the unsplit noisy_latents.
+                _viz_noisy = insert_noisy_latents if self.expand_timesteps else noisy_latents
+                pred_x0 = _viz_noisy - visual_pred * sigma
                 if self.expand_timesteps:
                     pred_x0 = (1 - first_frame_mask) * ref_latents + first_frame_mask * pred_x0
                 self.vae_decode(latents=pred_x0, sign='pred_visual')
@@ -208,15 +236,26 @@ class CasualWATrainer(Trainer):
                     pred_action = pred_action.mean(1)
                 self.vae_decode(action=pred_action, sign='action_visual')
         visual_loss = ((visual_pred.float() - visual_target.float()) * first_frame_mask) ** 2
-        visual_loss = visual_loss.mean()
+        if self.training_weight_enabled:
+            _vl_per = visual_loss.mean(dim=list(range(1, visual_loss.ndim)))  # [bs]
+            visual_loss = (_vl_per * self._training_weight(_ts_per_sample)).mean()
+        else:
+            visual_loss = visual_loss.mean()
         action_loss = (action_pred.float() - action_target.float()) ** 2
+        action_loss_per = action_loss.mean(dim=(1, 2))  # [bs]
         if ans_clean is not None:
             # ANS 分支A:t_a=0 时输入即干净动作,velocity 目标 ε−a₀ 不可预测(纯噪声回归),
             # 置零该样本的 action loss——分支A 的作用是让"干净动作"成为视频去噪的条件分布内状态。
             w = (~ans_clean).float()
-            action_loss = (action_loss.mean(dim=(1, 2)) * w).sum() / w.sum().clamp(min=1.0)
+            if self.training_weight_enabled:
+                w = w * self._training_weight(ans_action_ts.float())
+            action_loss = (action_loss_per * w).sum() / w.sum().clamp(min=1.0)
         else:
-            action_loss = action_loss.mean()
+            if self.training_weight_enabled:
+                _t_a = action_sigma.reshape(bs) * 1000.0  # [bs]
+                action_loss = (action_loss_per * self._training_weight(_t_a)).mean()
+            else:
+                action_loss = action_loss_per.mean()
         # 加权(λ_video/λ_action):backward 的 total=sum(dict) 即 ℒ_all=λ_v·ℒ_video+λ_a·ℒ_action。
         # 注意:日志里打印的是**加权后**的值(λ_action=5 时 action_loss 显示≈5×真实 velocity-MSE,
         # 监控真实收敛需 ÷λ_action)。
@@ -270,6 +309,64 @@ class CasualWATrainer(Trainer):
         while len(sigma_o.shape) < ndim:
             sigma_o = sigma_o.unsqueeze(-1)
         return sigma_o, sigma_a, ts_o, ts_a, is_clean
+
+    def _training_weight(self, t: torch.Tensor) -> torch.Tensor:
+        """Gaussian bell w(t) centered at t=500, normalized to mean≈1 over training dist."""
+        y = torch.exp(-2.0 * ((t.float() - 500.0) / 1000.0) ** 2)
+        return (y - self._tw_y_min) / (self._tw_norm_const + 1e-10)
+
+    def print_step(self) -> None:
+        super().print_step()
+        cfg = getattr(self, "eval_fold_cfg", None)
+        if not cfg or not cfg.get("enabled", False):
+            return
+        every = int(cfg.get("every", 1000))
+        if every > 0 and self.cur_step > 0 and self.cur_step % every == 0:
+            self.inline_eval_fold()
+
+    def inline_eval_fold(self):
+        """全 val 集 sharded MAE@{1,10,chunk/2,chunk}(action-only):unwrap live transformer + 驻留 VAE 包
+        WAPipeline(只建一次),按训练 rank 分片 → all_gather_object → 全局聚合 → 打日志。失败只告警不崩训练。"""
+        import torch.distributed as dist
+        from world_action_model import eval_fold_gwp as efg
+        cfg = self.eval_fold_cfg
+        try:
+            unwrapped = self.accelerator.unwrap_model(self.model)
+            transformer = unwrapped["transformer"] if hasattr(unwrapped, "__getitem__") else getattr(unwrapped, "transformer")
+            was_training = transformer.training
+            transformer.eval()
+            try:
+                if self._eval_pipe is None:
+                    self._eval_pipe = efg.build_eval_pipeline(
+                        self._pretrained_path, self.vae, transformer, self.dtype, self.device)
+                ac = int(cfg.get("action_chunk", 48))
+                local, hor = efg.eval_fold_gwp(
+                    self._eval_pipe, transformer,
+                    val_root=cfg["val_root"], view_keys=list(cfg["view_keys"]),
+                    stats_path=cfg["stats_path"], t5_pkl=cfg["t5_pkl"],
+                    shard_id=self.process_index, num_shards=self.accelerator.num_processes,
+                    action_chunk=ac, steps_inf=int(cfg.get("steps_inf", 10)),
+                    exec_horizon=int(cfg.get("exec_horizon", 16)), n_eps=int(cfg.get("n_eps", 100)),
+                    max_win_per_ep=int(cfg.get("max_win_per_ep", 6)),
+                    width=int(cfg.get("width", 768)), height=int(cfg.get("height", 192)),
+                    frame_cache=int(cfg.get("frame_cache", 2)),
+                    device=self.device, dtype=self.dtype, log=lambda s: None)
+            finally:
+                if was_training:
+                    transformer.train()
+        except Exception as e:
+            self.logger.info("eval_fold step=%d FAILED on rank %d: %s", self.cur_step, self.process_index, repr(e))
+            local, hor = {}, efg.horizons(int(cfg.get("action_chunk", 48)))
+        # 跨 rank 收集
+        if dist.is_available() and dist.is_initialized():
+            gathered = [None] * dist.get_world_size()
+            dist.all_gather_object(gathered, local)
+        else:
+            gathered = [local]
+        if self.is_main_process:
+            agg, n = efg.aggregate(gathered, hor)
+            self.logger.info("eval_fold step=%d n_eps=%d %s", self.cur_step, n,
+                             " ".join(f"mae@{h}={agg[h]:.4f}" for h in hor if agg.get(h) is not None))
 
     def if_visualize(self):
         return self.process_index == 0 and (self.cur_step % self.view_interval == 0 or self.cur_step == 1) and len(self._outputs) == 0

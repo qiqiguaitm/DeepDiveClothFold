@@ -1,0 +1,38 @@
+# @package _global_
+# visrobot01 v3 叠衣服 abs-angle uncond 训练。
+# 数据: wam_fold_v3/visrobot01_v3_train (2353 ep, merge_and_split.py 产出)
+# 超参对齐 visrobot01_fold_uncond_1e-4(LR/scheduler/batch)
+#
+# 步数设计:
+#   v1 最优 ckpt = step_025510(AIHC 5n8g, eff_batch=640)
+#   v3 数据: 2353 ep × 323 窗/ep = 760k 窗, 1 epoch ≈ 1188 steps(40 GPU×16)
+#   max_steps=50000 ≈ 42 epochs, 与 gwp-ori v3 对齐; LR 在 50k 自然归 0; save_every=2500 取最优
+#   不用 num_epochs 避免单机/多机 eff_batch 不同导致步数差 10×
+
+defaults:
+  - override /data: visrobot01_v3_fold
+  - override /model: fastwam
+  - _self_
+
+batch_size: 16
+num_workers: 8
+
+model:
+  mot_checkpoint_mixed_attn: false
+  redirect_common_files: false
+
+lr_scheduler_type: "cosine"
+learning_rate: 1e-4
+num_epochs: 1000  # 实际由 max_steps 控制,设大值避免提前退出
+max_steps: 50000  # 与 gwp-ori v3 对齐; 40GPU×1188=42 epochs; LR cosine→0@50k; save_every=2500 取最优
+log_every: 10
+save_every: 2500
+eval_every: 1000          # 正式:每 1000 步内联 eval(EVAL_EVERY env 可覆盖)
+eval_sample_enabled: false  # 关 1-sample 视频 eval(v3 val 时间戳触发 torchcodec tolerance 崩);只用 eval_fold
+eval_fold_enabled: true
+eval_fold_n_eps: 100      # 全 val 集
+eval_fold_nfe: 20         # 对齐外部 watcher 口径
+
+gradient_accumulation_steps: 1
+weight_decay: 1e-2
+resume: null

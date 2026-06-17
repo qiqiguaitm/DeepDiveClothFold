@@ -43,6 +43,15 @@ class Wan22Trainer:
         self.save_every = int(cfg.save_every)
         self.eval_every = int(cfg.eval_every)
         self.eval_num_inference_steps = int(cfg.eval_num_inference_steps)
+        # 内联 fold 评测(全 val 集 sharded MAE@{1,10,chunk/2,chunk},复用训练 rank)
+        # 1-sample 视频可视化 eval(用 val_dataset[idx]→torchcodec 按时间戳取帧;v3 val 时间戳与查询网格
+        # 不对齐会触发 tolerance AssertionError → 故 v3 关掉,只用 index-based 的 eval_fold)
+        self.eval_sample_enabled = bool(cfg.get("eval_sample_enabled", True))
+        self.eval_fold_enabled = bool(cfg.get("eval_fold_enabled", True))
+        self.eval_fold_n_eps = int(cfg.get("eval_fold_n_eps", 100))
+        self.eval_fold_nfe = int(cfg.get("eval_fold_nfe", 20))  # 对齐外部 watcher 口径
+        self.action_chunk = int(cfg.data.train.num_frames) - 1       # 49-1=48
+        self.eval_fold_hor = [1, 10, max(1, self.action_chunk // 2), self.action_chunk]
         self.gradient_accumulation_steps = int(cfg.gradient_accumulation_steps)
         self.max_grad_norm = float(cfg.max_grad_norm)
         self.seed = int(cfg.seed)
@@ -374,6 +383,47 @@ class Wan22Trainer:
         }
 
     @torch.no_grad()
+    def evaluate_fold(self):
+        """全 val 集 sharded 真 benchmark:每 rank 评一片 episode → gather → 全局 MAE@{1,10,chunk/2,chunk}。
+        复用 live model(unwrap_model)+ 现有训练 rank,不重载权重、不抢卡。失败只告警不崩训练。"""
+        if self.val_dataset is None or not self.eval_fold_enabled:
+            return None
+        from fastwam.eval_fold import eval_fold, aggregate, load_eval_assets
+
+        vcfg = self.cfg.data.val
+        val_root = str(vcfg.dataset_dirs[0]).rstrip("/")
+        view_keys = [im["key"] for im in vcfg.shape_meta.images]  # 顺序 [top, left_wrist, right_wrist]
+        a_mean, a_std, s_mean, s_std, ctx, cmask = load_eval_assets(
+            str(vcfg.pretrained_norm_stats), str(vcfg.text_embedding_cache_dir))
+
+        m = self.accelerator.unwrap_model(self.model)
+        was_training = m.dit.training
+        m.eval()
+        try:
+            local, _ = eval_fold(
+                m, val_root, view_keys, a_mean, a_std, s_mean, s_std, ctx, cmask,
+                shard_id=self.accelerator.process_index, num_shards=self.accelerator.num_processes,
+                nfe=self.eval_fold_nfe, n_eps=self.eval_fold_n_eps,
+                action_chunk=self.action_chunk, hor=self.eval_fold_hor, log=lambda s: None)
+        except Exception as e:  # eval 失败不应中断训练
+            logger.warning("[eval_fold] step=%d FAILED on rank %d: %s",
+                           self.global_step, self.accelerator.process_index, repr(e))
+            local = {}
+        finally:
+            if was_training:
+                m.train()
+        # 跨 rank 收集各自的 {ep:{mae@h}}(用 torch.distributed,避免 accelerate 版本差异)
+        import torch.distributed as dist
+        if dist.is_available() and dist.is_initialized():
+            gathered = [None] * dist.get_world_size()
+            dist.all_gather_object(gathered, local)
+        else:
+            gathered = [local]
+        if not self.accelerator.is_main_process:
+            return None
+        agg, n = aggregate(gathered, self.eval_fold_hor)
+        return {"n_eps": n, "mae": agg}
+
     def evaluate(self):
         if self.val_dataset is None:
             return None
@@ -726,11 +776,16 @@ class Wan22Trainer:
                         self._wandb_log(wandb_payload)
 
                     if (
-                        self.eval_every > 0
+                        self.eval_sample_enabled
+                        and self.eval_every > 0
                         and self.val_dataset is not None
                         and self.global_step % self.eval_every == 0
                     ):
-                        metrics = self.evaluate()
+                        try:
+                            metrics = self.evaluate()
+                        except Exception as e:  # 1-sample eval 失败不应中断训练/阻塞 eval_fold
+                            logger.warning("[eval] step=%d 1-sample eval FAILED: %s", self.global_step, repr(e))
+                            metrics = None
                         self.accelerator.wait_for_everyone()
                         if metrics is not None and self.accelerator.is_main_process:
                             description = "[eval] step=%d val_loss=%.4f infer_psnr=%.4f infer_ssim=%.4f" % (
@@ -758,6 +813,25 @@ class Wan22Trainer:
                             if "action_l1" in metrics:
                                 eval_payload["eval/action_l1"] = float(metrics["action_l1"])
                             self._wandb_log(eval_payload)
+
+                    # 内联 fold 真 benchmark(全 val 集 sharded MAE@{1,10,chunk/2,chunk})
+                    if (
+                        self.eval_fold_enabled
+                        and self.eval_every > 0
+                        and self.val_dataset is not None
+                        and self.global_step % self.eval_every == 0
+                    ):
+                        fold = self.evaluate_fold()
+                        self.accelerator.wait_for_everyone()
+                        if fold is not None and self.accelerator.is_main_process:
+                            mae = fold["mae"]
+                            logger.info(
+                                "eval_fold step=%d n_eps=%d %s",  # 不用 [..] 前缀(rich 会当 markup 吞掉)
+                                self.global_step, fold["n_eps"],
+                                " ".join(f"mae@{h}={mae[h]:.4f}" for h in self.eval_fold_hor if mae.get(h) is not None),
+                            )
+                            self._wandb_log({f"eval_fold/mae@{h}": float(mae[h])
+                                             for h in self.eval_fold_hor if mae.get(h) is not None})
 
                     if self.save_every > 0 and self.global_step % self.save_every == 0:
                         ckpt_info = self.save_checkpoint()

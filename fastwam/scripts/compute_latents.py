@@ -84,7 +84,40 @@ def main():
     ap.add_argument("--batch", type=int, default=8); ap.add_argument("--device", default="cuda")
     ap.add_argument("--stride", type=int, default=4)
     ap.add_argument("--smoke", type=int, default=0, help=">0: 只跑 N 个 episode")
+    ap.add_argument("--data_path", default=None, help="override DATA path (default: wam_fold_v1/visrobot01_train)")
+    ap.add_argument("--cameras", default=None,
+                    help="逗号分隔显式相机顺序 [top, left_wrist, right_wrist];优先于自动探测")
+    ap.add_argument("--out_dir", default=None, help="latent 输出目录;默认 DATA/vae_latent")
     args = ap.parse_args()
+
+    global DATA, CAMS
+    if args.data_path:
+        DATA = str(Path(args.data_path).resolve())
+    # ⚠️ window_pixels 按位置拼图:CAMS[0]→大主图(256x320,应为俯视/overhead),CAMS[1]/[2]→腕部小图。
+    # 旧版用 sorted() 字母序 → v3 探测成 [hand_left,hand_right,top_head] → 把俯视图 top_head 压进腕部小槽
+    #(2026-06-17 根因)。改为【角色感知排序】:overhead/top 优先,再 left,再 right;并支持 --cameras 显式覆盖。
+    def _role_order(names):
+        def rank(n):
+            ln = n.lower()
+            if any(k in ln for k in ("top", "head", "high", "overhead")):
+                return 0
+            if "left" in ln:
+                return 1
+            if "right" in ln:
+                return 2
+            return 3
+        return sorted(names, key=rank)
+    if args.cameras:
+        CAMS = tuple(c.strip() for c in args.cameras.split(","))
+    else:
+        vid_chunk0 = Path(DATA) / "videos" / "chunk-000"
+        if vid_chunk0.exists():
+            detected = [d.name.replace("observation.images.", "")
+                        for d in vid_chunk0.iterdir()
+                        if d.is_dir() and d.name.startswith("observation.images.")]
+            if detected:
+                CAMS = tuple(_role_order(detected))
+    print(f"[latent] CAMS order (CAMS[0]=top/overhead → 256x320 主图): {CAMS}", flush=True)
 
     vae = load_vae(args.device)
     print("[latent] VAE loaded", flush=True)
@@ -102,7 +135,8 @@ def main():
         off += ep_len[e]
     print(f"[latent] eps={len(eps_sorted)} total_frames={off} stride={args.stride}", flush=True)
 
-    out_dir = Path(DATA) / "vae_latent"; out_dir.mkdir(parents=True, exist_ok=True)
+    out_dir = Path(args.out_dir) if args.out_dir else (Path(DATA) / "vae_latent")
+    out_dir.mkdir(parents=True, exist_ok=True)
     my = eps_sorted[args.shard :: args.total]
     if args.smoke:
         my = my[: args.smoke]

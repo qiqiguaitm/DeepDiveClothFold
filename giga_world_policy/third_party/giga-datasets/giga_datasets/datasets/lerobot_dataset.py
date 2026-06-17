@@ -133,6 +133,15 @@ class LeRobotDataset(BaseDataset):
                 d = os.path.join(self.data_path, "t5_embedding")
                 if os.path.isdir(d):
                     self.t5_embedding_dir = d
+            if self.latent_dir is not None:
+                import json as _json, bisect as _bisect
+                _eps = [_json.loads(l) for l in open(os.path.join(self.data_path, "meta", "episodes.jsonl")) if l.strip()]
+                _cum, _acc = [], 0
+                for _e in _eps:
+                    _acc += int(_e["length"])
+                    _cum.append(_acc)
+                self._ep_cum_sizes = _cum  # cum[i] = HF pos of end of episode i (exclusive)
+                self._ep_seq_ids = [int(_e["episode_index"]) for _e in _eps]
 
     def close(self):
         if self.dataset is not None:
@@ -191,10 +200,16 @@ class LeRobotDataset(BaseDataset):
                                     old = self._t5_cache_order.pop(0)
                                     self._t5_cache.pop(old, None)
         if self.latent_dir is not None:
-            ei = data_dict.get("episode_index", None)
-            fi = data_dict.get("frame_index", None)
-            ei = int(ei.item() if hasattr(ei, "item") else ei)
-            fi = int(fi.item() if hasattr(fi, "item") else fi)
+            import bisect as _bisect
+            # fi = HF position within this sub-dataset (= _get_data's index param).
+            # Latent ep["starts"] stores HF-cumulative positions (gstart[ep] + local_f),
+            # which equals the sub-dataset local index. Using data_dict["index"] (parquet column)
+            # or data_dict["episode_index"] is WRONG when parquet columns are stale (e.g. v3
+            # data created by merge_and_split without re-numbering parquet rows).
+            fi = index
+            # ei = sequential episode number from episodes.jsonl order (matches latent filenames).
+            ep_ord = _bisect.bisect_right(self._ep_cum_sizes, fi)
+            ei = self._ep_seq_ids[ep_ord]
             ep = self._lat_cache.get(ei)
             if ep is None:
                 _lp = os.path.join(self.latent_dir, f"episode_{ei:06d}.pt")
@@ -213,12 +228,15 @@ class LeRobotDataset(BaseDataset):
                 if len(self._lat_order) > self.latent_cache_size:
                     self._lat_cache.pop(self._lat_order.pop(0), None)
             j = ep["starts"].index(fi)
-            # CPU-RAM 泄漏修复:ep["visual"][j] 是对整集 ~63MB tensor 的 view,共享底层 storage。
-            # DataLoader(worker→main)会把整个 base storage 搬进 /dev/shm(本 job 为 Memory-backed
-            # emptydir,计入 RAM);persistent_workers+prefetch 每步扫新 episode → 段累积 → ~120MB/step
-            # 线性涨到 OOM。.clone() 让每个样本只持有自身 ~110KB 紧凑副本,不再 pin 整集 storage。
-            data_dict["visual_latents"] = ep["visual"][j].clone()
-            data_dict["ref_latents"] = ep["ref"][j].clone()
+            # CPU-RAM 泄漏修复:.clone() 让每个样本只持有自身 ~110KB 紧凑副本,不再 pin 整集 storage。
+            if "visual" in ep:
+                data_dict["visual_latents"] = ep["visual"][j].clone()
+                data_dict["ref_latents"] = ep["ref"][j].clone()
+            else:
+                # fastwam-format latent: single "latents" key, shape [N, z_dim, T_lat, H, W]
+                lat_j = ep["latents"][j].clone()   # [z_dim, T_lat, H, W]
+                data_dict["visual_latents"] = lat_j
+                data_dict["ref_latents"] = lat_j[:, :1]  # [z_dim, 1, H, W] first frame as ref
         return data_dict
 
 class FastLeRobotDataset(_LeRobotDataset):
