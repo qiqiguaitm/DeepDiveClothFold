@@ -12,6 +12,7 @@ Tags: []
 ImageUrl: "visincept-cn-shanghai.cr.volces.com/grasp/h2r:1.0"
 ResourceQueueName: "robot-task"
 Framework: "PyTorch"
+Preemptible: true               # 闲时任务: 借空闲资源可被抢占 → 入口自动从最新 ckpt resume
 
 TaskRoleSpecs:
   - RoleName: "worker"
@@ -84,13 +85,15 @@ Entrypoint: |
   CKPT_DIR=$KAI0/checkpoints/pi05_awbc_mv_A_3lvl/$EXP
   if ls -d "$CKPT_DIR"/[0-9]*/ >/dev/null 2>&1; then RES="--resume"; echo "[resume] found ckpt in $CKPT_DIR → --resume"; else RES="--overwrite"; echo "[resume] no ckpt → fresh --overwrite"; fi
 
+  # save-interval 1000 (闲时 override config 2000): 被抢占时少丢步 → 进度可累积
   exec python -u scripts/train.py pi05_awbc_mv_A_3lvl \
     --exp-name "$EXP" \
     --no-wandb-enabled \
+    --save-interval 1000 \
     $RES
 
 RetryOptions:
     EnableRetry: true
-    MaxRetryTimes: 3
+    MaxRetryTimes: 10            # 闲时被抢占后重试 (配合入口 --resume 续训); QOS-evict 平台不自动重试→另挂 self-heal
 
 AccessType: "Public"
