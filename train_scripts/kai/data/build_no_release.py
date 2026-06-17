@@ -40,11 +40,11 @@ V3_2_ROOT = Path(f"{_REPO}/kai0/data/Task_A/vis_base/v3.2")       # idle_downsam
 VIS_DAGGER_V2 = Path(f"{_REPO}/kai0/data/Task_A/vis_dagger/v2")   # dagger 源: v2 各日期 <date>-v2
 VIS_DAGGER_V3 = Path(f"{_REPO}/kai0/data/Task_A/vis_dagger/v3")   # dagger v3 输出: <date>-v3 (同 base 前端裁 + drop depth)
 # tail-cap (Step 3, 2026-06-16): 在 v3 (前端裁) 基础上裁掉 episode 末端"任务完成后的长静止尾巴",
-# 输出并列 v3t/ root (绝不覆盖 v3)。各源各自的 v3→v3t。AH1 是 TOS 拉的单日 base/v3。
-V3T_ROOT = Path(f"{_REPO}/kai0/data/Task_A/vis_base/v3t")
-VIS_DAGGER_V3T = Path(f"{_REPO}/kai0/data/Task_A/vis_dagger/v3t")
+# 输出并列 v3.1/ root (绝不覆盖 v3)。各源各自的 v3→v3.1。AH1 是 TOS 拉的单日 base/v3。
+V31_ROOT = Path(f"{_REPO}/kai0/data/Task_A/vis_base/v3.1")
+VIS_DAGGER_V31 = Path(f"{_REPO}/kai0/data/Task_A/vis_dagger/v3.1")
 AH1_V3 = Path(f"{_REPO}/kai0/data/Task_AH1/base/v3")
-AH1_V3T = Path(f"{_REPO}/kai0/data/Task_AH1/base/v3t")
+AH1_V31 = Path(f"{_REPO}/kai0/data/Task_AH1/base/v3.1")
 DST_ROOT = Path(f"{_REPO}/kai0/data/Task_A/self_built")           # 合并模式输出 (原 A_0522_0526_*)
 DATES = ["2026-05-22-v2", "2026-05-26-v2"]
 CAMERAS = ("observation.images.top_head", "observation.images.hand_left", "observation.images.hand_right")
@@ -482,7 +482,7 @@ def build_per_date_tailcap(date_v3: str, src_root: Path, dst_root: Path, tail_ca
                            dry_run: bool = False, compute_norm: bool = False, action_dim: int = 32,
                            idle_thr: float = THR, grip_thr: float = GRIP_THR) -> dict:
     """tail-cap: from <src_root>/<date>-v3 (front already trimmed) drop the long trailing idle tail
-    → <dst_root>/<date>-v3 (parallel v3t root; v3 untouched). Preserves ep ids, rebuilds
+    → <dst_root>/<date>-v3 (parallel v3.1 root; v3 untouched). Preserves ep ids, rebuilds
     frame_index/index/timestamp, re-encodes the 3 mp4s to the kept prefix (assert frame-count ==).
     Auto-detects src video dir naming (feature-key vs bare) and ALWAYS writes feature-key dirs
     (canonical, matches info.json {video_key}). compute_norm default OFF (per-date intermediate;
@@ -570,7 +570,7 @@ def build_per_date_tailcap(date_v3: str, src_root: Path, dst_root: Path, tail_ca
     info["total_chunks"] = 1
     info["chunks_size"] = max(1000, len(parquets))
     info["splits"] = {"train": f"0:{len(parquets)}"}
-    info["features"].pop("observation.depth.top_head", None)   # defensive (v3t is RGB-only)
+    info["features"].pop("observation.depth.top_head", None)   # defensive (v3.1 is RGB-only)
     info.pop("depth_path", None)
     (dst / "meta" / "info.json").write_text(json.dumps(info, indent=2))
     print(f"  done → {dst}  ({total_in}→{total_frames}, tail-drop median={rep['tail_drop_median']}, "
@@ -610,10 +610,10 @@ def main():
     ap.add_argument("--k", type=int, default=DOWNSAMPLE_K, help="v3.2 long-pause keep-every-k")
     ap.add_argument("--per-date-tailcap", nargs="+", metavar="DATE",
                     help="tail-cap (Step 3): from <root>/v3/<date>-v3 trim the long TRAILING idle to "
-                         "--tail-cap frames → <root>/v3t/<date>-v3 (v3 untouched). Pass dates like "
+                         "--tail-cap frames → <root>/v3.1/<date>-v3 (v3 untouched). Pass dates like "
                          "2026-05-10-v3, or 'all' for every -v3 under the chosen --tailcap-src root.")
     ap.add_argument("--tailcap-src", choices=["base", "dagger", "ah1"], default="base",
-                    help="tail-cap source: base (vis_base/v3→v3t) / dagger (vis_dagger/v3→v3t) / ah1 (Task_AH1/base/v3→v3t)")
+                    help="tail-cap source: base (vis_base/v3→v3.1) / dagger (vis_dagger/v3→v3.1) / ah1 (Task_AH1/base/v3→v3.1)")
     ap.add_argument("--tail-cap", type=int, default=TAIL_CAP,
                     help="trailing-idle terminal frames to keep (default 15 = 0.5s @30Hz, < action_horizon=50)")
     ap.add_argument("--grip-thr", type=float, default=GRIP_THR,
@@ -624,8 +624,8 @@ def main():
 
     # ---- tail-cap mode (Step 3) ----
     if args.per_date_tailcap:
-        roots = {"base": (V3_ROOT, V3T_ROOT), "dagger": (VIS_DAGGER_V3, VIS_DAGGER_V3T),
-                 "ah1": (AH1_V3, AH1_V3T)}
+        roots = {"base": (V3_ROOT, V31_ROOT), "dagger": (VIS_DAGGER_V3, VIS_DAGGER_V31),
+                 "ah1": (AH1_V3, AH1_V31)}
         src_root, dst_root = roots[args.tailcap_src]
         if args.per_date_tailcap == ["all"]:
             dates = sorted(d.name for d in src_root.iterdir() if d.is_dir() and d.name.endswith("-v3"))
