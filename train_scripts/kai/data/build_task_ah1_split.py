@@ -42,9 +42,10 @@ def list_src_eps():
     for d in DATE_ORDER:
         sd = SRC_BASE / d
         eps = [json.loads(l) for l in (sd / "meta" / "episodes.jsonl").open()]
-        # source uses "episode_id" (== parquet index 0..n-1); keep file order
-        for e in sorted(eps, key=lambda x: int(x["episode_id"])):
-            items.append((d, int(e["episode_id"]), sd, bool(e.get("success", True))))
+        # episode key is "episode_id" (old layout) or "episode_index" (new TOS-restructure layout)
+        ek = "episode_id" if "episode_id" in eps[0] else "episode_index"
+        for e in sorted(eps, key=lambda x: int(x[ek])):
+            items.append((d, int(e[ek]), sd, bool(e.get("success", True))))
     return items
 
 
@@ -70,13 +71,17 @@ def write_split(name: str, picks, info_template: dict):
         pq.write_table(pa.Table.from_pandas(df, preserve_index=False), dst_pq)
 
         for cam in CAMERAS:
-            # source dirs are named "<cam>" (raw layout); output uses lerobot key "observation.images.<cam>"
-            sv = sd / "videos" / f"chunk-{CHUNK:03d}" / cam / f"episode_{src_ep:06d}.mp4"
-            if not (sv.exists() or sv.is_symlink()):
+            # source dir may be raw "<cam>" (old) OR lerobot "observation.images.<cam>" (new TOS-restructure layout)
+            vdir = sd / "videos" / f"chunk-{CHUNK:03d}"
+            sv = vdir / f"observation.images.{cam}" / f"episode_{src_ep:06d}.mp4"
+            if not sv.exists():
+                sv = vdir / cam / f"episode_{src_ep:06d}.mp4"
+            if not sv.exists():
                 raise FileNotFoundError(f"missing video {sv}")
             dv = dst / "videos" / f"chunk-{CHUNK:03d}" / f"observation.images.{cam}" / f"episode_{new_ep:06d}.mp4"
             dv.parent.mkdir(parents=True, exist_ok=True)
-            os.symlink(str(sv.resolve()), dv)
+            # COPY (not symlink): TOS restructure is actively churning the source → symlinks dangle (broke training 06-17)
+            shutil.copy2(sv.resolve(), dv)
 
         eps_meta.append({"episode_index": new_ep, "tasks": [PROMPT], "length": n,
                          "src_date": d, "src_ep": src_ep})
