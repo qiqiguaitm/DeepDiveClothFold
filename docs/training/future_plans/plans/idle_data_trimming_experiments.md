@@ -2,7 +2,7 @@
 
 > **核心目的(本系列的真正主线,之前文档未点明)**: 验证**裁掉 episode 里的 idle(静止)帧能否让模型真机表现更好**。idle 帧分两类:① **前端**"投放等待"长静止段(机械臂不动、操作员往台上放衣服);② **中段**操作里的停顿/犹豫/反复。假设:idle 帧被 BC 忠实模仿 → 真机走停 / 犹豫 / cloth loop / 拉取松手。
 > **分步走**: **Step 1 前端投放裁剪**(= 之前的 v2→v3 / no_release,已做)→ **Step 2 中段 idle 裁剪**(未来)→ Step 3 节奏归一(可选)。
-> **状态**: Step 1 ✅ 真机成立(前端投放裁有效);**Step 2 ❌ 结案(2026-06-09)** —— v3.2 中段选择性下采样**真机退化**(抓取欠到位/抓不到衣角),三方收敛(文献+量化+真机)→ **回退 v3(front-trim-only)为默认,不重建 v3.2**,见 §3.6。**Step 3 🟡 尾部裁剪(2026-06-16)** —— 完成后静止尾巴 **CAP 截断到 15 帧**(调研支持 + 机制上比中段安全),输出 `v3.1/`(不覆盖 v3),见 **Step 3 节**。
+> **状态**: Step 1 ✅ 真机成立(前端投放裁有效);**Step 2 ❌ 结案(2026-06-09)** —— v3.2 中段选择性下采样**真机退化**(抓取欠到位/抓不到衣角),三方收敛(文献+量化+真机)→ **回退 v3(front-trim-only)为默认,不重建 v3.2**,见 §3.6。**Step 3 ✅ 尾部裁剪(2026-06-16)** —— 完成后静止尾巴 **CAP 截断到 15 帧**(调研支持 + 机制上比中段安全),**就地覆盖 v3**(staging→原子 swap;v3 现 = 前端+尾部裁);28 日期全处理完成,见 **Step 3 节**。
 > **建立**: 2026-06-07(**完整合并自** `v2v3_data_window_scaling_experiments.md`(2026-06-08 该文件已删,明细见 §5)+ [`data_root_cause_probe_experiments.md`](data_root_cause_probe_experiments.md) H1,围绕 idle 主题重组)。
 > ⚠️ **方法学铁律**: **真机为终判,offline MAE 系统性反指** —— idle 多的慢/停顿轨迹逐帧 teacher-forcing MAE 反而低,真机却灾难。MAE 仅用于确认训练健康 + 选 ckpt。
 
@@ -27,7 +27,7 @@
 - **前端裁(非全删!)**:`cut = max(0, onset - margin)`,删 parquet 行 `[0:cut]` + 同步裁 3 路 mp4(`assert video_frames == parquet_rows`)。**保留 onset 前 `margin=15` 帧(≈0.5s)lead-in** —— 不把投放段整段删光,留一小段进入运动的过渡(对齐文献"keep short settle ≤15 frames",这也是 front-trim work 的原因之一,见 §3.6)。
   - `--mode no_release`:对指定 2 天做前裁(单实验对照)。
   - `--per-date`(v3):对 `vis_base/v2/<date>` 每个 ep 前裁 → 输出 `vis_base/v3/<date>-v3`。
-- **版本含义(图例)**:**v2** = 未裁原始;**v3** = 前端投放已裁(Step 1);**v3.1** = v3 + **尾部 tail-cap**(Step 3,front+tail trim,✅采纳);**v3.2** = v3 + **中段选择性下采样**(Step 2,❌真机退化已弃);~~purge~~ = 全删所有 idle(从未实建的极端假设)。⚠️ "v3.1" 专指尾部裁剪,勿与旧文里"全删(purge)"混淆。
+- **版本含义(图例)**:**v2** = 未裁原始;**v3** = **前端投放裁(Step 1)+ 尾部 tail-cap(Step 3,2026-06-16 起就地并入 v3)**;**v3.2** = v3 前裁 + **中段选择性下采样**(Step 2,❌真机退化已弃,独立目录);~~purge~~ = 全删所有 idle(从未实建的极端假设)。⚠️ 历史:Step 3 中途曾用过 `v3.1/` 独立目录暂存,后已就地换入 v3、删除 v3.1;"v3.1" 不再是独立版本。
 
 ---
 
@@ -160,7 +160,7 @@
 ## Step 3 — 尾部裁剪(tail-cap):完成后静止尾巴(2026-06-16)
 
 > **第三类 idle**:episode 末端"任务已完成后"的纯静止 hold 段(机械臂叠完衣保持不动、操作员还没停录)。区别于前段(投放等待)与中段(任务内停顿)。
-> **决策(✅ 2026-06-16)**:**CAP 截断 = 保留末端 15 帧收尾,裁掉更长的尾巴**;不全删、不保留满尾。输出并列 `v3.1/` root,**v3 不覆盖**。
+> **决策(✅ 2026-06-16)**:**CAP 截断 = 保留末端 15 帧收尾,裁掉更长的尾巴**;不全删、不保留满尾。**就地覆盖 v3**(build 到暂存 `v3_tailtmp` → 原子 swap 换入 v3,per-date crash-safe;v3 现 = 前端+尾部裁)。已对全部 28 日期处理完成(见 S3.6)。
 
 ### S3.1 三类 idle 对照(本系列最终认知)
 
@@ -170,7 +170,7 @@
 | 超 chunk(H=50)? | 是(长)→ chunking 盖不住 | 否(chunk 内吸收)| 部分超(dagger 尾可达 300 帧)|
 | **删了会速度膨胀?** | 不会 | **会**(删低速帧→定长 chunk 位移膨胀→抓取变粗)| **不会**(删末端零位移帧,不跨任务活跃段)|
 | 主流做法 | DROID 裁 setup | 不裁 | 训练管线裁(pi0-FAST/OpenVLA)|
-| **本系列决策** | ✅ **裁**(v3,MARGIN=15 lead-in)| ❌ **不裁**(v3.2 退化,§3.6)| 🟡 **CAP 截断**(v3.1,TAIL_CAP=15)|
+| **本系列决策** | ✅ **裁**(v3,MARGIN=15 lead-in)| ❌ **不裁**(v3.2 退化,§3.6)| ✅ **CAP 截断**(就地并入 v3,TAIL_CAP=15)|
 
 ### S3.2 深度调研结论(2026-06-16,100 agents / 18 源 / 25 claim 三票核验,14 confirmed)
 
@@ -209,15 +209,22 @@
 ### S3.5 实现(`build_no_release.py --tail-cap`)
 
 - 函数 `tail_cap_keep_indices(action, tail_cap=15, idle_thr=3e-3, grip_thr=0.02)`:从末尾数连续"非活跃"帧(臂静 AND 爪静),返回 `arange(0, T−(tail−tail_cap))` 的连续前缀。只动尾、不动中段。
-- builder `build_per_date_tailcap(date_v3, src_root, dst_root, ...)`:读 `<root>/v3/<date>-v3` → 写 `<root>/v3.1/<date>-v3`;复用 `select_video_pyav` 重编码(assert 帧数==);**自动探测源视频目录命名**(feature-key vs 裸名)、**统一输出 feature-key 目录**(顺带修正 AH1 的目录/模板不一致);兼容 episodes.jsonl 的 `tasks` 与 AH1 的 `prompt`/`episode_id`;裁 frame 后重排 frame_index/index/timestamp;尾部保前缀→PTS 从 0 起,无 v3-PTS-bug。
-- CLI:`--per-date-tailcap <dates|all> --tailcap-src {base,dagger,ah1} --tail-cap 15 --tail-idle-thr 3e-3 --grip-thr 0.02`(`--dry-run` 只算不写)。
-- 输出落点(并列,**v3 不覆盖**):`vis_base/v3.1/` · `vis_dagger/v3.1/` · `Task_AH1/base/v3.1/`。
+- builder `build_per_date_tailcap(date_v3, v3_root, ..., inplace=True)`:读 `<root>/v3/<date>-v3` → build 到暂存 `<root>/v3_tailtmp/<date>` → **原子 swap 换入 `<root>/v3/<date>`**(rmtree+rename,per-date crash-safe;所有 src 读取在 swap 前完成);复用 `select_video_pyav` 重编码(assert 帧数==);**自动探测源视频目录命名**(feature-key vs 裸名)、**统一输出 feature-key 目录**(顺带修正 AH1 的目录/模板不一致);兼容 episodes.jsonl 的 `tasks` 与 AH1 的 `prompt`/`episode_id`;裁 frame 后重排 frame_index/index/timestamp;尾部保前缀→PTS 从 0 起,无 v3-PTS-bug。**幂等**:对已裁 v3 再跑 = 0 额外裁剪。
+- CLI:`--per-date-tailcap <dates|all> --tailcap-src {base,dagger,ah1} --tail-cap 15 --tail-idle-thr 3e-3 --grip-thr 0.02`(`--dry-run` 只算不写;`--no-inplace` 保留在 staging 不换入 v3)。
+- 输出落点:**就地更新** `vis_base/v3` · `vis_dagger/v3` · `Task_AH1/base/v3`(无独立 v3.1 目录)。
 
-### S3.6 批量重处理(当前所有 v3 → v3.1)
+### S3.6 批量重处理(✅ 2026-06-16 完成,就地覆盖 v3)
 
-- 范围:vis_base/v3(19 日期)+ vis_dagger/v3(8 日期)+ Task_AH1/base/v3(1 日期)。
-- gf0 低内存 → `BUILD_WORKERS=3` 后台跑(视频重编码 ~6000+,防 OOM);per-date 中间集**不算 norm**(merge/最终 build 时再重算)。
-- 执行记录见本节回填(下方)。
+- **范围 + 结果**:全部 **28 日期就地 tail-cap 并入 v3** —— vis_base/v3(19)+ vis_dagger/v3(8)+ Task_AH1/base/v3(1)。
+  | 源 | 日期 | 帧 in→out | 删帧 |
+  |---|---|---|---|
+  | vis_base + vis_dagger | 27 | 6,562,620 → 6,456,716 | **105,904(1.61%)** |
+  | Task_AH1 | 1 | 277,153 → 272,086 | 5,067(1.83%)|
+  | **合计** | **28** | — | **~110,971** |
+  - 按源:base 早期段尾短(0.2–1.8%)、**dagger 尾最长**(2–3.4%,纠错轨迹常长 hold)、AH1 1.83%。
+- **校验**:28/28 日期 info/episodes 一致 + parquet==3 路视频帧数(抽样)+ 文件数 == ep×3 → **全 PASS,0 失败**;swap 28/28 成功,无 v3_tailtmp / v3.1 残留。
+- **机器**:gf0(实为 56 核 / 463GB / 2×A100,旧"12GB jumpbox"记忆已更正)`BUILD_WORKERS=3` 后台 CPU 重编码(A100 无 NVENC → 视频编码不能 GPU 加速,NVDEC 解码非瓶颈);per-date **不算 norm**(merge/最终 build 时重算)。
+- **影响**:v3 现 = 前端+尾部裁,**下游从 v3 build/merge 的新数据集自动含尾裁**;既有已 build 的 A_v3_* 合并集是独立副本,不受影响(需要时从新 v3 重 build)。
 
 ---
 
