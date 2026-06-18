@@ -145,7 +145,77 @@
 
 ---
 
+## 9. ⭐ 变体实验:用 LeWM image encoder 替换 SigLIP(2026-06-17)
+
+> **目标(用户)**: 把 pi0.5 的视觉编码器从 **SigLIP** 换成 **kai0 数据训出的 LeWM image encoder**,**不改官方架构**(新建一个变体模型,SigLIP 路径保持不动),仍按本文档从 PaliGemma base 起训;分 **freeze** 与 **no-freeze** 两个 run 提交。
+> **状态**: 📝 调研完成 + 集成设计就绪;**3 个岔路待用户拍板(§9.4)后实现 + 提交**。
+
+### 9.1 ⚠️ 先厘清:LeWM 的"image encoder"到底是什么(已查 ckpt + 源码)
+
+ckpt `gf3:.../lewm-kai0-3view-V1-aa27438-TS0616.1510/lewm-kai0-3view_epoch_10.pt`(182M):
+
+| 组件 | 在 ckpt? | 是什么 |
+|---|---|---|
+| **DINOv2-ViT-L/14**(冻结)| ❌ 不在(torch.hub 现成,已缓存 gf3 `.../.CACHE/torch/hub/checkpoints/dinov2_vitl14_pretrain.pth`)| 像素→patch 特征,1024-d。⚠️ 源码 docstring 写 "DINOv3-L" 但缓存是 dinov2_vitl14 → **用哪个待确认(§9.4-Q3)** |
+| **OctCompactor**(per-view th/hl/hr,**学习的**)| ✅ 在(`compactor.{th,hl,hr}`)| 每视角:可学习 1 CLS + `n_obj=4` queries 对 DINO patch 做 cross-attn(depth2/heads4,1024→256)→ **每视角 5 token(256-d)** |
+| predictor(AC-WM)/ sigreg / distill | ✅ 在 | 世界模型预测头 / 高斯正则 / 蒸馏 adapter —— **本任务不用**(只取视觉编码) |
+
+→ **"LeWM image encoder" = DINOv2-L(冻结,现成)+ 学习的 OctCompactor(kai0-3view 特定)**。`VIEWS=(th,hl,hr)` 正好对齐 pi0.5 三相机(top_head/hand_left/hand_right)。`action_dim=14`(kai0)。
+- ⚠️ **关键怪点**:`P_PATCHES={"th":432,"hl":192,"hr":192}` —— LeWM 在**各视角不同分辨率**的缓存 DINO 特征上训练(非统一 224)。compactor 是 cross-attn(对任意 patch 数都能跑),但 224(256 patch)对 frozen compactor 是 off-distribution(§9.4-Q2)。
+
+### 9.2 与 pi0.5 现状的对比(token 经济学差异巨大)
+
+| | SigLIP(现状)| LeWM encoder(本变体)|
+|---|---|---|
+| backbone | SigLIP So400m/14(~400M)| DINOv2-L/14(~300M,冻结)|
+| 每相机 token | 256 × 1152-d | **5 × 256-d**(1 CLS + 4 obj)|
+| 3 相机总 token | **768** | **15**(object-centric,极压缩)|
+| 接入 LLM | proj 1152→gemma_width | **新建 proj 256→gemma_width**(随机初始化,训练)|
+
+→ 把 768 个 dense 视觉 token 换成 15 个 object-centric token。**研究问题**:这种 kai0 预训练的紧凑 object 表示能否驱动 PaliGemma LLM 训出叠衣策略(信息够不够 / 是否更好的归纳偏置)。
+
+### 9.3 集成设计(不动官方架构,新建变体)
+
+- ⚠️⚠️ **必须走 PyTorch 路径**(`models_pytorch/pi0_pytorch.py` + `scripts/train_pytorch.py`):LeWM compactor 是 PyTorch 权重,移植到官方 JAX/Flax 路径工程量极大。**本变体 = PyTorch**(本文档 B1/B2 是 JAX 描述,但 init 思想[PaliGemma base + 随机 action expert]在 PyTorch 同样成立)。
+- **新模块** `LeWMVisionEncoder`(新文件,不改 SigLIP):`DinoBackbone(dinov2_vitl14, frozen)` → per-view `OctCompactor`(载入 ckpt 权重)→ concat 3 view = 15 token(256-d)→ `nn.Linear(256, gemma_width)` 投影 → 当作 image tokens 喂给 PaliGemma LLM(替换 `embed_image` 的 SigLIP 输出)。
+- **接入点**:`pi0_pytorch.py:embed_image`(:200)加分支 `if config.vision_encoder=="lewm": return lewm_encoder(imgs)` else 原 SigLIP。**官方 SigLIP 分支零改动**。
+- **image mask / ar_mask**:15 个 LeWM token 仍按 image-token 处理(双向 attention),与 SigLIP 逻辑一致,只是数量 768→15。
+- **LLM init**:PaliGemma VLM base(本文档主旨,`PaliGemmaWeightLoader` 思想的 PyTorch 等价);action expert 随机。**SigLIP 不再加载**(被 LeWM 替代)。
+- **DINO 输入分辨率**:见 §9.4-Q2 决策(忠实 432/192 vs 统一 224)。
+- **依赖**:DINOv2-L hub 权重(gf3 已缓存,需同步到训练集群 TORCH_HOME 离线);LeWM ckpt(取 `compactor.*` 子树)。
+
+### 9.4 ⚠️ 提交前必须拍板的 3 个岔路
+
+1. **Q1 训练配方**:本变体 init 沿用本文档 **B1 naive-from-PaliGemma-base**(随机 action expert,~150–240k step,工程最小)?还是为省算力**改 warm-start `mixed_1_clean`**(更快但偏离"从 base 自训"主旨)?
+2. **Q2 DINO 输入分辨率**:**忠实复刻** LeWM 的 per-view 分辨率(th→432 patch / hl,hr→192 patch,frozen compactor 在训练分布内,**推荐**,但要对齐 LeWM 的 resize/crop)?还是**统一 224**(简单,但 frozen compactor off-distribution,no-freeze 时可自适应)?
+3. **Q3 backbone**:确认 **DINOv2-L/14**(缓存已有)还是源码暗示的 **DINOv3-L**?(影响权重 + 预处理 mean/std)。
+
+### 9.5 两个提交 run(freeze / no-freeze,单变量 = compactor 是否训练)
+
+| run | DINOv2-L | LeWM OctCompactor | proj 256→width | PaliGemma LLM + action expert | 目的 |
+|---|---|---|---|---|---|
+| **L-freeze** | 冻 | **冻**(用 LeWM 学到的表示)| 训 | 训(LLM=base init,不冻)| 测 LeWM 表示**直接可用性** |
+| **L-nofreeze** | 冻 | **训**(随策略微调)| 训 | 训 | 测 compactor **适配叠衣**后上限 |
+
+> DINOv2-L 两 run 都冻(标准做法,300M 现成 backbone);差异只在 compactor freeze 与否。⚠️ 注意 KI 教训(§2 F2):**不冻 PaliGemma LLM**——这里冻的是视觉前端(DINO/compactor),不是 LLM。
+- **数据**:沿用本文档(kai0 base+dagger + vis base+dagger,domain-cond)或先单本体 smoke;**norm 用 LeWM stats 还是 openpi 各自重算待定**(LeWM ckpt 带 state/action mean-std,但 pi05 action_dim=32 padding,需对齐)。
+- **集群**:单节点 8×A100(cnsh)或 gf0 本地 2×A100 先 smoke;`scripts/train_pytorch.py <config> --exp_name=...`。
+
+### 9.6 落地步骤(待 §9.4 确认后)
+1. 把 LeWM ckpt(`compactor.*`)+ DINOv2-L hub 权重同步到 gf0/集群,提取 compactor 子 state_dict。
+2. 实现 `LeWMVisionEncoder`(DinoBackbone + 3×OctCompactor + proj),单测 forward(3×[B,3,H,W]→[B,15,width])+ 载权重 strict 校验。
+3. `pi0_pytorch.py` 加 `vision_encoder` 分支(SigLIP 不动)+ config 字段。
+4. 注册 2 个 config `pi05_lewm_{freeze,nofreeze}`(克隆 pytorch flatten-fold + PaliGemma-base init)。
+5. **gf0 2 卡 smoke**(forward/backward/loss 下降)→ 通过再 8 卡提交两 run。
+6. eval:val MAE + 真机;对照 SigLIP 基线。
+
+> **诚实提示**:这是**研究级架构手术**(PyTorch 前端替换 + DINO 依赖 + token 768→15 + 分辨率对齐),非配置级改动。我**不会在 §9.4 三问未定 + smoke 未过前直接提交 8 卡训练**(会白烧算力)。三问定了我就实现→smoke→提交两 run。
+
+---
+
 ## 关联
+- LeWM 源: `gf3:/vePFS-North-E/shared_data/shock/distill-wm/`(`kai0_lewm.py` Kai0LeWM/OctCompactor · `dino_backbone.py` DinoBackbone · ckpt `data/exps/lewm-kai0-3view-V1-*/lewm-kai0-3view_epoch_10.pt`)
+- pi05 PyTorch 接入: `kai0/src/openpi/models_pytorch/pi0_pytorch.py`(embed_image:200)· `preprocessing_pytorch.py`(resize 224)
 - 数据/已有 work 锚点: `task_a_new_smooth_800_new_norm_results.md`(warm-start MAE@1=0.0089 基线)
 - 双本体已有: `pi05_kaivis_perdsnorm_cond`(config.py:1036)domain conditioning + domain_weights
 - 代码: `kai0/src/openpi/training/weight_loaders.py:64`(PaliGemmaWeightLoader)· `config.py`(新建 config)
