@@ -93,10 +93,27 @@
 
 修复可断**两条链**任一: ① 数据链 (让 action ≠ state, 官方做法) ② 架构链 (拿掉/遮蔽 proprio)。
 
-### 4.0 实验 E0 — 数据正解: 用真实 action 重训 (官方等价, 推荐主路径)
-- **做法**: X-VLA 训练数据**不用 action≡state relabel 版**, 改用原始 teleop/leader `action` (真实未来轨迹, action ≠ state); 并在 `LeRobotEE6DDataset`/`multi_domain_dataset.py` 加官方 static-frame skip (`|action[1]−action[0]|<1e-5 → continue`)。其余 (proprio 仍开、smooth800 同批 episode、60k) 不变。
-- **目的**: 复现官方 SoftFold 的数据性质 — proprio 无法平凡预测真实未来 → 强制读视觉, 同时**保留 proprio 的精度/平滑收益**。这是治本。
-- **前置**: 确认 smooth800 源是否存在未 relabel 的原始 action 版本 (vePFS `A_new_smooth_800/base` 的 action 列是否 = 当时 commanded/leader); 若已被 relabel 覆盖, 需从更上游 (采集原始 parquet) 重建。⚠️ **待查: 原始 action 是否还在**。
+### 4.0 实验 E0 — 数据正解 + 完全按官方配方 (主路径, ⭐ 进行中 2026-06-18)
+- **数据 (已建好)**: 用 Task_A `v1` (`kai0/data/Task_A/vis_base/v1`) — 真实 teleop `action`, 满足 **action ≠ state** (非 relabel 自述)。转 EE6D (interleaved Rot6D + 二值夹爪, `joint_to_ee6d.py`, **observation.state / action 各自 FK, 不 relabel**) → `xvla/data/self_built/A_v1_noRelabel_ee6d/<6 日期 04-23..04-30>`, **639 ep / 603,242 chunk-sample**, domain_id=20。校验: `mean|action−state|xyz=4.37mm`(action≠state ✓)、`|action[t]−state[t+1]|=2.21mm`(setpoint ✓)、gripper∈{0,1}、20D。
+  - 注: v1 是 **kai0-native schema** (`episode_id`, 非 LeRobot `episode_index`); loader 已加双 schema 兼容 + stale-manifest skip (04-24 ep53 parquet 已清但 manifest 残留 → 自动跳过并打印)。
+  - **static-frame skip (官方有, E0 已实现)**: upstream `datasets/domain_handler/base.py` 丢弃"未来首步双臂 EE 位姿 `|seq[1]−seq[0]|<1e-5`"的退化帧 (action≈proprio 的 copycat 温床)。loader 加 `static_skip` (默认 off, E0 开), 镜像官方逻辑在 EE6D 动作轨迹上判 (排除夹爪维)。**实测 v1 剔除 21,529 帧 (~3.6%)**: 603,242 → **581,713** sample (机器人暂停段确实存在, 非噱头)。
+- **配方 (完全按官方 `X-VLA/train.py`, config `E0_v1_official`)**:
+  | 项 | 官方 / E0 |
+  |---|---|
+  | 精度 | bf16 mixed (autocast) |
+  | weight_decay | **0.0** |
+  | param groups | **4 组**: vlm & soft_prompt ×0.1 (1e-5); transformer_core & action_head ×1.0 (1e-4) |
+  | freeze | 前 **1000** 步冻 **vlm + transformer_core** (仅 soft_prompt+action_head 训练) |
+  | LR schedule | **constant** + warmup 2000 (官方 `use_cosine_decay` 默认 OFF) |
+  | lr / iters | 1e-4 / **50k** |
+  | batch | per-device **16** × 8 卡 = eff **128** |
+  | action 表示 | `action_qdur=2.0` (intention abstraction, 对齐官方 real_world.py) |
+  | static-skip | `static_skip=True` (官方 base.py: 丢未来首步双臂几乎不动的退化帧) |
+  | 图像 | ImageNet norm + ColorJitter(0.2) |
+  - **修了一个真 bug**: 旧 2-group 用 `"florence"/"vision"` name-keying 漏掉 `model.vlm.language_model.*` → VLM 文本编码器一直被 10× LR(1e-4 而非 1e-5)训练。4-group 用 `.vlm.` 匹配整个 VLM 修复。
+  - trainer 改动全部 gated 在 config key 后 (`param_groups`/`bf16`/`lr_schedule` 默认=旧行为) → 历史 config (X3*/E1/A_0423…) 行为不变。
+- **目的**: 复现官方 SoftFold 数据性质 — proprio 无法平凡预测真实未来 → 强制读视觉, 同时**保留 proprio 精度/平滑收益**。治本。
+- **状态 (2026-06-18)**: 数据建好+校验 ✓ | 官方对齐 trainer + `E0_v1_official` config + volc yaml ✓ | **smoke (gf0 2×A100, max_steps=80) 通过** ✓ (model 载入 / 6 数据集 / static-skip 581,713 sample / 4-group [vlm601+core295+head4+soft1] / freeze 896 tensor / bf16 fwd-bwd / constant sched / ckpt 落盘 全通) | **待提交 volc 8×A100 正式 50k**。
 - **判据**: `eval_xvla_vision_ablation_offline.py` 视觉/本体比 ≳0.5 + 真机会找衣服。
 
 ### 4.1 实验 E1 — 确诊性 A/B: `use_proprio=False` (已就绪, 最快)
@@ -161,6 +178,7 @@ CUDA_VISIBLE_DEVICES=<free> kai0/.venv_xvla/bin/python \
 
 1. **停止盲调 X-VLA ckpt** (换 qdur/norm/数据日期都不会改变 vision-blind, 根因在 action≡state × 架构)。
 2. ✅ **E1 (`use_proprio=False`) 已跑 (2026-06-10) → 推翻"断架构链就够"**: 无 proprio 模型 d_img 仍 0.00mm(不读视觉),转成常量开环。**根因主要在数据链**。
-3. ⭐ **下一步 = E0 (真实 action≠state + static-skip)**, 现在是**必需主路径**(不是可选)。**先查原始 action 是否还在**: vePFS `A_new_smooth_800/base` 的 `action` 列是否 = 当时 commanded/leader, 还是被 relabel 成 ≡state — 决定 E0 直接重建还是要回更上游采集 parquet。
-4. E0 出 ckpt → 过 §5 门禁(视觉比 ≳0.5)再上真机。E2 (proprio-dropout) 降级为"E0 不可行时的退路", 且 E1 已示警单断 proprio 恐不足, E2 需配合数据侧。
-5. 把 §5 门禁纳入 X-VLA 上机流程。
+3. ✅ **E0 数据问题已解决 (2026-06-18)**: 不需回更上游 —— Task_A `v1` 本身就是 action≠state 的真实 teleop(非 relabel)。已转 EE6D = `A_v1_noRelabel_ee6d`(639 ep/603k sample), 完全按官方配方建 `E0_v1_official` config + 官方对齐 trainer, **smoke (gf0 2×A100) 通过**。
+4. ⭐ **下一步 = 提交 volc 8×A100 跑满 50k**(eff batch 128 = 官方量级)。yaml: `train_scripts/kai/volc/xvla_e0_v1_official_cnsh_8gpu.yaml`。
+5. E0 出 ckpt → 过 §5 门禁(视觉比 ≳0.5)再上真机。E2 (proprio-dropout) 降级为"E0 不可行时的退路", 且 E1 已示警单断 proprio 恐不足, E2 需配合数据侧。
+6. 把 §5 门禁纳入 X-VLA 上机流程。

@@ -282,6 +282,38 @@ CONFIGS = {
         batch_size_per_gpu=8,
         vlm_lr_scale=0.1,
     ),
+    # ===== E0 (2026-06-18): 完全按官方 X-VLA train.py 训练配方, vis 数据 = Task_A v1 (action≠state,
+    # 真实动作非 relabel 自述), 6 个日期目录 (639 ep, 04-23..04-30)。根因链: vision-blind 的真因是
+    # action≡state relabel (开环复述观测), v1 满足 action≠state → 切断捷径数据源。阳性对照已证官方
+    # 模型读视觉 (d_img 12.87mm), 同架构 → 根因在数据链, 本实验用官方配方 + 真实动作数据复现读视觉。
+    # 官方配方对齐 (X-VLA train.py + README finetune):
+    #   bf16 mixed | wd=0.0 | 4 param groups (vlm&soft_prompt ×0.1, transformer_core&action_head ×1.0)
+    #   | freeze vlm+transformer_core 前 1000 步 | constant LR + warmup 2000 | lr 1e-4 | iters 50k
+    #   | per-device batch 16 | action_qdur=2.0 (intention abstraction) | ImageNet norm + ColorJitter。
+    # Plan: docs/training/future_plans/plans/xvla_proprio_shortcut_openloop_fix.md (E0)
+    "E0_v1_official": dict(
+        datasets=[
+            dict(root=f"{SB}/A_v1_noRelabel_ee6d/2026-04-23", domain_id=20, prompt=PROMPT, weight=1.0),
+            dict(root=f"{SB}/A_v1_noRelabel_ee6d/2026-04-24", domain_id=20, prompt=PROMPT, weight=1.0),
+            dict(root=f"{SB}/A_v1_noRelabel_ee6d/2026-04-25", domain_id=20, prompt=PROMPT, weight=1.0),
+            dict(root=f"{SB}/A_v1_noRelabel_ee6d/2026-04-28", domain_id=20, prompt=PROMPT, weight=1.0),
+            dict(root=f"{SB}/A_v1_noRelabel_ee6d/2026-04-29", domain_id=20, prompt=PROMPT, weight=1.0),
+            dict(root=f"{SB}/A_v1_noRelabel_ee6d/2026-04-30", domain_id=20, prompt=PROMPT, weight=1.0),
+        ],
+        steps=50_000,                 # 官方 iters
+        lr=1e-4,                      # 官方 base lr (配 vlm_lr_scale=0.1 → vlm/soft_prompt 1e-5)
+        warmup_steps=2000,            # 官方
+        freeze_steps=1000,            # 官方 (4group → 冻 vlm+transformer_core)
+        weight_decay=0.0,             # 官方
+        batch_size_per_gpu=16,        # 官方 per-device 16
+        vlm_lr_scale=0.1,             # 官方 learning_coef
+        image_aug=True,               # 官方 ColorJitter(0.2)
+        action_qdur=2.0,              # 官方 intention abstraction (real_world.py qdur=2.0)
+        static_skip=True,             # 官方 domain_handler/base.py: 丢弃未来首步双臂几乎不动的退化帧
+        bf16=True,                    # 官方 accelerate --mixed_precision bf16
+        param_groups="4group_official",
+        lr_schedule="constant",       # 官方 use_cosine_decay 默认 OFF
+    ),
 }
 
 # ==================== TRAIN ====================
@@ -315,7 +347,8 @@ def build_dataset(cfg):
         else:
             ds = LeRobotEE6DDataset(d["root"], domain_id=d["domain_id"], task_prompt=d["prompt"],
                                     image_aug=cfg.get("image_aug", False),
-                                    action_qdur=cfg.get("action_qdur", None))
+                                    action_qdur=cfg.get("action_qdur", None),
+                                    static_skip=cfg.get("static_skip", False))
         datasets.append(ds)
         weights.append(d["weight"])
     multi = MultiDomainDataset(datasets)
@@ -329,6 +362,9 @@ def build_dataset(cfg):
 def main(args):
     rank, world, local_rank = setup_distributed()
     cfg = CONFIGS[args.config]
+    if args.max_steps is not None:  # smoke: cap loop length only (scheduler/warmup unchanged)
+        cfg = {**cfg, "steps": args.max_steps}
+        if is_main(rank): print(f"⚠ SMOKE: steps capped to {args.max_steps}")
     device = torch.device(f"cuda:{local_rank}")
 
     if is_main(rank):
@@ -414,20 +450,58 @@ def main(args):
     if world > 1:
         model = DDP(model, device_ids=[local_rank], find_unused_parameters=True)
 
-    # Optimizer: separate VLM LR (lower) and rest
+    # Optimizer: param-group mode selected per-config (backward compatible default = legacy 2-group)
     inner = model.module if world > 1 else model
-    vlm_params, other_params = [], []
-    for n, p in inner.named_parameters():
-        if not p.requires_grad: continue
-        if "florence" in n.lower() or "vision" in n.lower():
-            vlm_params.append(p)
-        else:
-            other_params.append(p)
-    optimizer = torch.optim.AdamW([
-        {"params": vlm_params, "lr": cfg["lr"] * cfg["vlm_lr_scale"]},
-        {"params": other_params, "lr": cfg["lr"]},
-    ], weight_decay=cfg.get("weight_decay", 1e-4), betas=(0.9, 0.95))
-    scheduler = get_cosine_schedule_with_warmup(optimizer, cfg["warmup_steps"], cfg["steps"])
+    group_mode = cfg.get("param_groups", "2group")
+    if group_mode == "4group_official":
+        # 官方 4 组 (X-VLA train.py): lr base, learning_coef 0.1 →
+        #   vlm & soft_prompts ×0.1 (1e-5); transformer_core & action_heads ×1.0 (1e-4)。
+        # 关键: 用 ".vlm." 匹配整个 VLM (含 language_model.*) — 修旧 2-group "florence"/"vision"
+        #   name-keying 漏掉 model.vlm.language_model.* 导致 VLM 文本编码器被 10× LR 训练的 bug。
+        buckets = {"vlm": [], "soft_prompts": [], "action_heads": [], "transformer_core": []}
+        for n, p in inner.named_parameters():
+            if not p.requires_grad: continue
+            if ".vlm." in n:
+                buckets["vlm"].append(p)
+            elif "transformer.soft_prompt_hub" in n:
+                buckets["soft_prompts"].append(p)
+            elif "transformer.action_encoder" in n or "transformer.action_decoder" in n:
+                buckets["action_heads"].append(p)
+            elif ".transformer." in n:
+                buckets["transformer_core"].append(p)
+            else:
+                raise RuntimeError(f"4group_official: param not bucketed: {n}")
+        s = cfg["vlm_lr_scale"]
+        optimizer = torch.optim.AdamW([
+            {"params": buckets["vlm"], "lr": cfg["lr"] * s},
+            {"params": buckets["soft_prompts"], "lr": cfg["lr"] * s},
+            {"params": buckets["transformer_core"], "lr": cfg["lr"]},
+            {"params": buckets["action_heads"], "lr": cfg["lr"]},
+        ], weight_decay=cfg.get("weight_decay", 1e-4), betas=(0.9, 0.95))
+        # 官方 freeze_steps: 冻结 vlm + transformer_core (仅 soft_prompts + action_heads 训练)
+        freeze_params = buckets["vlm"] + buckets["transformer_core"]
+        if is_main(rank):
+            print("4group_official param groups: " + ", ".join(
+                f"{k}={len(buckets[k])}t" for k in buckets))
+    else:
+        vlm_params, other_params = [], []
+        for n, p in inner.named_parameters():
+            if not p.requires_grad: continue
+            if "florence" in n.lower() or "vision" in n.lower():
+                vlm_params.append(p)
+            else:
+                other_params.append(p)
+        optimizer = torch.optim.AdamW([
+            {"params": vlm_params, "lr": cfg["lr"] * cfg["vlm_lr_scale"]},
+            {"params": other_params, "lr": cfg["lr"]},
+        ], weight_decay=cfg.get("weight_decay", 1e-4), betas=(0.9, 0.95))
+        freeze_params = vlm_params  # legacy: only VLM frozen during freeze_steps
+    sched_mode = cfg.get("lr_schedule", "cosine")
+    if sched_mode == "constant":
+        from transformers import get_constant_schedule_with_warmup
+        scheduler = get_constant_schedule_with_warmup(optimizer, cfg["warmup_steps"])
+    else:
+        scheduler = get_cosine_schedule_with_warmup(optimizer, cfg["warmup_steps"], cfg["steps"])
 
     # Output dir
     if is_main(rank):
@@ -446,17 +520,21 @@ def main(args):
             data_iter = iter(loader); batch = next(data_iter)
         batch = {k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in batch.items()}
 
-        # Freeze backbone for first freeze_steps
+        # Freeze backbone for first freeze_steps (4group_official: vlm+transformer_core; legacy: vlm)
         if step == 0 and cfg["freeze_steps"] > 0:
-            for p in vlm_params:
+            for p in freeze_params:
                 p.requires_grad = False
-            if is_main(rank): print("VLM frozen (first " + str(cfg["freeze_steps"]) + " steps)")
+            if is_main(rank): print(f"backbone frozen ({len(freeze_params)} tensors, first {cfg['freeze_steps']} steps)")
         if step == cfg["freeze_steps"] and cfg["freeze_steps"] > 0:
-            for p in vlm_params:
+            for p in freeze_params:
                 p.requires_grad = True
-            if is_main(rank): print(f"VLM UNFROZEN at step {step}")
+            if is_main(rank): print(f"backbone UNFROZEN at step {step}")
 
-        loss, log_dict = (model.module.forward(batch) if world > 1 else model.forward(batch))
+        if cfg.get("bf16", False):
+            with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+                loss, log_dict = (model.module.forward(batch) if world > 1 else model.forward(batch))
+        else:
+            loss, log_dict = (model.module.forward(batch) if world > 1 else model.forward(batch))
         optimizer.zero_grad()
         loss.backward()
         gnorm = torch.nn.utils.clip_grad_norm_(inner.parameters(), max_norm=1.0)
@@ -492,5 +570,6 @@ if __name__ == "__main__":
     ap.add_argument("--config", required=True, choices=list(CONFIGS.keys()))
     ap.add_argument("--output_dir", required=True)
     ap.add_argument("--workers", type=int, default=4)
+    ap.add_argument("--max_steps", type=int, default=None, help="smoke: cap training loop steps")
     args = ap.parse_args()
     main(args)
