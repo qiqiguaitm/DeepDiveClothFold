@@ -81,11 +81,12 @@ Entrypoint: |
   CKPT_DIR=$REPO/kai0/checkpoints/pi05_task_a_av1_mixed_1to1/$EXP
   if ls -d "$CKPT_DIR"/[0-9]*/ >/dev/null 2>&1; then RESUME_FLAG="--resume"; echo "[resume] found ckpt -> --resume"; else RESUME_FLAG="--overwrite"; echo "[resume] fresh --overwrite"; fi
 
-  # save-interval 4000 (override config 2000): 闲时被抢占可从最近 ckpt 续; 4000 步存盘频率适中(避免 500 过频 ckpt churn)
+  # save-interval 1000 (2026-06-16: 从 4000 降): 闲时 H20 窗口(~49min,~2.5s/it)只够 ~500-900 有效步,
+  #   4000 永远到不了存盘点→ckpt 卡在 16k 净进度 0. 降到 1000 让每个抢占窗口内能落盘一次, 进度才累积.
   exec python -u scripts/train.py pi05_task_a_av1_mixed_1to1 \
     --exp-name "$EXP" \
     --no-wandb-enabled \
-    --save-interval 4000 \
+    --save-interval 1000 \
     $RESUME_FLAG
 
 RetryOptions:
