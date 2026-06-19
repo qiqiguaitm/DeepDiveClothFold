@@ -10,7 +10,7 @@ Tags: []
 ImageUrl: "dvs-cr-cn-beijing.cr.volces.com/vis_robot/kai:kai0-gf1"
 ResourceQueueName: "Robot-North-H20"
 Framework: "PyTorch"
-Preemptible: true               # 闲时任务: 借其它队列空闲资源, 可随时被抢占 → 入口自动 resume
+# 2026-06-19 闲时→独占: 去掉 Preemptible, 拿 8 卡连续跑不被抢占 (入口仍 --resume 从 39500 续)
 
 TaskRoleSpecs:
   - RoleName: "worker"
@@ -85,17 +85,15 @@ Entrypoint: |
     RESUME_FLAG="--overwrite"; echo "[resume] no ckpt yet -> fresh --overwrite"
   fi
 
-  # save-interval 500 (CLI override of config's 2000): 闲时 H20 被频繁抢占 (~每 49min),
-  # 2000 步 (~83min) 存盘间隔 > 抢占间隔 → 每次都从旧 ckpt 重启零进度. 500 步 (~21min) 确保
-  # 每个 borrow 窗口内至少存一次盘 → 抢占可续. (entrypoint 内嵌于 submit 请求, 不依赖 gf3 config.)
+  # save-interval 2000 (独占后不再被频繁抢占, 不需 500 的高频存盘 → 减少 6GB ckpt churn)
   exec python -u scripts/train.py pi05_kaivis_from_paligemma \
     --exp-name "$EXP" \
     --no-wandb-enabled \
-    --save-interval 500 \
+    --save-interval 2000 \
     $RESUME_FLAG
 
 RetryOptions:
     EnableRetry: true
-    MaxRetryTimes: 10            # 闲时被抢占后自愈重试 (配合入口 --resume 续训)
+    MaxRetryTimes: 3            # 崩溃重试 (独占不会被抢占; 入口 --resume 续训)
 
 AccessType: "Public"
