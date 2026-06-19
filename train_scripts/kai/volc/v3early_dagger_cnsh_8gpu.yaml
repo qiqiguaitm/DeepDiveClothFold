@@ -77,7 +77,7 @@ Entrypoint: |
   echo "[$(date)] preflight OK (A_v3early_dagger + norm + mixed_1_clean init + val)"
 
   exec python -u scripts/train.py pi05_flatten_fold_v3early_dagger \
-    --exp-name v3early_dagger_cnsh \
+    --exp-name v3early_dagger_ptsfix \
     --no-wandb-enabled \
     --overwrite
 
