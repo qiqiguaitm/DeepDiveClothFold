@@ -32,6 +32,7 @@
 | [CRAVE_positioning_and_roadmap](CRAVE_positioning_and_roadmap.md) | **定位 / 场景 / roadmap(合一)**:前沿地图 + vs GVL + 工作项 A/B/C/D(含 B1✅/B2❌ 验证)+ 6 场景×SOTA + 分阶段安排。 |
 | [value_advantage_methods_comparison](value_advantage_methods_comparison.md) | **机理对比**:kai0-AE(监督进度差)vs π\*0.6-RECAP(RL 回报优势)vs CRAVE(零训练离散),逐维表 + 分场景结论。 |
 | [awbc_milestone_value_AB_plan](awbc_milestone_value_AB_plan.md) | **下游 A/B 对照执行 plan**:A=直接当 value 源 / B=蒸馏训 AE,对照已跑的 C=pi0-AE(当前 A 臂三档训练中)。 |
+| [crave_rpo_minimal_validation_plan](crave_rpo_minimal_validation_plan.md) | **CRAVE-RPO 最小验证(一页)**:在 AB_plan A 臂上加 SRPO 两味料(二值成功 outcome + 自参考 rollout),offline-AWR 闭环。补 CRAVE 无结果信号/挖矿域脆弱两洞,验证 [positioning](CRAVE_positioning_and_roadmap.md) C2 路径。决定性对照 = CRAVE-RPO vs A-3lvl。 |
 | [frequency_window_params](frequency_window_params.md) | **频率窗参数**:lam ∝ fps、时间窗按秒;3Hz/30Hz 落表 + 标定规则 + 实测(窗标定让抖动降 8×)。 |
 
 **溯源:**
@@ -55,4 +56,4 @@
 - Web 技术报告:`web/showcase/reports/crave_interp/`(showcase tab-bar「CRAVE 技术报告」)
 
 ## 状态
-✅ 离散 V2.4 收口/四场景/跨数据集 · ✅ 连续 TCC+DP 收口(跨数据集泛化) · ✅ value 计算重构为统一库(crave_value.py) · 🔄 AWBC A/B 真机对照(A 臂三档集群训练中,Tier3 sim 待跑)
+✅ 离散 V2.4 收口/四场景/跨数据集 · ✅ 连续 TCC+DP 收口(跨数据集泛化) · ✅ value 计算重构为统一库(crave_value.py) · 🔄 AWBC A/B 真机对照(A 臂三档集群训练中,Tier3 sim 待跑) · 📋 CRAVE-RPO 最小验证 plan 已立(待 P0 采 rollout)
