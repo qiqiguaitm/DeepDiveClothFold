@@ -89,11 +89,14 @@ def main():
             eps.update({int(k): v for k, v in d["metric"].items()})
             lat = d.get("latency", {})
         agg = {f"mae@{h}": float(np.mean([v[f"mae@{h}"] for v in eps.values() if v.get(f"mae@{h}") is not None])) for h in HOR}
+        aggc = {f"cmae@{h}": float(np.mean([v[f"cmae@{h}"] for v in eps.values() if v.get(f"cmae@{h}") is not None])) for h in HOR}
         out = {"n_metric_eps": len(eps), "latency": lat,
                "raw_mae": {str(h): agg[f"mae@{h}"] for h in HOR},
+               "cum_mae": {str(h): aggc[f"cmae@{h}"] for h in HOR},
                "pi05": {"1": 0.0219, "10": 0.0425, "24": 0.0743, "48": 0.1155}}
         json.dump(out, open(f"{args.out_dir}/summary.json", "w"), indent=1)
-        print("[aggregate] raw mae@: " + " ".join(f"@{h} {agg[f'mae@{h}']:.4f}" for h in HOR)
+        print("[aggregate] single-step mae@: " + " ".join(f"@{h} {agg[f'mae@{h}']:.4f}" for h in HOR)
+              + " | cumulative mae@: " + " ".join(f"@{h} {aggc[f'cmae@{h}']:.4f}" for h in HOR)
               + f" | act-lat {lat.get('action_ms',0):.0f}ms", flush=True)
         return
 
@@ -147,7 +150,7 @@ def main():
         st_all = np.stack(df["observation.state"].to_numpy())[:, :14]
         decs = {k: VideoDecoder(f"{VAL}/videos/chunk-000/observation.images.{k}/episode_{ep:06d}.mp4") for k in VK}
         L = len(df)
-        em = {f"mae@{h}": [] for h in HOR}
+        em = {f"mae@{h}": [] for h in HOR}; emc = {f"mae@{h}": [] for h in HOR}
         for f in range(0, max(1, L - 1), 16):
             frames = {k: decs[k].get_frames_at([min(f, decs[k].metadata.num_frames - 1)]).data[0].permute(1, 2, 0).numpy() for k in VK}
             img = prep_image(frames)
@@ -171,8 +174,11 @@ def main():
             gt = gt_all[f : f + 48]
             n = min(len(pa), len(gt)); ae = np.abs(pa[:n] - gt[:n])
             for h in HOR:
-                if h <= n: em[f"mae@{h}"].append(float(ae[h - 1].mean()))
+                if h <= n:
+                    em[f"mae@{h}"].append(float(ae[h - 1].mean()))   # single-step
+                    emc[f"mae@{h}"].append(float(ae[:h].mean()))     # cumulative
         metric[ep] = {f"mae@{h}": (float(np.mean(em[f"mae@{h}"])) if em[f"mae@{h}"] else None) for h in HOR}
+        metric[ep].update({f"cmae@{h}": (float(np.mean(emc[f"mae@{h}"])) if emc[f"mae@{h}"] else None) for h in HOR})
         print(f"[shard {args.shard_id}] ep{ep} done mae@48={metric[ep]['mae@48']}", flush=True)
     json.dump({"metric": metric, "latency": {"action_ms": float(np.mean(lat_ms[3:]) if len(lat_ms) > 3 else np.mean(lat_ms))}},
               open(f"{args.out_dir}/shards/shard_{args.shard_id}.json", "w"))

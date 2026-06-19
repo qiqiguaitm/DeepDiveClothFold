@@ -181,7 +181,9 @@ def main():
     def metrics(pa, gt):
         L = min(len(pa), len(gt)); ae = np.abs(pa[:L] - gt[:L]); m = {"action_mae": float(ae.mean())}
         for h in HOR:
-            if h <= L: m[f"mae@{h}"] = float(ae[:h].mean())
+            if h <= L:
+                m[f"mae@{h}"] = float(ae[:h].mean())       # cumulative
+                m[f"smae@{h}"] = float(ae[h - 1].mean())   # single-step
         return m
 
     latency = {}
@@ -199,7 +201,7 @@ def main():
         if k + 1 < len(my_metric):
             fc.prefetch(my_metric[k + 1])  # 藏解码:后台预取下一个 episode
         wins = ep2win[ep]; is_v = ep in vset
-        em = {kk: [] for kk in ["action_mae"] + [f"mae@{h}" for h in HOR]}
+        em = {kk: [] for kk in ["action_mae"] + [f"mae@{h}" for h in HOR] + [f"smae@{h}" for h in HOR]}
         if not is_v:
             ws = wins if len(wins) <= args.max_win_per_ep else [wins[i] for i in np.unique(np.linspace(0, len(wins) - 1, args.max_win_per_ep).astype(int))]
             for gi in ws:
@@ -243,6 +245,7 @@ def aggregate(args, viz_eps, HOR):
         d = json.load(open(f)); metric.update({int(k): v for k, v in d["metric"].items()}); lat.update(d.get("latency", {}))
     print(f"[aggregate] merged {len(sh)} shards, {len(metric)} ep", flush=True)
     agg = {f"mae@{h}": float(np.mean([r[f"mae@{h}"] for r in metric.values() if r.get(f"mae@{h}") is not None])) for h in HOR}
+    aggs = {f"smae@{h}": float(np.mean([r[f"smae@{h}"] for r in metric.values() if r.get(f"smae@{h}") is not None])) for h in HOR}
 
     def b64(p):
         fp = os.path.join(args.out_dir, p)
@@ -273,9 +276,11 @@ def aggregate(args, viz_eps, HOR):
 <h3>逐 episode(抽样可视化)</h3>{''.join(blocks)}
 </body></html>"""
     open(os.path.join(args.out_dir, "report.html"), "w").write(html)
-    json.dump({"n_metric_eps": len(metric), "latency": lat, "raw_mae": {h: agg[f"mae@{h}"] for h in HOR}, "pi05": PI05},
+    json.dump({"n_metric_eps": len(metric), "latency": lat, "raw_mae": {h: agg[f"mae@{h}"] for h in HOR},
+               "single_step_mae": {h: aggs[f"smae@{h}"] for h in HOR}, "pi05": PI05},
               open(os.path.join(args.out_dir, "summary.json"), "w"), indent=2)
-    print("[aggregate] raw mae@: " + " ".join(f"@{h} {agg[f'mae@{h}']:.4f}" for h in HOR) +
+    print("[aggregate] cumulative mae@: " + " ".join(f"@{h} {agg[f'mae@{h}']:.4f}" for h in HOR) +
+          " | single-step mae@: " + " ".join(f"@{h} {aggs[f'smae@{h}']:.4f}" for h in HOR) +
           f" | act-lat {lat.get('action_ms',0):.0f}ms -> {args.out_dir}/report.html", flush=True)
 
 
