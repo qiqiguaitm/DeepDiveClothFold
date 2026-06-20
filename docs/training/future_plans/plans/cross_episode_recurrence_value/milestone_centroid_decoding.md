@@ -42,18 +42,37 @@ milestone 代表图原来用"离簇心最近的真实帧(medoid)"。本线探索
 
 ---
 
-## 6. 未来规划
+## 6. milestone 聚类 / 排序 / value 方法定稿(2026-06-20)
+
+> **最终架构(TL;DR)**:**DINOv2-large 图像 ⊕ proprio 聚类(语义 milestone + 起末消歧)→ precedence 定序 + isotonic 度量 value(排序正确、保信息)→ Wan2.2-VAE 渲染 medoid(锐利代表)**。Wan 只做渲染,不做编码器/聚类。
+
+### 6.1 特征:DINOv2-large 图像 ⊕ proprio(消起末别名)
+**问题**:纯图像特征(DINOv2-large)有**起末视觉别名** —— 折好的布(紧凑平整方块)≈ 摊平的布,DINOv2 难分 → 折好态被吸到早期 milestone,value 到不了 1.0(实测 ep763 0.15、ep1527 0.32,均为标准完整折)。
+**修复**:聚类/value 特征 = **DINOv2-large 图像(1024, L2)⊕ proprio(state+Δstate 28维, z-score+L2)**(等权)。proprio(臂/夹爪状态)靠"臂伸入 vs 收回"消歧,即使图像别名。全量 3055ep 实测(`crave_full_3path.py`):**ep763 0.15→1.00、ep1527 0.32→1.00、ep2302→1.00**。生产 `crave_value.py` 三路(raw⊕armmask⊕proprio)亦验证 ep763→1.00。
+**渲染只取图像那一路**:medoid = 离三路簇心最近真实帧 → 取其真实图像 → Wan 解码(不碰 proprio)。图 `crave_3path_value_test.png` / `crave_3path_gallery.png`。
+**对照否决 Wan 编码器**:把 Wan-latent⊕proprio 套同架构(`crave_full_3path_wan.py`,GPU KMeans 加速 12316 维)—— 虽也到 1.0,但**排序逆序 54(vs DINOv2 ~13)、ep2302 value 卡 0.27 平台到 90% 才暴冲**(Wan-latent 偏外观、中段进度跟不动)→ **不采纳**。图 `crave_3path_wan_value.png` / `crave_3path_wan_gallery.png`。
+
+### 6.2 排序 + value:precedence 定序 + isotonic 度量 value
+**问题**:milestone 排序/value 原按"逐 ep 时间统计"(`Pk=首达中位` / `tpos=均值`),是**时间分位非因果先后** → 进度相近的相邻 milestone 前后颠倒(实测 13 逆序对,但 Kendall-τ 0.96、零大错位 → 真实但局部)。
+**方案(排序与 value 量纲解耦,保信息)**:① 排序用**跨 ep precedence**(成对 `首达(A)<首达(B)` 比例,Copeland 聚合;只看 ep 内相对先后,**对节奏/归一化不变 → 鲁棒可泛化**);② value 保留度量量纲 `Pk`,沿 precedence 序做 **isotonic(PAVA)保序回归**——仅把逆序/并发的几个并到单调,其余精确保留;③ 并发态(环)自然并成平局。
+**实测(全量 34 milestone)**:value 被改 16/34 但**单点最大动 0.026**、**所有大 advantage 间距精确保住**;逐帧读出 old vs new 几乎重合(Viterbi-DP 本就单调,**readout-neutral**)。脚本 `crave_milestone_order.py` / `crave_milestone_isotonic.py` / `crave_milestone_value_test.py`,图同名 + `crave_milestone_order_strip.png`,顺序表 `temp/crave_full/milestone_order_info.json`。caveat:小数据集设最小共现阈值 + 向时间序 shrinkage。
+
+### 6.3 渲染框架:Wan2.2-VAE medoid(否决 RAE / 统一 latent)
+代表图锐利靠 **Wan2.2-VAE 单帧重建**(L1 0.003,照片级);合成"平均质心"对可形变布料 ill-posed(任何解码器都软,§2 已证)→ 代表图用 **medoid**,Wan 仅渲染。
+**为何不用统一单 latent**:Wan-latent 聚类按外观(corr 0.54/混相位 50%,§6.1 再证);VA-VAE/REPA-E 对齐稀释语义;V-JEPA2 无解码器(§7.1);**RAE**(冻结 DINOv2+ViT 解码器,调研排名第 1)实测**重建坏**(16×16 网格 L1 0.063,官方 `bytetriper/RAE` 代码逐项复现仍同——`Dinov2withNorm` 关 layernorm 仿射 + 剥 CLS+4register 后仍逐位相同,解码近乎与 latent 无关)→ 渲染 ≪ Wan 且聚类零增量,**否决**。ckpt 经 gf3 加速下载(见 [[reference_gf3_fast_download]])。证据图 `crave_wanvae_*`,调研 task `whcg24l2y` / `wzge796p5`。
+
+## 7. 未来规划
 
 > 以下两节由 deep research(2026-06-19,100 agents / 18 源 / 对抗校验)定调。结论先行,后续按"便宜首验"推进。
 
-### 6.1 V-JEPA 2 编解码器测试 —— **结论:聚类/解码不用换;只在做时序预测时评估 V-JEPA 2-AC**
+### 7.1 V-JEPA 2 编解码器测试 —— **结论:聚类/解码不用换;只在做时序预测时评估 V-JEPA 2-AC**
 - **V-JEPA 2 / 2.1 是 latent-only,无原生像素解码器**(masked latent 预测,encoder + predictor)。要出簇中心**图**仍得**另训一个像素解码器**(Meta 自己也是单独训了个 ViT-L decoder 仅作可视化)→ 在"解码"这步 V-JEPA 2 **不省事**,相对 DINOv2-large + 训练解码器无优势。
 - **dense 语义聚类 DINO 系仍更强**(ADE20K seg 47.9 vs 55.9 mIoU);V-JEPA 2.1 仅在 depth 上追平 DINOv3;"视频编码器聚类胜 DINOv3"的说法被**否决(0-3)**。→ **milestone 聚类 + 簇中心解码:保持 DINOv2-large + small 解码器(现标准配置)。**
-- **V-JEPA 2 唯一差异化价值 = V-JEPA 2-AC**(动作条件世界模型,潜空间预测/规划)→ **只在 6.2 要做"时序 milestone 预测 / 世界模型规划"时才值得评估**,不是为聚类/解码。
+- **V-JEPA 2 唯一差异化价值 = V-JEPA 2-AC**(动作条件世界模型,潜空间预测/规划)→ **只在 7.2 要做"时序 milestone 预测 / 世界模型规划"时才值得评估**,不是为聚类/解码。
 - 工程:V-JEPA 2 ckpt 在 HF(`facebook/vjepa2-*`),但本机 HF/镜像被墙(同 dinov2-large,需另找权重)。
 - **便宜首验(若评估)**:用 V-JEPA 2-AC 在 latent 空间预测 ep 的下一段 → 比对 CRAVE milestone 序列,看时序预测是否比 DINOv2 逐帧聚类更早/更准锚定相位;**不替换现有聚类**,只作时序预测候选。
 
-### 6.2 milestone 预测赋能 VLA —— **结论:可行,但作"补充"而非替代;Design 1 优先 + 强制子目标过滤**
+### 7.2 milestone 预测赋能 VLA —— **结论:可行,但作"补充"而非替代;Design 1 优先 + 强制子目标过滤**
 范式成熟(子目标/目标图条件化:SuSIE / UniPi / GR-2 / V-JEPA 2-AC),所以"预测 milestone+1 子目标条件化 VLA"**可行**。两设计实测建议:
 
 - **Design 1 · goal-image(解码 milestone+1 簇中心 → 目标图喂 VLA)** —— **首选、范式最成熟、最低风险**。
@@ -68,7 +87,7 @@ milestone 代表图原来用"离簇心最近的真实帧(medoid)"。本线探索
 
 > 详细引用见 deep research 输出(task `wzge796p5`)。
 
-### 6.3 仿真验证方案 —— **验"方法有效性",与叠衣域解耦**
+### 7.3 仿真验证方案 —— **验"方法有效性",与叠衣域解耦**
 **原则**:milestone/子目标条件是**跨任务通用**方法,先在标准 VLA 基准上验"有没有效",不必迁就 cloth;验通再回真机 kai0(叠衣)验域迁移。
 
 **选定环境:LIBERO-Long(openpi/pi0 原生闭环,本仓已接好)**——长程多阶段(milestone 天然有意义)+ pi0 闭环零集成。
