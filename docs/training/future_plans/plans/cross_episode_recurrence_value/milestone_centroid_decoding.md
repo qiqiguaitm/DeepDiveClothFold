@@ -61,6 +61,34 @@ milestone 代表图原来用"离簇心最近的真实帧(medoid)"。本线探索
 代表图锐利靠 **Wan2.2-VAE 单帧重建**(L1 0.003,照片级);合成"平均质心"对可形变布料 ill-posed(任何解码器都软,§2 已证)→ 代表图用 **medoid**,Wan 仅渲染。
 **为何不用统一单 latent**:Wan-latent 聚类按外观(corr 0.54/混相位 50%,§6.1 再证);VA-VAE/REPA-E 对齐稀释语义;V-JEPA2 无解码器(§7.1);**RAE**(冻结 DINOv2+ViT 解码器,调研排名第 1)实测**重建坏**(16×16 网格 L1 0.063,官方 `bytetriper/RAE` 代码逐项复现仍同——`Dinov2withNorm` 关 layernorm 仿射 + 剥 CLS+4register 后仍逐位相同,解码近乎与 latent 无关)→ 渲染 ≪ Wan 且聚类零增量,**否决**。ckpt 经 gf3 加速下载(见 [[reference_gf3_fast_download]])。证据图 `crave_wanvae_*`,调研 task `whcg24l2y` / `wzge796p5`。
 
+## 6.4 循环簇 + 操作回退 调查与处理(2026-06-20)
+
+> 用户提出两个边界问题,"执行边验证边回退"。脚本 `crave_cyclic_detect.py` / `crave_multimode_test.py` / `crave_regression_test.py` / `crave_condend_validate.py` / `crave_truncate_test.py`。
+
+### 循环簇(任务内重复动作)—— 真实,多模态可缓解(小幅)
+- **量化**:用"**同一 ep 内访问 ≥2 次**"(分离段)而非跨 ep 时间双峰(后者会把 partial-start 污染误判为循环)→ **119 个真循环簇**(avg 2–3.5 次/ep、最高 88% 的 ep 重复),其中 **104 个被纯度闸(tstd≤P60)丢掉** → 框架在扔重复态。图 `crave_cyclic_detect.png`。
+- **相对 value 规则(采纳用户设计)**:循环簇放**多个 value 锚点**(成员时间 GMM 多峰);读出时"**取 >当前 value 的最小模式**(无则保持当前)"= **沿循环模式单调向前匹配**,用当前进度作上下文 → 相对 value(第几次迭代)。比"多模态 DP 自由选 bin"稳(**杜绝伪回退**)。caveat:此规则假设向前 → 须被回退检测门控。
+- **多模态放置验证**:advDensity **+0.05 均**(循环密集 ep0/3054 +0.08/0.09),**成功 ep 仍到 1.0 无回退**。图 `crave_multimode_test.png`。**已 test 验证,未落生产**(增益小,待定)。
+
+### 操作回退/失败 —— 走过的弯路 + 最终解(解耦 flag)
+- **弯路①:end_bonus 条件化(cond_end)被证伪**。先以为"end_bonus 无条件拉 value→1"是真凶,加了 `cond_end`(默认 False)。但 **`crave_condend_validate.py` 回退测试 ON=OFF 无差异**(3-path 里 end_bonus 太弱),且 **`crave_truncate_test.py` 反证 cond_end 是错的**:它用 residual **去压 value**,把 ep763 截 90%(布已折好 ~90%、value 应 ~0.9)**误压到 0.35**——把"末帧非最终态"当"低进度"。→ **cond_end 弃用(留作 off 选项),不能用 residual 压 value**。
+- **弯路②:reverse-replay 早期结论部分是测试 bug**。倒放只反帧序、proprio Δstate 没反 → 特征错乱。修正(按轨迹重算 proprio)后 3-path 行为混合:ep2302 倒放 → 0.25(✓降)、ep763 停 0.85(✗,转移惩罚所致)。
+- **根因 = 回退/失败态 OOD**:布料"反向展开"等动作不在成功 demo 词表 → milestone 匹配只为 in-distribution 成功态设计 → 失败态跟踪不可靠。**非调参可解**。
+
+### ✅ 最终解(已落地):progress value 与 failure flag **解耦**
+`crave_truncate_test.py`(截断成功 ep = 未完成 rollout)验证决定性:**progress value 正确停在真实进度(截断曲线贴合完整成功曲线),alignment-residual 干净分离完成/未完成**。
+- **已落 `crave_value.py::DiscreteValue.status(a,r,s)` / `value(..., ret_status=True)`**(与 cond_end 解耦,`de_end_thr` 永远算):
+  - `is_complete` / `complete_conf∈[0,1]`:末帧到 endK(完成态)残差 `de_end` vs 阈 `de_end_thr`。实测 thr=1.16,**截断 de_end 1.37–1.81 判未完成、完整 0.66–0.85 判完成**,阈值清晰且分级(ep2291 90% conf 0.51 临界)。
+  - `ood`(每帧到最近 milestone 距离)/ `ood_frac`:脱轨/OOD 粗信号。
+  - **value 不动**(ep763 截 90% 仍 0.90,正确)—— 残差只作独立 flag,**绝不压 value**。
+- **AWBC 用法**:progress value 给"走多远"的 advantage;failure flag 对未完成/脱轨段给负 advantage 或门控。对应 METHOD App②失败定位 / App④ OOD。
+- **便宜首验(下一步)**:真机失败 rollout 上算 status,看 `is_complete=False` / `ood` 高的段是否对齐人工标注失败段;吻合再接进 advantage。
+
+### 🔁 验证方法库(可复用,沉淀)
+两种"无需真失败数据"造失败/回退 rollout 的方法,未来验 value/failure 处理直接复用:
+1. **截断法(`crave_truncate_test.py`,推荐)**:成功 ep 截到 X%(末帧=中间态=未完成)。**全程 in-distribution**,干净。验 ① value 应停在真实进度(贴合完整曲线、不被拉到 1.0);② 完成/失败 flag 应判"未完成"。**最适合验 failure flag 校准**。
+2. **倒放法(`crave_regression_test.py`)**:成功 ep 前进到中段再倒放(造真实"操作回退")。验 value 能否"先升后降"跟踪回退。**⚠️ 关键坑:proprio 含 Δstate,必须按轨迹顺序重算 mkp(Δ 才正确反向),否则倒放段特征错乱、结论失真**(本线踩过)。适合验回退灵敏度,但倒放态含 OOD 成分。
+
 ## 7. 未来规划
 
 > 以下两节由 deep research(2026-06-19,100 agents / 18 源 / 对抗校验)定调。结论先行,后续按"便宜首验"推进。

@@ -60,11 +60,16 @@ class FeatureSpace:
 class DiscreteValue:
     """V2.4 离散 milestone 阶梯。与 hdf5_v24_eval.build_model 逐字一致(KMeans96+coverage修正+进度分桶+端点锚+Viterbi-DP)。"""
     def __init__(self, fs: FeatureSpace, eps, k=96, log=print,
-                 select="fixed", nbins=10, topN=2, cap_pb=3, tau_q=0.5):
+                 select="fixed", nbins=10, topN=2, cap_pb=3, tau_q=0.5, order="time", prec_min_co=5, cond_end=False):
         """select: 'fixed'=每进度bin取 top-N by coverage(默认, 数量≤nbins*topN, 与历史一致);
                    'adaptive'=每bin取所有 cov≥τ 但封顶 cap_pb, τ=cov_n 的 tau_q 分位(数据驱动);
-                              某 bin 无过阈 cluster 时保底取 1 个防进度空隙 → 数量随"每档真复现态数"自适应。"""
-        self.fs = fs; self.select = select
+                              某 bin 无过阈 cluster 时保底取 1 个防进度空隙 → 数量随"每档真复现态数"自适应。
+        order: 'time'(默认,保旧)=按首达中位 Pk 排序; 'precedence'=跨ep成对先后(Copeland)定序 + isotonic 度量value
+               (对节奏/归一化不变,鲁棒可泛化;修进度相近 milestone 的前后颠倒;value 保 advantage 间距, readout-neutral)。
+               prec_min_co=成对统计的最小共现 ep 数(小数据兜底)。
+        cond_end: 条件化 end_bonus(末帧不匹配 endK=完成态时不强拉 value→1)。默认 False 保生产原样;
+                  实测 3-path 里 end_bonus 太弱 ON=OFF 无差异(回退真凶是失败态 OOD, 非 end_bonus)→ 仅留作选项。"""
+        self.fs = fs; self.select = select; self.order_mode = order; self.prec_min_co = prec_min_co
         A, R, S, T, E, SP, EP = [], [], [], [], [], [], []
         for e in eps:
             a, r, s, n = loadep(fs.fc, e); g = fs.emb(a, r, s)
@@ -103,24 +108,61 @@ class DiscreteValue:
             if s0 is not None: o.append((s0, pv))
             return [x for x in o if x[1] - x[0] >= 1]
 
-        Pk = {}
-        for c in sel:
-            fe = []
-            for e in sorted(set(E.tolist())):
-                m = np.where(E == e)[0]; rs = gr(m[lab[m] == c].tolist())
-                if rs: fe.append(T[rs[0][0]])
-            Pk[c] = float(np.median(fe)) if fe else float(tpos[c])
-        self.order = sorted(sel, key=lambda c: Pk[c]); self.C = allC[self.order]
-        self.Pord = np.array([Pk[c] for c in self.order]); self.Pk = Pk
+        eps_sorted = sorted(set(E.tolist())); ns = len(sel)
+        fe_mat = np.full((len(eps_sorted), ns), np.nan)                 # 每 ep × 每选中簇 的首达时间
+        for ei, e in enumerate(eps_sorted):
+            m = np.where(E == e)[0]
+            for si, c in enumerate(sel):
+                rs = gr(m[lab[m] == c].tolist())
+                if rs: fe_mat[ei, si] = T[rs[0][0]]
+        Pk = {c: (float(np.nanmedian(fe_mat[:, si])) if np.isfinite(fe_mat[:, si]).any() else float(tpos[c])) for si, c in enumerate(sel)}
+        if self.order_mode == "precedence":
+            from sklearn.isotonic import IsotonicRegression
+            Pbef = np.full((ns, ns), np.nan)
+            for i in range(ns):
+                for j in range(ns):
+                    if i == j: continue
+                    both = np.isfinite(fe_mat[:, i]) & np.isfinite(fe_mat[:, j])
+                    if both.sum() >= self.prec_min_co: Pbef[i, j] = float(np.mean(fe_mat[both, i] < fe_mat[both, j]))
+            soft = np.nansum(np.where(np.isnan(Pbef), 0.0, Pbef), axis=1)   # Copeland 软胜场: 越大=越早
+            prec = list(np.argsort(-soft))                                  # sel 下标的 precedence 序
+            iso = IsotonicRegression(increasing=True).fit_transform(np.arange(ns), np.array([Pk[sel[si]] for si in prec]))
+            self.order = [sel[si] for si in prec]
+            self.Pord = np.asarray(iso, float)
+            self.Pk = {self.order[k]: float(iso[k]) for k in range(ns)}     # value=isotonic度量(保 advantage 间距)
+        else:                                                              # 'time'(默认, 与历史一致)
+            self.order = sorted(sel, key=lambda c: Pk[c])
+            self.Pord = np.array([Pk[c] for c in self.order]); self.Pk = Pk
+        self.C = allC[self.order]
         log(f"[DiscreteValue] select={select} milestones: {len(self.order)}"
             + (f" (tau={self.tau:.2f})" if self.tau is not None else "")
             + f"  前段(P<0.5): {sum(1 for c in self.order if Pk[c] < 0.5)}")
         self.startK = KMeans(8, n_init=2, random_state=0).fit(np.concatenate(SP)).cluster_centers_
         self.endK = KMeans(8, n_init=2, random_state=0).fit(np.concatenate(EP)).cluster_centers_
+        # 完成态残差阈: 末帧到 endK 距离 > 阈 ⇒ 未完成/失败(alignment-residual flag, 与 cond_end 解耦, 永远算)
+        self.cond_end = cond_end
+        de_tr = np.array([float(np.linalg.norm(ep[:, None] - self.endK[None], axis=2).min()) for ep in EP])
+        self.de_end_thr = float(np.quantile(de_tr, 0.90)) * 1.3
         self.NB = 21; self.bins = np.linspace(0, 1, self.NB)
         self.cb = [[int(np.argmin(abs(self.bins - Pk[c])))] for c in self.order]
 
-    def value(self, a, r, s, ret_lab=False):
+    def status(self, a, r, s):
+        """解耦的失败/完成信号(不影响 value): 与 value() 互补。
+        返回 dict: is_complete(末帧是否到完成态), complete_conf∈[0,1], de_end, de_end_thr,
+                   ood(每帧到最近 milestone 距离, 高=脱轨/OOD 失败态), ood_frac(超阈帧占比)。
+        用法(AWBC): progress value 照常用; status 判"未完成/脱轨"→ 对该段给负 advantage 或门控。"""
+        Fq = self.fs.emb(a, r, s)
+        return self._status(Fq, np.linalg.norm(Fq[:, None] - self.C[None], axis=2))
+
+    def _status(self, Fq, d):
+        nq = len(Fq); thr = float(self.de_end_thr)
+        de = np.linalg.norm(Fq[:, None] - self.endK[None], axis=2).min(1)
+        de_end = float(np.min(de[-3:])) if nq >= 3 else float(de[-1])
+        ood = d.min(1)                                            # 每帧到最近 milestone 距离, 高=脱轨/OOD
+        return {"is_complete": bool(de_end <= thr), "complete_conf": float(np.clip((1.2 * thr - de_end) / (0.4 * thr + 1e-9), 0.0, 1.0)),
+                "de_end": de_end, "de_end_thr": thr, "ood": ood, "ood_frac": float(np.mean(ood > thr))}
+
+    def value(self, a, r, s, ret_lab=False, ret_status=False):
         Fq = self.fs.emb(a, r, s); nq = len(Fq); d = np.linalg.norm(Fq[:, None] - self.C[None], axis=2)
         em = np.full((nq, self.NB), 1e3)
         for ci in range(len(self.order)):
@@ -130,7 +172,12 @@ class DiscreteValue:
         tn = np.arange(nq) / nq
         em[:, 0] = np.minimum(em[:, 0], np.where(tn < 0.3, ds, ds + (tn - 0.3) * 6))
         em[:, self.NB - 1] = np.minimum(em[:, self.NB - 1], np.where(tn > 0.6, de, de + (0.6 - tn) * 6))
-        v = med(viterbi(em, self.bins, lam=8.0, end_bonus=2.0)[0], 9)
+        # 条件化 end_bonus: 仅当末帧确实匹配完成态(endK)才施加, 否则失败末帧被强拉 value→1
+        de_end = float(np.min(de[-3:])) if nq >= 3 else float(de[-1])
+        eb = 2.0 * float(np.clip((self.de_end_thr - de_end) / (0.3 * self.de_end_thr + 1e-9), 0.0, 1.0)) if self.cond_end else 2.0
+        v = med(viterbi(em, self.bins, lam=8.0, end_bonus=eb)[0], 9)
+        if ret_status:                                           # 解耦的完成/失败 flag(不影响 v)
+            return v, self._status(Fq, d)
         if ret_lab:
             dsrt = np.sort(d, axis=1); marg = dsrt[:, 0] / np.clip(dsrt[:, 1], 1e-9, None)
             return v, d.argmin(1), marg
