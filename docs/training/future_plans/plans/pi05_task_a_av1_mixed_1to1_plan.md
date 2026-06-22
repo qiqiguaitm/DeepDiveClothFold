@@ -21,7 +21,7 @@
 | 域 | 数据集 | ep | **帧数(实测)** |
 |---|---|---|---|
 | domain 0 | `Task_A/self_built/A_smooth800_dagger_full` | 1033 | **1,455,235** |
-| domain 1 | `Task_AV1/base/{2026-06-11-v2, 2026-06-12-v2}` | 304(133+171)| **446,955**(206,502+240,453)|
+| domain 1 | `Task_AV1/base/v2/{2026-06-11-v2, 2026-06-12-v2}` | 304(133+171)| **446,955**(206,502+240,453)|
 
 - **frame-level 1:1 权重**: `domain_weights = (1.0, 1455235/446955) = (1.0, 3.256)`。
   - ⚠️ **不是 ep 比**(1033/304=3.40);AV1 单 ep 略长 → 帧比 3.256。**最终以 norm-build 实数为准**(同模板注释 "norm-build exact")。
@@ -114,5 +114,5 @@ TrainConfig(
 - 机制模板:`config.py:651`(`KaiVisMergedDataConfig`)/ `config.py:1066`(`pi05_kaivis_perdsnorm_cond`,domain_weights=(1.0,3.970))
 - 加权采样:`kai0/src/openpi/training/data_loader.py:437-474`(`_build_domain_weights` / `_DomainWeightedJAXSampler`,**JAX-only**)
 - build 脚本模板:`train_scripts/kai/data/{build_kai_vis_merged.py, build_kai_vis_norm.py, build_task_av1_200_split.py}`
-- 数据:`kai0/data/Task_A/self_built/A_smooth800_dagger_full`(1033ep)+ `kai0/data/Task_AV1/base/`(304ep,watchdog 同步)
+- 数据:`kai0/data/Task_A/self_built/A_smooth800_dagger_full`(1033ep)+ `kai0/data/Task_AV1/base/v2/`(304ep,watchdog 同步)
 - Task_AV1 单独基线对照:[`pi05_fold_sop_paradigm_baselines.md`](pi05_fold_sop_paradigm_baselines.md)

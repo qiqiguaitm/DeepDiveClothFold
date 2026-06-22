@@ -6,7 +6,7 @@ domain-weighted JAX sampler (NOT by copying here); videos symlinked to realpath.
 
 Domains:
   - domain 0: A_smooth800_dagger_full (vis lerobot format, video dirs = observation.images.<cam>)
-  - domain 1: Task_AV1/base/{2026-06-11-v2[:133], 2026-06-12-v2[:171]} (raw format, video dirs = <cam>)
+  - domain 1: Task_AV1/base/v2/{2026-06-11-v2[:133], 2026-06-12-v2[:171]} (raw format, video dirs = <cam>)
               snapshot-capped to the plan's frozen 304ep (§7-1).
 
 per-domain prompt (§7-2): domain0 "Flatten and fold the cloth." / domain1 "...Vertical Fold v1."
@@ -22,7 +22,7 @@ from build_no_release import per_episode_stats, CAMERAS, FPS  # CAMERAS = observ
 
 _REPO = os.environ.get("KAI0_REPO_ROOT", "/vePFS/tim/workspace/deepdive_kai0")
 TA = Path(f"{_REPO}/kai0/data/Task_A")
-AV1 = Path(f"{_REPO}/kai0/data/Task_AV1/base")
+AV1 = Path(f"{_REPO}/kai0/data/Task_AV1/base/v2")  # 2026-06-22 迁入 v2/ 层(对齐 TOS 重整)
 PROMPT0 = "Flatten and fold the cloth."
 PROMPT1 = "Flatten and fold the cloth. Vertical Fold v1."
 CAM_RAW = {c: c.split(".")[-1] for c in CAMERAS}  # observation.images.top_head -> top_head

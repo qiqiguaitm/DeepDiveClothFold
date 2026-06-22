@@ -14,7 +14,7 @@ ts() { date '+%Y-%m-%d %H:%M:%S'; }
 
 SRC=tos://transfer-shanghai/KAI0/Task_AV1
 # 2026-06-19 TOS 重整: Task_AV1/base 下插入 v2/ 层 → cp 整 prefix 镜像成本地 Task_AV1/base/v2/<date>。
-# 本地另有旧扁平 Task_AV1/base/<date>(restructure 前)与 base/v2/ 并存; 迁移与否见同步文档。
+# 本地已迁入 base/v2/<date>(2026-06-22)对齐 TOS; cp 整 prefix 镜像 Task_AV1/base/v2/<date>。
 LOCK=/tmp/task_av1_sync.lock
 
 # ---- host-aware: KAI0_ROOT (含 kai0/data 的真实根) ----

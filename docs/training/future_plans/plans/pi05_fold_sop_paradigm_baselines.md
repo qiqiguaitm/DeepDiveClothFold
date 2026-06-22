@@ -11,7 +11,7 @@
 
 | 范式 | 数据集 | 采集日期 | ep / 帧 | trim | prompt(规范化) | config | 状态 |
 |---|---|---|---|---|---|---|---|
-| **Vertical Fold v1**(竖向折)| `Task_AV1/base` | 06-11-v2 / 06-12-v2 | 取前 **200** / — | v2 raw | `... Vertical Fold v1.` | `pi05_task_av1_vfold_v1_200` | 📋 定稿待实施 |
+| **Vertical Fold v1**(竖向折)| `Task_AV1/base/v2` | 06-11-v2 / 06-12-v2 | 取前 **200** / — | v2 raw | `... Vertical Fold v1.` | `pi05_task_av1_vfold_v1_200` | 📋 定稿待实施 |
 | **Horizontal Fold v1**(横向折)| `Task_AH1/base/v3` | 06-15-v3 | **200** / 272,086 | v3 前裁+尾裁 | `... Horizontal Fold v1.` | `pi05_task_ah1_hfold_v1_200` | 📋 定稿待实施 |
 
 > ⚠️ **跨范式对比的一处不一致**: AV1 是 **v2 raw**(未前裁),AH1 是 **v3 前裁+尾裁**(前端投放裁 + 尾部 tail-cap)。各自作为独立基线没问题;但若要**严格横向对比**"哪种折法更易学",trim 版本是个混杂变量 → 解读时注意,或后续对齐到同一 trim(见 §3 caveat)。
@@ -135,7 +135,7 @@
 ---
 
 ## 关联
-- 数据:`kai0/data/Task_AV1/base/`(TOS `KAI0/Task_AV1`)· `kai0/data/Task_AH1/base/v3/2026-06-15-v3/`(TOS `KAI0/Task_AH1`,已落地)
+- 数据:`kai0/data/Task_AV1/base/v2/`(TOS `KAI0/Task_AV1`)· `kai0/data/Task_AH1/base/v3/2026-06-15-v3/`(TOS `KAI0/Task_AH1`,已落地)
 - TOS 同步:`train_scripts/kai/data/sync_task_av1_from_tos.sh` + watchdog(⚠️ **当前因 TOS 重构暂停**,见记忆 [[project_tos_sync_paused_restructure]];AH1 为本次一次性手动拉取)。
 - 夹爪处理对照:[`gripper_action_clip_experiment.md`](gripper_action_clip_experiment.md)(action≡state / 夹爪给力)
 - config 克隆源:`kai0/src/openpi/training/config.py:1798`(`pi05_flatten_fold_A_smooth800_dagger_full`)
