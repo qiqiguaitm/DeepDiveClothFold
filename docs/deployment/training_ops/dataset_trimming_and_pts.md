@@ -19,6 +19,22 @@
 
 视频裁帧用 `trim_video_pyav()`(re-encode,crf18 + veryfast,近无损)。
 
+### 1.1 在线录制器：采集即标准对齐（不再需要离线裁剪/归零）
+
+> **2026-06-22 起**:`web/data_manager/backend/app/dataset_writer.py::EpisodeWriter`(teleop / dagger / autonomy 三条采集链路**唯一**写盘器)已把上面整套裁剪 + 对齐**搬到录制时在线完成**,采集出的 V3 episode **直接符合标准、可直接训练**,**无需再事后跑 `build_no_release.py` / `reset_video_pts.py`**。
+
+| 机制 | 实现 |
+|---|---|
+| **前裁** `KAI0_FRONT_TRIM=1` | 滚动缓冲 + onset 检测,保留 15 帧 lead-in。被丢的头帧**从不写入**视频/parquet |
+| **尾裁** `KAI0_TAIL_TRIM=1`(默认跟随 FRONT_TRIM) | `_stage_tick` 扣住末尾连续 idle(arm `mean\|Δ\|>3e-3` **且** grip `max\|Δ\|>0.02` 都静止才算 idle → 末尾松手/放置永不被裁),finalize 只留 `TAIL_CAP=15` 帧收尾;中段 idle 不抽稀。逐帧等价 `build_no_release.tail_cap_keep_indices` |
+| **PTS 零基(天然满足铁律)** | `frame.pts = frame_index`(只数保留帧)→ 首帧 pts=0,**头帧从不写入故无需事后归零** |
+| **parquet timestamp** | `_write_parquet` 写 `timestamp = frame_index / fps`(**非** wall-clock `ts−t0`)。若沿用 wall-clock,前裁后 `timestamp[0]≈cut/fps≠0` → 与零基 PTS 反向错位(§2 同类 skew 的 parquet 轴版本) |
+| **逐 ep 自检** `KAI0_VALIDATE_TRIM=1` | finalize 重解码 3 路 mp4,断言首帧 `pts==0` 且 `video帧数==parquet行数`(§4)。默认关(重解码有开销),验证/抽查时打开 |
+
+⚠️ `autonomy_recorder`(诊断录制)默认 **不开** trim,保持原始采样。
+
+**采集帧率(`KAI0_ASYNC_WRITER=1`,默认开)**:30Hz 采集线程只做「取帧 + 入队」,后台 writer 线程做 encode + 深度压缩,慢 tick(NVENC/IO 停顿、与 API server 抢 GIL)不再丢帧——修复实测 27fps 欠采样(标 30fps 实 27fps → 动作快 1.11×)。输出与同步路径**逐字节一致**。`KAI0_ASYNC_WRITER=0` 回退。⚠️ 欠采样不破坏帧↔动作对齐,但会让动作显得偏快,故仍需保证采集稳在 30Hz。
+
 ---
 
 ## 2. 🔴 头号注意事项：裁完必须 PTS 归零
@@ -59,6 +75,16 @@ import av; c=av.open(mp4); print(next(c.decode(video=0)).pts)   # 必须 0
 ```
 - 首帧 `pts != 0` → **有 bug,禁止用于训练**。
 - 全盘扫描一行命令(扫 v3 + self_built 各数据集抽 1 视频报非零 PTS)见本次调查脚本。
+
+### 4.1 现成验证工具
+
+- **离线 / 任意已存 episode**:`train_scripts/kai/data/validate_episode_pts.py`(逐 ep 实现上面 (1)(2) + `timestamp==frame_index/fps`,`--deep` 再做"按时间戳解码 vs 按帧号解码"的像素对齐自测):
+  ```bash
+  kai0/.venv/bin/python train_scripts/kai/data/validate_episode_pts.py \
+      <数据集 leaf 目录, 如 …/Task_A/base/v3/2026-06-22-v3> --deep
+  # 全 OK → exit 0;任一 ep 首帧 pts≠0 / 帧数≠行数 / timestamp 偏移 → 打印定位行 + exit 1
+  ```
+- **在线录制即时自检**:采集时设 `KAI0_VALIDATE_TRIM=1`,`EpisodeWriter.finalize` 每条 ep 重解码 3 路 mp4 断言 `pts0==0 & 帧数==行数`,失败直接抛错(见 §1.1)。验证一两条后可关掉(重解码有开销)。
 
 ---
 

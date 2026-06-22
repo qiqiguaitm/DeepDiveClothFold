@@ -23,9 +23,10 @@ CHECKPOINT_DIR=""
 TASK_NAME=""
 PROMPT=""
 SUBSET="dagger"
-# Form C inference-rollout recording (-> <task>/inference/<date-v2>/, intervention=0).
-# Default OFF per 2026-06-02 decision (暂不录 inference); --record-inference re-enables.
-RECORD_INFERENCE="false"
+# Form C inference-rollout recording (-> <task>/inference/<vN>/<date-vN>/, intervention=0).
+# Default ON (2026-06-16): policy rollouts are recorded alongside dagger/ so the
+# inference dataset is captured by default; --no-inference records dagger/ only.
+RECORD_INFERENCE="true"
 CONFIG_NAME=""         # auto from sidecar
 EXTRA_ARGS=()          # passed through to start_autonomy.sh
 # DAgger sessions are driven via web/dagger_manager (or via the freedrive
@@ -49,8 +50,8 @@ Options:
   --config-name <s>  Override base_config_name (default: from sidecar)
   --no-rerun         Disable Rerun viz (DEFAULT — dagger session uses web/dagger_manager)
   --rerun            Force Rerun viz on (override default-off)
-  --record-inference Also record policy rollouts to <task>/inference/<date-v2>/ (Form C)
-  --no-inference     Record dagger/ only — no inference dataset (DEFAULT)
+  --record-inference Also record policy rollouts to <task>/inference/<vN>/<date-vN>/ (Form C) (DEFAULT)
+  --no-inference     Record dagger/ only — no inference dataset
   --mode <ros2|websocket|both>  Inference channel (forwarded)
 
 All other flags are forwarded to start_autonomy.sh.
@@ -107,10 +108,22 @@ export OPENPI_EXTRA_CONFIG="$SIDECAR"
 # V3 collection (2026-06-15): inherited by dagger_recorder_node via env.
 #   KAI0_FRONT_TRIM=1          online leading-idle trim in EpisodeWriter (keeps
 #                              15-frame lead-in; same semantics as build_no_release).
+#   KAI0_TAIL_TRIM=1           online trailing-idle cap in EpisodeWriter (holds the
+#                              post-task idle run, keeps TAIL_CAP=15 terminal settle;
+#                              arm AND gripper must be static → final release kept).
+#                              Defaults to follow KAI0_FRONT_TRIM.
 #   KAI0_GRIPPER_FROM_MASTER=1 action gripper dims (6,13) ← master grasp command;
 #                              12 arm dims stay = slave state. Set 0 to opt out.
 export KAI0_FRONT_TRIM="${KAI0_FRONT_TRIM:-1}"
+export KAI0_TAIL_TRIM="${KAI0_TAIL_TRIM:-$KAI0_FRONT_TRIM}"
 export KAI0_GRIPPER_FROM_MASTER="${KAI0_GRIPPER_FROM_MASTER:-1}"
+# Async writer: capture thread enqueues, bg thread encodes → no startup stall +
+# holds rate. With the cheap demux validate, the writer keeps up → fast finalize.
+# KAI0_ASYNC_WRITER=0 reverts to inline encode.
+export KAI0_ASYNC_WRITER="${KAI0_ASYNC_WRITER:-1}"
+# Per-episode finalize self-check (first-pts==0, frames==rows, first frame
+# decodes / not black). Cheap (~0.2s); default ON. KAI0_VALIDATE_TRIM=0 disables.
+export KAI0_VALIDATE_TRIM="${KAI0_VALIDATE_TRIM:-1}"
 # Dataset CONTENT version → auto-creates a version folder and tags the date leaf.
 # Layout: KAI0/<Task>/<subset>/<vN>/<date>-<vN>/ (e.g. Task_A/dagger/v3/2026-06-15-v3).
 # dagger_recorder_node inherits this env; the recorder mkdir's the full path, so
@@ -173,6 +186,8 @@ echo " checkpoint : $CHECKPOINT_DIR"
 echo " task       : ${TASK_NAME:-<infer-from-ckpt>}"
 echo " subset     : $SUBSET"
 echo " leaf suffix: $KAI0_DATE_SUFFIX (<task>/<subset>/<date>$KAI0_DATE_SUFFIX; head_depth=$KAI0_HEAD_DEPTH)"
+echo " trim       : front=$KAI0_FRONT_TRIM tail=$KAI0_TAIL_TRIM (record-time leading + trailing idle cap, keep 15-frame settle)"
+echo " depth fmt  : packed 1 file/episode (.zarr.zip) — EpisodeWriter.finalize auto-packs the zarr dir"
 echo " inference  : $([ "$RECORD_INFERENCE" = "true" ] && echo 'ON (Form C: dagger/ + inference/)' || echo 'OFF (dagger/ only)')"
 echo " prompt     : ${PROMPT:-<infer-from-ckpt>}"
 echo " config     : $CONFIG_NAME"
