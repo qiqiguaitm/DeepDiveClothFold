@@ -6,7 +6,7 @@
 
 数据 kai0_base(kai-only),复用 viterbi_compare.Model。英文标注。
 Run: /home/tim/miniconda3/envs/srpo/bin/python crave/experiments/viterbi_observability.py [--mine-n 200]
-输出: crave/docs/visualization/viterbi_regression.png, viterbi_recurrence.png
+输出: crave/docs/visualization/viterbi/viterbi_regression.png, viterbi_recurrence.png
 """
 import argparse
 import json

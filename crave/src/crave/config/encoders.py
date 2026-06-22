@@ -35,6 +35,9 @@ ENCODERS: dict[str, EncoderSpec] = {
     "dinov2-base":  EncoderSpec("dinov2-base", "hf_dino", str(HF_HUB / "dinov2-base"), 768, "fp16", 224, 16, 1),
     "dinov2-large": EncoderSpec("dinov2-large", "hf_dino", str(HF_HUB / "dinov2-large"), 1024, "fp16", 224, 16, 1),
     # ---- DINOv3 (patch16, 1 CLS + 4 register tokens, bf16 mandatory) ----
+    # Smaller debug model (ungated HF-format re-upload, camenduru) — fetch/run faster than H+ while 7B downloads.
+    # (ViT-S/B only exist as raw .pth upstream; they'd need a .pth->HF conversion before this AutoModel path can load them.)
+    "dinov3-l":         EncoderSpec("dinov3-l", "hf_dino", str(REPO / "temp/dinov3_vitl16"), 1024, "bf16", 256, 16, 5),
     "dinov3-h":         EncoderSpec("dinov3-h", "hf_dino", str(HF_HUB / "dinov3-vith16plus-pretrain-lvd1689m"), 1280, "bf16", 256, 16, 5),
     "dinov3-7b":        EncoderSpec("dinov3-7b", "hf_dino", str(REPO / "temp/dinov3_7b"), 4096, "bf16", 256, 16, 5),
     "dinov3-7b-int8":   EncoderSpec("dinov3-7b-int8", "hf_dino", str(REPO / "temp/dinov3_7b_int8"), 4096, "int8", 256, 16, 5),
@@ -45,6 +48,7 @@ ENCODERS: dict[str, EncoderSpec] = {
 # Back-compat alias used by the legacy `CRAVE_ENC` env values.
 LEGACY_ALIASES = {
     "dinov2": "dinov2-large",
+    "dinov3l": "dinov3-l",
     "dinov3h": "dinov3-h",
     "dinov3_7b": "dinov3-7b",
     "dinov3_7b_int8": "dinov3-7b-int8",

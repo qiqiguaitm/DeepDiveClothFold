@@ -1,7 +1,7 @@
 """Viterbi 计算流程可视化 + 三变体对比 + 未完成(裁半)episode 的 end 锚点消融。
 
 挖矿逻辑 1:1 复刻 DiscreteValue(kai0_base, kai-only);viterbi/med/mkp/mono 走 crave.utils。
-产出(落 crave/docs/visualization/):
+产出(落 crave/docs/visualization/viterbi/):
   (1) viterbi_mechanism.png      emit 代价场热力图 + Viterbi 路径 + 逐帧最近-milestone(看 DP 如何穿过便宜格)
   (2) viterbi_three_variants.png 完整 ep:无 Viterbi(raw argmin) / Viterbi end=1(恒 bonus) / Viterbi cond_end(现方法)
   (3) viterbi_crop_endanchor.png 裁半(未完成)ep × N:end1 vs cond_end 末值是否重合
@@ -23,7 +23,7 @@ from crave.utils import med, mkp, mono, viterbi
 
 plt = setup_mpl()
 CFG = resolve_dataset("kai0_base")
-OUTV = viz_dir()                       # crave/docs/visualization
+OUTV = viz_dir("viterbi")              # crave/docs/visualization/viterbi
 
 
 def loadep(e):

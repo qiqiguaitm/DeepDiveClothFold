@@ -21,6 +21,7 @@
 | [METHOD](cross_episode_recurrence_value_METHOD.md) | **离散主线 V2.4**:9 步配方 + 四场景验证 + 否决死路 + 结论。**实现请读这个。** |
 | [CONTINUOUS](cross_episode_recurrence_value_CONTINUOUS.md) | **连续 value 形态**:端到端 TCC + 细 bin DP 时序证据读出。advantage 密集(81-96%)、平滑无崩塌;含完整推导。 |
 | [GENERALIZATION](cross_episode_recurrence_value_GENERALIZATION.md) | **跨数据集泛化实证**:XVLA soft_fold corr 0.956、真实 ALOHA coffee corr 0.988,配方逐字不改。 |
+| [encoders](encoders.md) | **编码器作用 / 选型 / 对比**:语义(DINOv2/DINOv3)vs 外观(Wan-VAE)两路;注册表逐档(small→7b)角色;DINOv3 register-token/bf16 要点 + 选型建议。图集在 `visualization/encoders/`。 |
 | [viterbi_computation](viterbi_computation.md) | **Viterbi-DP 计算流程详解**:emit 代价场/转移惩罚/前向递推+回溯逐行;三变体对比;未完成(裁半)ep 的 end 锚消融(end_bonus 无作用,封顶靠 emission,未完成靠 de_end OOD flag);**§6 两项观测能力**——回退可观测(注入 undo→redo,value 如实跌 0.65→0.15,硬单调会抹平)+ 循环 milestone 兼顾(同态复现 9.8% 不乱抖)。脚本 `viterbi_compare.py` / `viterbi_observability.py`。 |
 
 **定位与落地:**
