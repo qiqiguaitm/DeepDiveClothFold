@@ -137,6 +137,63 @@
 
 ---
 
+## 7.5 ⭐ 实施结果(B1 naive-from-base,config `pi05_kaivis_from_paligemma`)
+
+> **job**: 闲时多次重提 → **转独占** `t-20260619152024-pthmf`(cnbj Robot-North-H20 8×H20)。停在 **148000/150000(~99%)**。⚠️ offline MAE 系统性反指,**真机为终判**(未做)。
+
+### 7.5.1 初始化(冷启动 from PaliGemma base)
+**weight_loader = `PaliGemmaLocalWeightLoader(npz_path=…/paligemma_weights/pt_224.npz)`** — npz 里有的载入,没有的走模型 Flax 随机 init:
+
+| 模块 | 初始化 |
+|---|---|
+| **SigLIP-So400m 视觉编码器**(`img/*`)| ✅ PaliGemma 预训练 |
+| **Gemma-2B LLM / VLM**(`llm/*`)| ✅ PaliGemma 预训练 |
+| **Action Expert(Gemma-300m)** | 🎲 随机 init |
+| **动作 in/out 投影、state 投影、time MLP(adaRMS)** | 🎲 随机 init |
+| **域条件 hub `action_head_cond_hub`**(num_domains=2,kai=0/vis=1)| 🎲 随机 init |
+
+→ 与 warm-start(`CheckpointWeightLoader(pi05_base)`)本质不同:**只继承 PaliGemma VLM,action expert 从零学** → 早期 MAE 高(6k @1=0.47)、需 150k 步。
+
+### 7.5.2 模型 + 训练参数
+
+| 项 | 值 | 项 | 值 |
+|---|---|---|---|
+| model | `Pi0Config(pi05=True, action_head_cond_num_domains=2)` | dtype | bf16 |
+| VLM / action expert | gemma_2b / gemma_300m | action_dim / horizon | 32 / 50 |
+| max_token_len | 200 | num_train_steps | **150,000** |
+| batch / 并行 | **128** / fsdp_devices=**8** | LR | CosineDecay warmup **3,000** / peak **3e-5** / decay 150k / end **3e-6** |
+| EMA | **0.9999** | optimizer | AdamW(默认)|
+| save / keep | 2,000 / 10,000 | num_workers | 16 |
+| data | `kai_vis_merged`(kai+vis 双本体合并) | default_prompt | `"Flatten and fold the cloth."` |
+| use_delta_joint_actions | False(absolute joint) | domain_weights | **(1.0, 4.2925)**(kai:vis 帧级配平≈1:1)|
+| inline-eval | `vis_v2_merged_val` 200 帧,每 4 save | dataset_id | 1 |
+
+### 7.5.3 inline-eval MAE 历史(val=`vis_v2_merged_val`,单调深度收敛、无回弹)
+
+| step | MAE@1 | @10 | @25 | @50 |
+|---|---|---|---|---|
+| 6000 | 0.4685 | 0.4682 | 0.4691 | 0.4712 |
+| 20000 | 0.0462 | 0.0417 | 0.0467 | 0.0602 |
+| 40000 | 0.0128 | 0.0197 | 0.0284 | 0.0387 |
+| 64000 | 0.0079 | 0.0148 | 0.0212 | 0.0286 |
+| 80000 | 0.0072 | 0.0133 | 0.0187 | 0.0249 |
+| 96000 | 0.0070 | 0.0123 | 0.0168 | 0.0223 |
+| 112000 | 0.0068 | 0.0115 | 0.0155 | 0.0203 |
+| 128000 | 0.0067 | 0.0111 | 0.0146 | 0.0190 |
+| 136000 | 0.0066 | 0.0109 | 0.0142 | 0.0185 |
+| **144000(末次 eval)** | **0.0066** | **0.0107** | **0.0139** | **0.0181** |
+
+- **best ckpt**(落盘最新,> 末次 eval):`…/kai0/checkpoints/pi05_kaivis_from_paligemma/from_paligemma_cnbj/`**`148000`**`/params`(gf3 cnbj)。
+- **best MAE**(@144000,148k 无 eval 但 ≈ 或微优):**@1=0.0066 / @10=0.0107 / @25=0.0139 / @50=0.0181**。
+- @1 早 plateau(136k 起 0.0066 不动),@50 仍在微降 → 取最新 148000。
+
+### 7.5.4 结论
+- **裁决坐实**:从 PaliGemma base 冷启动(跳过 PI 机器人预训练)**确实收敛**(§0 YES 兑现),曲线干净无塌缩。
+- **反超 warm-start**:对照 Exp-C `v3early_dagger_ptsfix`(warm-start best 49999)@1=0.0081/@50=0.0274 → **from-PaliGemma 全 horizon 更优(@1 −19%、@50 −34%)**(⚠️ 同 val 可比,但 offline 非终判)。
+- **下一步**:真机 rollout 终判;若真机 work → 该路线(自有数据 + 不依赖 PI 预训练)成立。
+
+---
+
 ## 8. 开放问题(调研未能直接 de-risk)
 1. 有没有人发表过**真机双臂可变形/叠衣、百万帧、from-PaliGemma-base(无机器人预训练)**的收敛结果?(目前证据全是仿真单臂短程)
 2. 双本体 co-train 的最优配比 + per-embodiment norm:部署目标本体该上权多少?混训 2 本体 vs 每本体单独训一个模型,哪个更好?
