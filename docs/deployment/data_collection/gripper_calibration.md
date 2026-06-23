@@ -84,16 +84,20 @@ bash start_scripts/kai/start_teleop.sh                      # 主夹爪捏到底
 `remap_gripper_raw`(V1 raw-dict 路径),由 `create_trained_policy`(v0/v2/dagger)
 和 `serve_policy_v1.py`(v1)调用。**env 门控,默认关**:
 
-| env | 默认 | 含义 |
-|---|---|---|
-| `KAI0_GRIPPER_DEPLOY_REMAP` | `0` | `1` 开启(部署旧 100mm-frame ckpt 时);新 frame ckpt 保持 `0` |
-| `KAI0_GRIPPER_REAL_RANGE` | `0.0,0.07` | 真机夹爪 `[闭,开]`(米,action 单位) |
-| `KAI0_GRIPPER_DIMS` | `6,13` | 夹爪维(左,右) |
+| env | 代码默认 | start 脚本默认 | 含义 |
+|---|---|---|---|
+| `KAI0_GRIPPER_DEPLOY_REMAP` | `0` | **`1`(开)** | 部署旧 100mm-frame ckpt 用 `1`;新 frame ckpt 设 `0` 关 |
+| `KAI0_GRIPPER_REAL_RANGE` | `0.0,0.07` | `0.0,0.07` | 真机夹爪 `[闭,开]`(米,action 单位) |
+| `KAI0_GRIPPER_DIMS` | `6,13` | `6,13` | 夹爪维(左,右) |
 
-4 个 start 脚本(`start_autonomy_from_ckpt{,_v1,_v2}.sh` / `start_dagger_collect.sh`)已 export 这两个 env
-(默认 0)。部署旧 ckpt:
+> **代码层默认关**(`gripper_remap.py`,保护离线 eval / 训练 norm 不被改);**4 个 start 脚本默认开**
+> (`start_autonomy_from_ckpt{,_v1,_v2}.sh` / `start_dagger_collect.sh` export `:-1`),因为本机已做官方
+> 0–70mm 标定、现部署的多是旧 frame ckpt。部署**新 frame ckpt** 时显式关:
 
 ```bash
-KAI0_GRIPPER_DEPLOY_REMAP=1 ./start_scripts/kai/start_autonomy_from_ckpt.sh <旧ckpt_dir> --execute
+# 旧 ckpt(默认就开, 直接跑):
+./start_scripts/kai/start_autonomy_from_ckpt.sh <旧ckpt_dir> --execute
+# 新 frame ckpt(关掉 remap):
+KAI0_GRIPPER_DEPLOY_REMAP=0 ./start_scripts/kai/start_autonomy_from_ckpt.sh <新ckpt_dir> --execute
 ```
-serve/node 日志会打印 `[gripper-remap] dim 6: train[..,..] -> real[0,0.07] (a=…)`。新 ckpt(标定后采集重训)不要开。
+serve/node 日志会打印 `[gripper-remap] dim 6: train[..,..] -> real[0,0.07] (a=…)` 确认生效。

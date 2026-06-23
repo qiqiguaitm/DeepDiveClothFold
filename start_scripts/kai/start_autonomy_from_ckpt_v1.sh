@@ -110,9 +110,9 @@ if [ ! -f "$V1_PKL" ]; then
 fi
 
 # Deploy-time gripper frame remap (old 100mm-range ckpt → real 0–70mm robot).
-# 默认关。部署官方夹爪标定(0–70mm)前训练的旧 ckpt 时设 =1。serve_policy_v1.py 读取。
+# 默认开(本机已官方 0–70mm 标定)。部署新 frame ckpt 时设 =0 关。serve_policy_v1.py 读取。
 # 见 docs/deployment/data_collection/gripper_calibration.md
-export KAI0_GRIPPER_DEPLOY_REMAP="${KAI0_GRIPPER_DEPLOY_REMAP:-0}"
+export KAI0_GRIPPER_DEPLOY_REMAP="${KAI0_GRIPPER_DEPLOY_REMAP:-1}"
 export KAI0_GRIPPER_REAL_RANGE="${KAI0_GRIPPER_REAL_RANGE:-0.0,0.07}"
 [ "$KAI0_GRIPPER_DEPLOY_REMAP" = "1" ] && echo "[gripper-remap] ON: 夹爪 norm_stats [q01,q99]→真机[$KAI0_GRIPPER_REAL_RANGE]m (dims 6,13)"
 
