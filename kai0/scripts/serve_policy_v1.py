@@ -689,6 +689,11 @@ def main() -> None:
 
     # 2. Load state + action norm stats (mean/std + q01/q99 if present)
     norm = load_norm_stats(args.norm_stats)
+    # Deploy-time gripper frame remap (old 100mm-range ckpt -> real 0-70mm robot).
+    # No-op unless KAI0_GRIPPER_DEPLOY_REMAP=1.
+    from openpi.shared.normalize import remap_gripper_raw
+
+    norm = remap_gripper_raw(norm)
     a_stats = norm["actions"]
     a_dim_n = len(a_stats["mean"])
     logger.info(f"Action norm: dim={a_dim_n} (taking first {args.action_dim})")
