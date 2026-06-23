@@ -1058,6 +1058,29 @@ _CONFIGS = [
         num_workers=24,  # pyav 3-cam 逐帧解码 → 默认 2 worker 喂不动 8×A100 (3s↔10s 锯齿/半空转); 拉满消除 stall
     ),
 
+    # ===== 诊断: vis AE multi-task (action+value) — 判定 vis value 弱是"配置"还是"vis感知地板" =====
+    # 唯一变量 vs ADVANTAGE_TORCH_VIS_AWBC: loss_action_weight 0.0→1.0 (加回 action flow-matching 辅助任务).
+    # 假设: value-only 把 backbone 视觉特征饿瘦 → vis value 卡在 loss 0.073 (≈常数基线). 加 action 辅助应压低.
+    # 30k 短诊断: loss<<0.073 + value corr↑ → 可修(做满100k); 仍卡 → vis 感知是地板 (退两端置信区离散).
+    # 对照锚: KAI0 AE (多任务) value-vs-GT corr=0.93 / loss=0.002; 现 vis (value-only) corr=0.67 / loss=0.073.
+    TrainConfig(
+        name="ADVANTAGE_TORCH_VIS_AWBC_MT",
+        model=pi0_config.AdvantageEstimatorConfig(
+            pi05=True, action_dim=32, action_horizon=50, max_token_len=200,
+            loss_action_weight=1.0, loss_value_weight=1.0,   # ⭐ 唯一变量: action loss 开
+        ),
+        data=LerobotAgilexDataConfig(
+            repo_id="/vePFS/tim/workspace/deepdive_kai0/kai0/data/Task_A/self_built/vis_awbc_merged_stage_interp",
+            default_prompt="Flatten and fold the cloth.",
+        ),
+        pytorch_weight_path="/vePFS/tim/workspace/openpi_cache/modelscope_cache/lerobot/pi05_base",
+        advantage_estimator=True,
+        num_train_steps=30_000,
+        save_interval=10_000,
+        batch_size=144,
+        num_workers=24,
+    ),
+
     # ===== Cross-embodiment: per-DS-norm + Action-Head conditioning (2026-06-05) =====
     # Single PRE-MERGED kai+vis dataset `kai_vis_merged` (kai0_base+kai0_dagger=domain0 6512ep,
     # A_smooth800_dagger_full=domain1/vis 1033ep) → healthy single-source path (NOT datasets_yaml).
