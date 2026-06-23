@@ -181,9 +181,9 @@ if [[ -n "$ASSET_ID" ]] && [[ ! -f "$CHECKPOINT_DIR/assets/$ASSET_ID/norm_stats.
 fi
 
 # Deploy-time gripper frame remap (old 100mm-range ckpt → real 0–70mm robot).
-# 默认关。用官方夹爪标定(0–70mm)前训练的旧 ckpt 跑 DAgger 时设 =1。
+# 默认开(本机已官方 0–70mm 标定)。部署新 frame ckpt 跑 DAgger 时设 =0 关。
 # 见 docs/deployment/data_collection/gripper_calibration.md
-export KAI0_GRIPPER_DEPLOY_REMAP="${KAI0_GRIPPER_DEPLOY_REMAP:-0}"
+export KAI0_GRIPPER_DEPLOY_REMAP="${KAI0_GRIPPER_DEPLOY_REMAP:-1}"
 export KAI0_GRIPPER_REAL_RANGE="${KAI0_GRIPPER_REAL_RANGE:-0.0,0.07}"
 
 echo "============================================================"
