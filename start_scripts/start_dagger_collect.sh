@@ -180,9 +180,16 @@ if [[ -n "$ASSET_ID" ]] && [[ ! -f "$CHECKPOINT_DIR/assets/$ASSET_ID/norm_stats.
     exit 1
 fi
 
+# Deploy-time gripper frame remap (old 100mm-range ckpt → real 0–70mm robot).
+# 默认关。用官方夹爪标定(0–70mm)前训练的旧 ckpt 跑 DAgger 时设 =1。
+# 见 docs/deployment/data_collection/gripper_calibration.md
+export KAI0_GRIPPER_DEPLOY_REMAP="${KAI0_GRIPPER_DEPLOY_REMAP:-0}"
+export KAI0_GRIPPER_REAL_RANGE="${KAI0_GRIPPER_REAL_RANGE:-0.0,0.07}"
+
 echo "============================================================"
 echo " kai0 DAgger Collection (delegates to start_autonomy.sh --dagger)"
 echo " checkpoint : $CHECKPOINT_DIR"
+echo " gripper-remap: $([ "$KAI0_GRIPPER_DEPLOY_REMAP" = "1" ] && echo "ON [q01,q99]→[$KAI0_GRIPPER_REAL_RANGE]m" || echo "OFF (new-frame ckpt)")"
 echo " task       : ${TASK_NAME:-<infer-from-ckpt>}"
 echo " subset     : $SUBSET"
 echo " leaf suffix: $KAI0_DATE_SUFFIX (<task>/<subset>/<date>$KAI0_DATE_SUFFIX; head_depth=$KAI0_HEAD_DEPTH)"

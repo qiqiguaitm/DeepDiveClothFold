@@ -12,7 +12,12 @@
 #
 # 使用:
 #   ./start_scripts/kai/start_autonomy_from_ckpt_v2.sh <ckpt_dir> [--draft <draft.pt>] \
-#        [--port 8001] [--gpu N] [--tau 0.3] [--no-execute] [其他 autonomy args...]
+#        [--port 8001] [--gpu N] [--tau 0.3] [--no-execute] [--trace] [--no-spec] [其他 autonomy args...]
+#
+#   --trace    : 每帧写一行 JSONL (accept/fallback/radius + 臂/夹爪 chunk 运动幅度) 到
+#                /tmp/flash_trace_<port>_{spec,nospec}_<ts>.jsonl, 供 flash_trace_phase_report.py 分析。
+#   --no-spec  : A/B 基线 — 跳过 draft+verify, 纯 eager 全量去噪 (= 你之前 --no-spec 真机跑的)。
+#                配 --trace 录基线臂运动, 与带 spec 的 trace 直接比幅值 (诊断真机 OOD 欠驱动)。
 #
 # 要求:
 #   <ckpt_dir>/train_config.json   ({"base_config_name":..., "override_asset_id":...})
@@ -38,6 +43,9 @@ FLASH_GPU="${KAI0_FLASH_GPU_ID:-}"
 TAU="0.3"
 EXECUTE="--execute"      # 默认直接执行; --no-execute 改成观察模式
 SEED_ARG=()
+TRACE_FLAG=0
+TRACE_ARG=()
+NOSPEC_ARG=()
 PASSTHRU=()
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -46,10 +54,19 @@ while [[ $# -gt 0 ]]; do
         --gpu)         FLASH_GPU="$2"; shift 2 ;;
         --tau)         TAU="$2"; shift 2 ;;
         --seed)        SEED_ARG=(--seed "$2"); shift 2 ;;
+        --trace)       TRACE_FLAG=1; shift ;;
+        --no-spec)     NOSPEC_ARG=(--no-spec); shift ;;
         --no-execute)  EXECUTE=""; shift ;;
         *)             PASSTHRU+=("$1"); shift ;;
     esac
 done
+
+# trace 路径在解析完才建 (此时 WS_PORT 已定); no-spec 时文件名带 _nospec 便于 A/B 区分
+if [ "$TRACE_FLAG" = "1" ]; then
+    _TRACE_TAG=$([ ${#NOSPEC_ARG[@]} -gt 0 ] && echo "nospec" || echo "spec")
+    TRACE_ARG=(--trace-out "/tmp/flash_trace_${WS_PORT}_${_TRACE_TAG}_$(date +%Y%m%d_%H%M%S).jsonl")
+    echo "    trace →      ${TRACE_ARG[1]}"
+fi
 
 REPO="$(cd "$(dirname "$0")/../.." && pwd)"
 PY=/data1/miniconda3/bin/python
@@ -103,6 +120,13 @@ if [ -z "$FLASH_GPU" ]; then
 fi
 FREE_MB=$(nvidia-smi --query-gpu=memory.free --format=csv,noheader,nounits -i "$FLASH_GPU" 2>/dev/null || echo '?')
 
+# Deploy-time gripper frame remap (old 100mm-range ckpt → real 0–70mm robot).
+# 默认关。部署官方夹爪标定(0–70mm)前训练的旧 ckpt 时设 =1。serve_policy_flash.py
+# (经 create_trained_policy) 读取。见 docs/deployment/data_collection/gripper_calibration.md
+export KAI0_GRIPPER_DEPLOY_REMAP="${KAI0_GRIPPER_DEPLOY_REMAP:-0}"
+export KAI0_GRIPPER_REAL_RANGE="${KAI0_GRIPPER_REAL_RANGE:-0.0,0.07}"
+[ "$KAI0_GRIPPER_DEPLOY_REMAP" = "1" ] && echo "[gripper-remap] ON: 夹爪 norm_stats [q01,q99]→真机[$KAI0_GRIPPER_REAL_RANGE]m (dims 6,13)"
+
 echo "============================================================"
 echo "  start_autonomy_from_ckpt_v2.sh  (FLASH speculative)"
 echo "    ckpt_dir:    $CKPT_DIR"
@@ -132,6 +156,8 @@ CUDA_VISIBLE_DEVICES="$FLASH_GPU" JAX_PLATFORMS="" \
     --port "$WS_PORT" \
     --tau "$TAU" \
     "${SEED_ARG[@]}" \
+    "${TRACE_ARG[@]}" \
+    "${NOSPEC_ARG[@]}" \
     >"$SERVE_LOG" 2>&1 &
 SERVE_PID=$!
 

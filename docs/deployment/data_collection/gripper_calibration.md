@@ -72,6 +72,28 @@ bash start_scripts/kai/start_teleop.sh                      # 主夹爪捏到底
 
 - `set_zero` / `max_range` 写入夹爪固件,**掉电不丢**,重启遥操即生效;需要重标时再跑一次即可
   (`set_zero` 可反复重设,无出厂回退)。
-- **坐标系变了**:旧的 100mm-range 数据集 / ckpt 的夹爪维度(action/state 第 6、13 维)
-  部署到现在的 70mm-range 真机时,需把这两维的 norm_stats 按 **70/100 = 0.7** 重算后再部署
-  (用新范围重新解算 q01/q99),否则模型输出的夹爪幅度会偏大。
+## 部署旧 ckpt:运行时夹爪 norm_stats 重映射
+
+**坐标系变了**:在「官方 0–70mm 标定」之前训练的旧 ckpt,其夹爪维度(action/state 第 6、13 维)
+编码在旧 frame(max_range=100,夹爪全开 ≈ 0.08–0.10m)。部署到现在的 70mm 真机会过/欠驱动夹爪。
+
+修法是**运行时按该 ckpt 自己的训练范围 `[q01, q99]` 仿射重映射到真机范围 `[0, 0.07]m`**
+(**不是固定乘 0.7** —— 每个 ckpt 的夹爪训练范围不同,比例各异;退化的未用夹爪维自动跳过)。
+同一映射同时作用于 `state`(proprio 入)和 `actions`(指令出),保证归一/反归一一致。
+逻辑在 `kai0/src/openpi/shared/normalize.py::remap_gripper_norm_stats`(NormStats 路径)与
+`remap_gripper_raw`(V1 raw-dict 路径),由 `create_trained_policy`(v0/v2/dagger)
+和 `serve_policy_v1.py`(v1)调用。**env 门控,默认关**:
+
+| env | 默认 | 含义 |
+|---|---|---|
+| `KAI0_GRIPPER_DEPLOY_REMAP` | `0` | `1` 开启(部署旧 100mm-frame ckpt 时);新 frame ckpt 保持 `0` |
+| `KAI0_GRIPPER_REAL_RANGE` | `0.0,0.07` | 真机夹爪 `[闭,开]`(米,action 单位) |
+| `KAI0_GRIPPER_DIMS` | `6,13` | 夹爪维(左,右) |
+
+4 个 start 脚本(`start_autonomy_from_ckpt{,_v1,_v2}.sh` / `start_dagger_collect.sh`)已 export 这两个 env
+(默认 0)。部署旧 ckpt:
+
+```bash
+KAI0_GRIPPER_DEPLOY_REMAP=1 ./start_scripts/kai/start_autonomy_from_ckpt.sh <旧ckpt_dir> --execute
+```
+serve/node 日志会打印 `[gripper-remap] dim 6: train[..,..] -> real[0,0.07] (a=…)`。新 ckpt(标定后采集重训)不要开。
