@@ -168,14 +168,38 @@ def _train_draft(args, sampler, manifest):
     from openpi.models_pytorch.draft import DraftChunkHead
 
     vlm_lm = model.paligemma_with_expert.paligemma.language_model
+    n_layers = int(max(1, args.num_layers))
     draft = DraftChunkHead(
-        img_dim=img_dim, chunk_m=ah, out_dim=ad, use_state_token=False, gemma_config=vlm_lm.config,
+        img_dim=img_dim, chunk_m=ah, out_dim=ad, use_state_token=False,
+        num_layers=n_layers, gemma_config=vlm_lm.config,
     ).to(device=device, dtype=torch.float32)
-    draft.init_from_vlm_layer(vlm_lm.layers[0])
+    draft.init_from_vlm_layers(vlm_lm.layers[:n_layers])
     draft.train()
     opt = torch.optim.Adam(draft.parameters(), lr=args.lr, weight_decay=1e-4)
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=args.epochs)
-    step_w = torch.tensor([0.97 ** i for i in range(ah)], device=device).view(1, ah, 1)
+    step_w = torch.tensor([args.step_decay ** i for i in range(ah)], device=device).view(1, ah, 1)
+    F = torch.nn.functional
+
+    def _compose_loss(pred, tgt):
+        # position (per-step weighted) + within-chunk velocity + per-dim magnitude + trajectory-shape cosine.
+        # v3 (2026-06-18): cos_weight attacks the real-machine "动的不对" (offline draft-vs-true cosine 0.71);
+        # mag_weight default lowered (v2's mag=1.0 over-actuated 1.73x on real OOD frames, see flash_impl_log §9.6).
+        if args.loss == "huber":
+            pos = F.huber_loss(pred, tgt, reduction="none", delta=args.huber_delta)
+        else:
+            pos = F.mse_loss(pred, tgt, reduction="none")
+        loss = (pos * step_w).mean()
+        if args.vel_weight > 0:
+            loss = loss + args.vel_weight * F.mse_loss(pred[:, 1:] - pred[:, :-1], tgt[:, 1:] - tgt[:, :-1])
+        if args.mag_weight > 0:
+            loss = loss + args.mag_weight * F.mse_loss(pred.std(dim=1), tgt.std(dim=1))
+        if args.cos_weight > 0:
+            # demeaned trajectory shape, flattened over (H, action_dim) — the exact metric the
+            # magnitude probe reports as "trend cosine". 1-cos → push direction toward the teacher.
+            pc = (pred - pred.mean(dim=1, keepdim=True)).reshape(pred.shape[0], -1)
+            tc = (tgt - tgt.mean(dim=1, keepdim=True)).reshape(tgt.shape[0], -1)
+            loss = loss + args.cos_weight * (1.0 - F.cosine_similarity(pc, tc, dim=1)).mean()
+        return loss
 
     train_man = manifest["splits"]["train"]
     n_train = int(train_man["num_samples"])
@@ -199,7 +223,7 @@ def _train_draft(args, sampler, manifest):
                 patt = patt_all[bi].to(device)
                 tgt = tgt_all[bi].to(device)
                 pred = draft(prefix_embs=pe, prefix_pad_masks=ppad, prefix_att_masks=patt)
-                loss = (torch.nn.functional.huber_loss(pred, tgt, reduction="none", delta=0.1) * step_w).mean()
+                loss = _compose_loss(pred, tgt)
                 opt.zero_grad()
                 loss.backward()
                 torch.nn.utils.clip_grad_norm_(draft.parameters(), max_norm=1.0)
@@ -212,14 +236,16 @@ def _train_draft(args, sampler, manifest):
             best_loss = epoch_loss
             best_state = {k: v.detach().clone() for k, v in draft.state_dict().items()}
         if ep_i % 25 == 0 or ep_i == args.epochs - 1:
-            print(f"  epoch {ep_i:4d}  train_huber={epoch_loss:.5f}  (best={best_loss:.5f})  n={n_train}", flush=True)
+            print(f"  epoch {ep_i:4d}  train_loss={epoch_loss:.5f}  (best={best_loss:.5f})  n={n_train}", flush=True)
 
     if best_state is not None:
         draft.load_state_dict(best_state)
-        print(f"[best] restored draft @ train_huber={best_loss:.5f}")
+        print(f"[best] restored draft @ train_loss={best_loss:.5f}")
     draft.eval()
     torch.save({"state_dict": draft.state_dict(), "img_dim": img_dim, "chunk_m": ah, "out_dim": ad,
-                "config": args.config, "ckpt": str(Path(args.ckpt).resolve()), "best_train_huber": best_loss},
+                "num_layers": n_layers, "loss": args.loss, "vel_weight": args.vel_weight,
+                "mag_weight": args.mag_weight, "cos_weight": args.cos_weight, "step_decay": args.step_decay,
+                "config": args.config, "ckpt": str(Path(args.ckpt).resolve()), "best_train_loss": best_loss},
                args.out)
     print(f"[save] draft -> {args.out}")
     return draft, best_loss
@@ -291,6 +317,17 @@ def main() -> int:
     ap.add_argument("--teacher-steps", type=int, default=10)
     ap.add_argument("--verify-noise", choices=["random", "zero"], default="random")
     ap.add_argument("--reuse-cache", action="store_true")
+    # ---- draft capacity + loss recipe (v2/v3; backward-compatible defaults) ----
+    ap.add_argument("--num-layers", type=int, default=2, help="draft Gemma decoder layers (1=orig FLASH, 2=v2/v3)")
+    ap.add_argument("--loss", choices=["mse", "huber"], default="mse", help="position loss (v2/v3=mse, orig=huber)")
+    ap.add_argument("--huber-delta", type=float, default=0.1)
+    ap.add_argument("--step-decay", type=float, default=1.0, help="per-step position weight decay base (1.0=flat)")
+    ap.add_argument("--vel-weight", type=float, default=1.0, help="within-chunk velocity (Δstep) MSE weight")
+    ap.add_argument("--mag-weight", type=float, default=0.3,
+                    help="per-dim std-match weight. v2=1.0 over-actuated 1.73x on real OOD → v3 default 0.3.")
+    ap.add_argument("--cos-weight", type=float, default=1.0,
+                    help="v3: demeaned-trajectory-shape (1-cosine) weight — attacks real-machine '动的不对' "
+                         "(offline draft-vs-true cosine 0.71). 0=off (=v2 behavior).")
     args = ap.parse_args()
 
     from openpi.models_pytorch.spec_pi0_pytorch import SpecArgs
