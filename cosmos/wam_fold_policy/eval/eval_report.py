@@ -979,7 +979,7 @@ def get_args():
     # comparison baselines
     ap.add_argument("--gwp_summary",
                     default="/mnt/pfs/p46h4f/cosmos/deepdive_kai0/giga_world_policy/runs/visrobot01_fold_aihc_latent_5x/report_step50000/summary.json")
-    ap.add_argument("--tau0_json", default="/mnt/pfs/p46h4f/cosmos/deepdive_kai0/tau-0-wm/runs/eval_gigaworld.json")
+    ap.add_argument("--tau0_json", default="/mnt/pfs/p46h4f/cosmos/deepdive_kai0/tau0_wm/runs/eval_gigaworld.json")
     ap.add_argument("--tau0_tag", default="p3_final")
     # eval sizing — each window now costs n_sub (=ceil(action_chunk/model_chunk)=3) action inferences
     # + up to n_sub video inferences (autoregressive WM rollout), so keep these small by default.

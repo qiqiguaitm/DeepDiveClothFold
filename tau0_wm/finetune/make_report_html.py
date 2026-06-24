@@ -8,7 +8,7 @@ import base64
 import json
 import os
 
-RUNS = "/mnt/pfs/p46h4f/cosmos/deepdive_kai0/tau-0-wm/runs"
+RUNS = "/mnt/pfs/p46h4f/cosmos/deepdive_kai0/tau0_wm/runs"
 ASSETS = os.path.join(RUNS, "report_assets")
 OUT = os.path.join(RUNS, "report.html")
 
@@ -230,7 +230,7 @@ P3 暴露的剩余短板是 <b>8 块自回归视频 rollout 仍衰减到 PSNR≈
 <p>P1 (16 卡, 3000 步, 训头) → P2 (32 卡, 20000 步, 解冻 action_blocks) → <b>P3 (4 节点 32 卡, full-FT 5.5B + ZeRO-2, 50000 步, 原生 chunk=9 重抽 latent + 5:1 损失 + warmup-cosine LR peak 1.1e-4)</b>, 均已完成 final.pt。P3 ckpt 每 2000 步存档 (step_2000…step_50000 + final.pt, 各 ~11GB bf16)。</p>
 
 <h2>8. 复现</h2>
-<p class="muted">代码 <code>tau-0-wm/finetune/</code>: model_joint · data_joint · train_tau0 · run_train · run_eval_dist · eval_gigaworld_dist · gen_video_compare · make_report_html · launch_*2node.sh · aihc/。
+<p class="muted">代码 <code>tau0_wm/finetune/</code>: model_joint · data_joint · train_tau0 · run_train · run_eval_dist · eval_gigaworld_dist · gen_video_compare · make_report_html · launch_*2node.sh · aihc/。
 GigaWorld 对齐评估: <code>bash finetune/launch_gweval_2node.sh --ckpt &lt;ckpt&gt; --tag &lt;t&gt;</code> (16 卡)。</p>
 </body></html>"""
     open(OUT, "w").write(html)

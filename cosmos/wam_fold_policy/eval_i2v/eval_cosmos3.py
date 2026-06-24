@@ -9,7 +9,7 @@ Loader:
     (shards 120G transformer across all visible GPUs), other components on cuda:0.
 
 Metrics: PSNR/SSIM/temporal_absdiff_ratio/LPIPS via video_metrics_gpu (ported verbatim
-from tau-0-wm/finetune/eval_gigaworld_dist.py). Results appended to --out (jsonl).
+from tau0_wm/finetune/eval_gigaworld_dist.py). Results appended to --out (jsonl).
 """
 import os, sys, json, time, argparse
 import torch

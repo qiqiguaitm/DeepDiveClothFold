@@ -1,7 +1,7 @@
 #!/bin/bash
 # 2-GPU chunk=33 (t_lat=9) full-FT smoke on the b1 remote node — validate memory + step time.
 set -u
-REPO=/mnt/pfs/p46h4f/cosmos/deepdive_kai0/tau-0-wm
+REPO=/mnt/pfs/p46h4f/cosmos/deepdive_kai0/tau0_wm
 VENV=/mnt/pfs/p46h4f/cosmos/.venv
 cd "$REPO"
 export PYTHONPATH="$REPO" PYTHONUNBUFFERED=1 TOKENIZERS_PARALLELISM=false

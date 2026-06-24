@@ -11,7 +11,7 @@ export WAN_DIFFUSERS=../checkpoints/Wan2.2-TI2V-5B-Diffusers
 export GWP_OUT_SUBDIR=vae_latent_uni
 export GWP_OFFS="0,4,8,12,16,20,24,28,32,36,40,44,48"   # 13 帧窗 → T_lat=4(支持 K≤3 history)
 NS=${NS:-8}
-LOGD=/mnt/pfs/p46h4f/cosmos/deepdive_kai0/Ctrl-World/logs
+LOGD=/mnt/pfs/p46h4f/cosmos/deepdive_kai0/ctrl_wm/logs
 
 run() {  # emb view_keys
   local emb=$1 vk=$2

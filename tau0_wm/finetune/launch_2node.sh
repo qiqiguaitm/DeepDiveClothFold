@@ -4,7 +4,7 @@
 #   b1 = remote (192.168.20.169, ssh -p 429) = rank 1
 # Usage: bash finetune/launch_2node.sh [run_train.py args...]
 set -u
-REPO=/mnt/pfs/p46h4f/cosmos/deepdive_kai0/tau-0-wm
+REPO=/mnt/pfs/p46h4f/cosmos/deepdive_kai0/tau0_wm
 VENV=/mnt/pfs/p46h4f/cosmos/.venv
 ACC="$VENV/bin/accelerate"
 MASTER_IP=192.168.20.128

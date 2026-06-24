@@ -3,7 +3,7 @@
 # Train on visrobot01_v3_train + kairobot01_v3, validate on visrobot01_v3_val.
 # Override via env vars; defaults are for the FULL run.
 set -e
-cd /mnt/pfs/p46h4f/cosmos/deepdive_kai0/Ctrl-World
+cd /mnt/pfs/p46h4f/cosmos/deepdive_kai0/ctrl_wm
 export no_proxy='*' NO_PROXY='*'; unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY
 export WANDB_MODE=${WANDB_MODE:-offline}
 export SWANLAB_MODE=${SWANLAB_MODE:-local}

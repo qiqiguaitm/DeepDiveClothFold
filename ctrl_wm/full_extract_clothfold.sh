@@ -3,7 +3,7 @@
 # Uses 8 INDEPENDENT single-GPU processes with manual sharding (no accelerate/NCCL),
 # so uneven per-episode runtime can't trigger a distributed barrier timeout.
 # Resumable: extract skips episodes whose annotation already exists.
-cd /mnt/pfs/p46h4f/cosmos/deepdive_kai0/Ctrl-World
+cd /mnt/pfs/p46h4f/cosmos/deepdive_kai0/ctrl_wm
 export no_proxy='*' NO_PROXY='*'; unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY
 export TOKENIZERS_PARALLELISM=false
 

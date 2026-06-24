@@ -3,7 +3,7 @@
 #   master (this node, 192.168.20.128) = rank0 ; worker (192.168.20.169, ssh -p 429) = rank1
 # Usage: bash finetune/launch_eval_2node.sh [eval_gigaworld_dist.py args...]
 set -u
-REPO=/mnt/pfs/p46h4f/cosmos/deepdive_kai0/tau-0-wm
+REPO=/mnt/pfs/p46h4f/cosmos/deepdive_kai0/tau0_wm
 VENV=/mnt/pfs/p46h4f/cosmos/.venv
 ACC="$VENV/bin/accelerate"
 MASTER_IP=192.168.20.128

@@ -17,7 +17,7 @@ import json
 import os
 import sys
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # tau-0-wm repo root
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # tau0_wm repo root
 sys.path.insert(0, ROOT)
 
 import torch  # noqa: E402

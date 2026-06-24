@@ -2,7 +2,7 @@
 # Regenerate §5 closed-loop rollout GIFs + video_metrics.json from a P3 checkpoint
 # on the b1 remote node (1 GPU). chunk=9 / vae_latent_c33 to match the P3 model.
 set -u
-REPO=/mnt/pfs/p46h4f/cosmos/deepdive_kai0/tau-0-wm
+REPO=/mnt/pfs/p46h4f/cosmos/deepdive_kai0/tau0_wm
 VENV=/mnt/pfs/p46h4f/cosmos/.venv
 CKPT=${CKPT:-$REPO/runs/tau0_fold_p4_32g/final.pt}
 OUT=${OUT:-$REPO/runs/report_assets_p4}

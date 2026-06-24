@@ -4,7 +4,7 @@
 > **状态**: 📝 待评审（设计已定稿，P0 环境阻塞已解，待开跑）
 > **创建**: 2026-06-05 ｜ **更新**: 2026-06-05（scope fix: 只 3 episode；horizon=1s/3s/7s **滑窗覆盖整段**，每窗 teacher-forced 独立 rollout）
 > **资源**: 当前主机(=b2) 8×A100 80G + b1 8×A100 80G = **16×A100**
-> **关联**: 复用 `tau-0-wm/finetune/eval_gigaworld_dist.py` 的 GPU 度量；数字与 tau0 eval 可横比。
+> **关联**: 复用 `tau0_wm/finetune/eval_gigaworld_dist.py` 的 GPU 度量；数字与 tau0 eval 可横比。
 
 ---
 
@@ -71,7 +71,7 @@ add_resolution_template=False, add_duration_template=False, 固定 seed
 模型原生 bucket 832×480 (16:9) 生成（质量最好）；评分时把 GT 与生成都**中心裁到 4:3 → 缩放到公共网格（如 256²）**，避免拉伸失真。GT 重采样 30→24fps，取与生成重叠的 horizon。
 
 ### 指标
-- 复用 `tau-0-wm/finetune/eval_gigaworld_dist.py` 的 GPU 实现：**PSNR / SSIM / LPIPS / temporal_absdiff_ratio**（逐帧 + 每 horizon 聚合）。
+- 复用 `tau0_wm/finetune/eval_gigaworld_dist.py` 的 GPU 实现：**PSNR / SSIM / LPIPS / temporal_absdiff_ratio**（逐帧 + 每 horizon 聚合）。
 - **按 horizon 分别报**：1s / 3s / 7s 三组指标 → metric-vs-horizon 曲线（头号科学产出，区分三模型的衰减速度）。
 - 加分布级 **FVD**（在 7s 桶上算，样本最足）。
 - 定性：逐 (episode,camera) 的 **gen vs GT 并排画廊**，每条含 1s/3s/7s 三个预测（复用 `make_report_html.py` / `gen_video_compare.py`）。
@@ -139,7 +139,7 @@ for H_frames, dur, src_step in [(24,"1s",30), (72,"3s",90), (189,"7s",236)]:   #
 ## 6. 环境（P0 已解决）
 
 - 本机 8×A100 + b1 8×A100；`/mnt/pfs` 共享 gpfs，模型/venv 在所有节点可见。
-- **节点**：`b2 就是当前主机` → 用 **当前主机(b2) rank0 + b1 rank1**（与 `tau-0-wm/finetune/launch_gweval_2node.sh` 同 2 节点模式）。b1 = `ssh -p 429 root@120.48.99.93`（同一把 `~/.ssh/id_rsa` 已可达）。
+- **节点**：`b2 就是当前主机` → 用 **当前主机(b2) rank0 + b1 rank1**（与 `tau0_wm/finetune/launch_gweval_2node.sh` 同 2 节点模式）。b1 = `ssh -p 429 root@120.48.99.93`（同一把 `~/.ssh/id_rsa` 已可达）。
 - **venv**: `/mnt/pfs/p46h4f/cosmos/cosmos3-venv`（diffusers 0.39.0.dev0 + Cosmos3OmniPipeline，torch 2.6.0+cu124）。
 - **P0 阻塞已解**：`transformers 5.10.2` 在 import 时无条件引用 `torch.float8_e8m0fnu`（torch≥2.7 才有），而本机锁 torch 2.6/cu124（driver 535）。fp8 量化路径在 bf16 推理中不会触发，故在脚本顶部加**一行 shim** 即可（不动 torch/transformers 版本，避免版本矩阵泥潭）：
   ```python

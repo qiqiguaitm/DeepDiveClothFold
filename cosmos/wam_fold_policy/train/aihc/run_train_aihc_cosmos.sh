@@ -1,6 +1,6 @@
 #!/bin/bash
 # AIHC multi-node launcher for Cosmos3-Nano-Policy -> wam_fold cross-rig full-FT.
-# Mirrors giga_world_policy/scripts/aihc/run_train_aihc.sh + tau-0-wm run_train_aihc_tau0.sh:
+# Mirrors giga_world_policy/scripts/aihc/run_train_aihc.sh + tau0_wm run_train_aihc_tau0.sh:
 # AIHC PyTorchJob injects per-pod WORLD_SIZE(#nodes), RANK(node rank), MASTER_ADDR, MASTER_PORT.
 # Cosmos uses the framework's native FSDP launcher (torchrun -m cosmos_framework.scripts.train),
 # NOT accelerate. The gpfs venv (cu128/torch2.10) is reused; its uv-managed python is staged on

@@ -24,7 +24,7 @@ from finetune.data_joint import LatentJointDataset  # noqa: E402
 
 VAL = "/mnt/pfs/p46h4f/cosmos/deepdive_kai0/kai0/data/wam_fold_v1/visrobot01_val"
 ASSETS = os.path.join(ROOT, "finetune", "assets")
-CKPT = "/mnt/pfs/p46h4f/cosmos/deepdive_kai0/tau-0-wm/checkpoints/tau-0-wm"
+CKPT = "/mnt/pfs/p46h4f/cosmos/deepdive_kai0/tau0_wm/checkpoints/tau-0-wm"
 VAE_DIR = "/mnt/pfs/p46h4f/cosmos/deepdive_kai0/checkpoints/Wan2.2-TI2V-5B-Diffusers"
 
 
@@ -151,12 +151,12 @@ def save_traj_png(pred_abs, gt_abs, path, title=""):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--ckpt", default="/mnt/pfs/p46h4f/cosmos/deepdive_kai0/tau-0-wm/runs/tau0_fold_p1/final.pt")
+    ap.add_argument("--ckpt", default="/mnt/pfs/p46h4f/cosmos/deepdive_kai0/tau0_wm/runs/tau0_fold_p1/final.pt")
     ap.add_argument("--n_windows", type=int, default=4)
     ap.add_argument("--steps", type=int, default=10)
     ap.add_argument("--rollout_k", type=int, default=8, help="closed-loop rollout chunks (video length)")
     ap.add_argument("--fps", type=int, default=4, help="GIF playback fps")
-    ap.add_argument("--out_dir", default="/mnt/pfs/p46h4f/cosmos/deepdive_kai0/tau-0-wm/runs/report_assets")
+    ap.add_argument("--out_dir", default="/mnt/pfs/p46h4f/cosmos/deepdive_kai0/tau0_wm/runs/report_assets")
     ap.add_argument("--device", default="cuda")
     args = ap.parse_args()
     dev = torch.device(args.device); dt = torch.bfloat16

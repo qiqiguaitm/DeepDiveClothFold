@@ -2,9 +2,9 @@
 # AIHC multi-node launcher for tau0 joint-space fine-tune (run_train.py).
 # Mirrors giga_world_policy/scripts/aihc/run_train_aihc.sh: AIHC PyTorchJob injects
 # WORLD_SIZE(#nodes), RANK(node rank), MASTER_ADDR, MASTER_PORT per pod.
-# Job command: bash /mnt/pfs/p46h4f/cosmos/deepdive_kai0/tau-0-wm/finetune/aihc/run_train_aihc_tau0.sh
+# Job command: bash /mnt/pfs/p46h4f/cosmos/deepdive_kai0/tau0_wm/finetune/aihc/run_train_aihc_tau0.sh
 set -e
-REPO=/mnt/pfs/p46h4f/cosmos/deepdive_kai0/tau-0-wm
+REPO=/mnt/pfs/p46h4f/cosmos/deepdive_kai0/tau0_wm
 VENV=/mnt/pfs/p46h4f/cosmos/.venv
 cd "$REPO"
 
@@ -47,9 +47,9 @@ LAMBDA_V=${LAMBDA_V:-0.0}              # P3 = 1.0
 LAMBDA_A=${LAMBDA_A:-1.0}              # P3 = 5.0  (GigaWorld 5:1 action:video)
 WARMUP_STEPS=${WARMUP_STEPS:-0}
 COSINE_STEPS=${COSINE_STEPS:-0}
-CKPT_DIR=${CKPT_DIR:-/mnt/pfs/p46h4f/cosmos/deepdive_kai0/tau-0-wm/runs/tau0_fold_${PHASE}_32g}
+CKPT_DIR=${CKPT_DIR:-/mnt/pfs/p46h4f/cosmos/deepdive_kai0/tau0_wm/runs/tau0_fold_${PHASE}_32g}
 CKPT_INTERVAL=${CKPT_INTERVAL:-1000}
-INIT_CKPT=${INIT_CKPT:-/mnt/pfs/p46h4f/cosmos/deepdive_kai0/tau-0-wm/checkpoints/tau-0-wm}
+INIT_CKPT=${INIT_CKPT:-/mnt/pfs/p46h4f/cosmos/deepdive_kai0/tau0_wm/checkpoints/tau-0-wm}
 RESUME=${RESUME:-}
 EXTRA=${EXTRA:-}
 export TAU0_CHUNK=${TAU0_CHUNK:-5}              # P3 = 9 (native contiguous, T_lat=3); P4 = 33 (T_lat=9)

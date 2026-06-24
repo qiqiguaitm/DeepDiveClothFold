@@ -1,7 +1,7 @@
 # τ₀-WM 关节空间叠衣服微调 — P1 报告（先验迁移消融 + 16 卡评估）
 
 > 日期: 2026-06-04 · 任务: Flatten and fold the cloth · 目标本体: visrobot01
-> 训练框架: 自建 tau0 trainer（`tau-0-wm/finetune/`）· 方案见 [future_plans/plans/tau0_fold_visrobot01_joint_finetune.md]
+> 训练框架: 自建 tau0 trainer（`tau0_wm/finetune/`）· 方案见 [future_plans/plans/tau0_fold_visrobot01_joint_finetune.md]
 > 训练: P1 dev-box 2 节点 16 卡 · 评估: 2 节点 16 卡分布式 · P2: AIHC 4 节点 32 卡（提交中）
 
 ## 1. 结论先行（GO）
@@ -72,7 +72,7 @@ step  910: 1.56     step 3000: ~1.0
 - ▶ 部署:`TauPolicyJoint`(关节进关节出,免 FK/IK)→ visrobot01 真机闭环成功率。
 
 ## 附录:关键产物
-- 训练/评估代码: `tau-0-wm/finetune/`(`model_joint.py` `data_joint.py` `train_tau0.py` `run_train.py` `run_eval_dist.py` `launch_{,eval_}2node.sh` `aihc/`)
+- 训练/评估代码: `tau0_wm/finetune/`(`model_joint.py` `data_joint.py` `train_tau0.py` `run_train.py` `run_eval_dist.py` `launch_{,eval_}2node.sh` `aihc/`)
 - P1 ckpts: `runs/tau0_fold_p1/{step_1000,2000,3000,final}.pt`
 - 评估结果: `runs/eval_report.json`
 - P2(32 卡)输出: `runs/tau0_fold_p2_32g/`(job `job-2opevitevlmt`)

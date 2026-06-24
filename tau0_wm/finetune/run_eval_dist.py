@@ -23,7 +23,7 @@ from finetune.data_joint import LatentJointDataset  # noqa: E402
 
 VAL = "/mnt/pfs/p46h4f/cosmos/deepdive_kai0/kai0/data/wam_fold_v1/visrobot01_val"
 ASSETS = os.path.join(ROOT, "finetune", "assets")
-CKPT = "/mnt/pfs/p46h4f/cosmos/deepdive_kai0/tau-0-wm/checkpoints/tau-0-wm"
+CKPT = "/mnt/pfs/p46h4f/cosmos/deepdive_kai0/tau0_wm/checkpoints/tau-0-wm"
 
 
 @torch.no_grad()
@@ -33,7 +33,7 @@ def main():
     ap.add_argument("--random_trunk", action="store_true", help="control: random-init trunk")
     ap.add_argument("--windows_per_ep", type=int, default=8)
     ap.add_argument("--seeds", type=int, default=3)
-    ap.add_argument("--out", default="/mnt/pfs/p46h4f/cosmos/deepdive_kai0/tau-0-wm/runs/eval_report.json")
+    ap.add_argument("--out", default="/mnt/pfs/p46h4f/cosmos/deepdive_kai0/tau0_wm/runs/eval_report.json")
     ap.add_argument("--tag", default="p1")
     args = ap.parse_args()
 

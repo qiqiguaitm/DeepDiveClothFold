@@ -94,7 +94,7 @@ Policy-DROID 已是"给首帧+指令+state,产未来 obs+动作"的 AC-WM ——
   ```
   `data_parallel_shard_degree=-1`(自动 = WORLD_SIZE 16);16B + FSDP16 + activation-checkpointing 显存充裕。
 - **评测/报告**(16 GPU 分片): 沿用上轮 cosmos_eval / giga_world_policy 的 2 节点分片(b2+b1),val 200ep 横扫,出 report.html + 三方对比。
-- 网络参数复用 `tau-0-wm/finetune/launch_gweval_2node.sh`(eth0, 主 IP 192.168.20.128)。
+- 网络参数复用 `tau0_wm/finetune/launch_gweval_2node.sh`(eth0, 主 IP 192.168.20.128)。
 
 ## 9. 立即可做(待你拍板后)
 - 验证 cosmos-framework 能否 clone + 装(P0 最高优先,决定整个方案可行性)。

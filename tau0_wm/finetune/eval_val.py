@@ -24,7 +24,7 @@ from finetune.model_joint import build_joint_wanmodel  # noqa: E402
 from finetune.train_tau0 import TauFlowTrainer, ACTION_CHUNK  # noqa: E402
 from finetune.data_joint import LatentJointDataset  # noqa: E402
 
-CKPT = "/mnt/pfs/p46h4f/cosmos/deepdive_kai0/tau-0-wm/checkpoints/tau-0-wm"
+CKPT = "/mnt/pfs/p46h4f/cosmos/deepdive_kai0/tau0_wm/checkpoints/tau-0-wm"
 ASSETS = os.path.join(ROOT, "finetune", "assets")
 
 

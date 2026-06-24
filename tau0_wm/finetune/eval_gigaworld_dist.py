@@ -27,7 +27,7 @@ from finetune.gen_video_compare import load_vae, decode, gen_video, gen_action, 
 
 VAL = "/mnt/pfs/p46h4f/cosmos/deepdive_kai0/kai0/data/wam_fold_v1/visrobot01_val"
 ASSETS = os.path.join(ROOT, "finetune", "assets")
-CKPT = "/mnt/pfs/p46h4f/cosmos/deepdive_kai0/tau-0-wm/checkpoints/tau-0-wm"
+CKPT = "/mnt/pfs/p46h4f/cosmos/deepdive_kai0/tau0_wm/checkpoints/tau-0-wm"
 HORIZONS = sorted({h for h in (1, 10, ACTION_CHUNK // 2, ACTION_CHUNK)})
 KEYS = ["psnr", "ssim", "temporal_absdiff_ratio", "lpips", "action_mae", "action_mse",
         *[f"mae@{h}" for h in HORIZONS], "mae_move", "beat_stay_move", "shape_corr_move"]
@@ -64,11 +64,11 @@ def video_metrics_gpu(pred_thwc, gt_thwc, lpips_fn, device):
 @torch.no_grad()
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--ckpt", default="/mnt/pfs/p46h4f/cosmos/deepdive_kai0/tau-0-wm/runs/tau0_fold_p2_32g/final.pt")
+    ap.add_argument("--ckpt", default="/mnt/pfs/p46h4f/cosmos/deepdive_kai0/tau0_wm/runs/tau0_fold_p2_32g/final.pt")
     ap.add_argument("--tag", default="p2_final")
     ap.add_argument("--steps", type=int, default=10)
     ap.add_argument("--windows_per_ep", type=int, default=1)
-    ap.add_argument("--out", default="/mnt/pfs/p46h4f/cosmos/deepdive_kai0/tau-0-wm/runs/eval_gigaworld.json")
+    ap.add_argument("--out", default="/mnt/pfs/p46h4f/cosmos/deepdive_kai0/tau0_wm/runs/eval_gigaworld.json")
     ap.add_argument("--lpips", action="store_true", help="enable LPIPS (needs 233MB AlexNet download)")
     args = ap.parse_args()
 

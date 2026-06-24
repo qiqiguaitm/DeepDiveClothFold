@@ -2,7 +2,7 @@
 # Run P3 eval (action MSE + video PSNR/SSIM) on the b1 remote node's 8 free GPUs.
 # chunk=9 / vae_latent_c9 to match the P3 model. Launched via ssh from the driver.
 set -u
-REPO=/mnt/pfs/p46h4f/cosmos/deepdive_kai0/tau-0-wm
+REPO=/mnt/pfs/p46h4f/cosmos/deepdive_kai0/tau0_wm
 VENV=/mnt/pfs/p46h4f/cosmos/.venv
 CKPT=${CKPT:-$REPO/runs/tau0_fold_p3_32g/step_10000.pt}
 # derive a tag from the checkpoint step (step_10000.pt -> p3_step10000; final.pt -> p3_final)

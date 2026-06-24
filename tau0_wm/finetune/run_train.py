@@ -28,7 +28,7 @@ from finetune.data_joint import LatentJointDataset  # noqa: E402
 
 DATA = "/mnt/pfs/p46h4f/cosmos/deepdive_kai0/kai0/data/wam_fold_v1"
 ASSETS = os.path.join(ROOT, "finetune", "assets")
-CKPT = "/mnt/pfs/p46h4f/cosmos/deepdive_kai0/tau-0-wm/checkpoints/tau-0-wm"
+CKPT = "/mnt/pfs/p46h4f/cosmos/deepdive_kai0/tau0_wm/checkpoints/tau-0-wm"
 
 
 def build_dataset(vis_upsample=3, include_kai=True):
@@ -54,7 +54,7 @@ def main():
     ap.add_argument("--grad_accum", type=int, default=4)
     ap.add_argument("--lambda_v", type=float, default=0.0)   # action-focused FT by default
     ap.add_argument("--lambda_a", type=float, default=1.0)
-    ap.add_argument("--ckpt_dir", default="/mnt/pfs/p46h4f/cosmos/deepdive_kai0/tau-0-wm/runs/tau0_fold_p1")
+    ap.add_argument("--ckpt_dir", default="/mnt/pfs/p46h4f/cosmos/deepdive_kai0/tau0_wm/runs/tau0_fold_p1")
     ap.add_argument("--ckpt_interval", type=int, default=1000)
     ap.add_argument("--log_interval", type=int, default=20)
     ap.add_argument("--resume", default="")

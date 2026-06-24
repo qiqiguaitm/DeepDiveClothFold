@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Submit the Cosmos3-Nano-Policy wam_fold cross-rig 32-GPU (4n8g) AIHC job.
-# Mirrors tau-0-wm/finetune/aihc/submit_tau0_aihc.sh — image-pull password injected at submit
+# Mirrors tau0_wm/finetune/aihc/submit_tau0_aihc.sh — image-pull password injected at submit
 # time and never committed.
 # Usage:  AIHC_IMG_PASSWORD='****' bash submit_cosmos_aihc.sh [SPEC.json] [RETRY=5]
 set -euo pipefail

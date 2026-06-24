@@ -105,7 +105,7 @@ Save transformer + ACWMTrainer state  →  Total_time 0:30, 无报错
 理由:布料形变物理机器人无关 → 混训共享物理;AC-WM 下动作仅条件,per-emb 归一化 + 视觉锚点即良定义。备选:分别训练 / 加 robot-id token(通常非必需)。
 
 ## 4f. 全自主编排(已启动)
-`Ctrl-World/logs/acwm_master_orchestrate.sh`(选项1):等 SVD 提取结束 → `run_unify_latents.sh` 重抽 vae_latent_uni →
+`ctrl_wm/logs/acwm_master_orchestrate.sh`(选项1):等 SVD 提取结束 → `run_unify_latents.sh` 重抽 vae_latent_uni →
 `acwm_clothfold_mix_smoke`(4步,验证跨本体 dataloading+两套 norm+K=2)→ 全量 `acwm_clothfold_mix`(8卡)。
 日志:`logs/{acwm_master,unify_full,acwm_mix_smoke,acwm_mix_train}.log`。
 
