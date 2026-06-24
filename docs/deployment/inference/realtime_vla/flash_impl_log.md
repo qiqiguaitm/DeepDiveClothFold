@@ -331,4 +331,73 @@ mean min-over-K radius (eval window) = 0.0181  (τ=0.3, 余量 ~16×)
 "好 ckpt vs 已知开环 ckpt 同输入下接受率是否都饱和"需要第二个**开环 PyTorch ckpt** + 为其蒸 draft。现状: 全仓库仅 `pytorch_pure200_step50000` 一个 PyTorch (safetensors) pi05 ckpt; FLASH sampler 仅支持 PyTorch。已知开环 ckpt (如 5day_recent, 见 [[reference_vision_ablation_openloop]]) 均为 JAX → 需先 JAX→PyTorch 转换再蒸 draft, 属独立工程, **本轮不做**。机理上 §8.2 已预判: 接受率从不跨 ckpt、不对 GT 比较, 每个 ckpt 的 draft 自蒸馏只测自洽 → 两者都该饱和; ②只是把这条直接量出来。待有第二个 PyTorch 开环 ckpt 时复用 `spec_r5_probe.py` 即可。
 
 ---
+
+## 9. 真机幅值欠驱动诊断 + draft v2 重训 (2026-06-18) ✅
+
+> ⚠️ **记录恢复说明**: 6-09~6-13 期间在工作树里写过的 §9–§14 (R3 证伪 / R6 Triton-on-5090 量测 / v2 trace 工具 / 真机开环诊断 / draft v2 配方) 均为**未提交的 tracked-file 改动**, 在一次 `pull --rebase` + `reset` + merge (见 reflog HEAD@{0,2-5}) 中被丢弃; `draft.py` 的多层改动同时被回退。**未提交的 untracked 新脚本全部幸存**, 故那几轮分析的权威记录现存于各脚本 docstring: `spec_r3_probe.py` (R3 证伪), `optimize/v1_triton/bench_v1_per_step_5090.py` (R6: prefill-skip 下 FLASH+v1≈3.83x), `flash_trace_phase_report.py` (v2 真机 accept×相位), `spec_draft_magnitude_probe.py` (本节诊断)。本节把当前唯一可复现的活产物 (draft v2) 落档, 并已重新应用 `draft.py` 多层支持 (向后兼容, `num_layers` 默认 1)。
+
+### 9.1 真机现象 → 离线根因
+用户两次真机 rollout: `--no-spec` (纯 eager 10 步) 正常完成; **带 spec 动得慢、欠完成, 但整体轨迹趋势对**。接受率 50/50 查不出问题 —— 因为 verify-from-draft 锚在 draft 上 (x_t = t·noise + (1-t)·x0_draft), 衰减的 draft **自洽地被接受** (又一个 §8 自洽盲点)。
+
+`spec_draft_magnitude_probe.py` (逐 chunk 比 spec vs full-denoise, arm 非夹爪维, MC=4 均值轨迹) 确诊 **draft v1 幅值欠驱动**:
+- v1 (1 层 + Huber δ=0.1): **spec/full(均值)=0.61**, 趋势 cosine 0.52 → 1 层回归蒸馏退化为条件均值预测, 方向对幅值被压到 61%。
+
+### 9.2 修复配方 (蒸馏脚本 `spec_draft_r1d.py` 新增, 全 opt-in)
+`--num-layers 2`(从 1)、`--loss mse`(替 huber)、`--vel-weight 1.0`(逐帧速度差 MSE)、`--mag-weight 1.0`(逐维 std 匹配)、`--step-decay`。`draft.py` 配套加 `_gemma_blocks_tail` ModuleList + `init_from_vlm_layers()` 用 VLM 前 N 层 warm-start; 1 层路径键集 ⊂ 2 层键集, 旧 blob 照常加载 (CPU 冒烟核验通过)。
+
+### 9.3 结果 (GPU1, pure200 step50000, 1600 train / 240 holdout, 300 epoch, train_loss 0.00282)
+| 指标 | v1 (1L+Huber) | v2 (2L+MSE+vel+mag) |
+|---|---|---|
+| spec / full(均值) motion | **0.61** 欠驱动 | **1.16** |
+| spec / full(单样本) motion | — | 1.13 |
+| 趋势 cosine (vs 均值) | 0.52 | **0.71** |
+| 逐 arm 维 spec/mean | ~0.6 | 1.0–1.5 (每维都回到位) |
+
+采样自身 full/均值=1.02, 故 draft 1.16 处于健康区间 (略激进而非欠驱动)。幅值已非主因。产物 `/tmp/draft_r1d_pure200_v2.pt` (num_layers=2)。
+
+### 9.4 下一步 (待用户真机验证)
+用户用 `start_autonomy_from_ckpt_v2.sh <ckpt> --draft /tmp/draft_r1d_pure200_v2.pt` 重跑真机 (建议先不 `--execute` 看动作幅度, 再 `--execute`)。若仍偏慢, 候选: 提 `--mag-weight` / 加第 3 层 / spec 路径保留少量采样性 (verify 不锚 draft)。
+
+### 9.4b ⚠️ 关键 loader bug: 多层 draft 被静默截断 (2026-06-18, 与 §9 同源回退连带)
+用户首次用 v2 (2 层) draft 上真机 → **机械臂几乎不动**, chunk `Δ(0→49)=0.01` (输出≈保持当前姿态), infer 175ms。复盘发现 `serve_policy_flash.py::_build_draft` 也在那次 rebase 里被回退掉了 `num_layers` 支持: 它用 1 层 head + `load_state_dict(strict=False)` 加载 2 层 blob → 2 层 blob 的 `_gemma_blocks_tail.0.*` 全成 "unexpected" 被**静默丢弃**, 只装进 layer 0 → 半截 draft 出退化/近静止 chunk。这极可能就是真机不动的**真因** (而非 §9.4 推测的纯 OOD 欠驱动)。
+修复 (`_build_draft`): 读 `num_layers=blob.get("num_layers",1)` 正确构造; 且 missing/unexpected 非空时**直接 SystemExit**, 拒绝服务半截 draft (宁可不起也不发垃圾动作)。下次起服会装全 2 层。
+
+### 9.4c A/B trace 工具复原 + 增强 (诊断"真机仍欠驱动 vs loader bug")
+`serve_policy_flash.py` 与 `start_autonomy_from_ckpt_v2.sh` 的 `--trace` / `--no-spec` 也随回退丢失, 已重新实现并加强:
+- `--trace-out` 每帧写 JSONL: accept/fallback/radius **+ 新增 `arm_motion`** (臂维 max-min 之和, 与 §9 offline probe 同度量) + 夹爪 net/range。**`--no-spec` 下也记 arm_motion** → spec vs 纯 eager 基线可直接比真机 chunk 幅值 (offline in-dist probe 看不到 OOD 欠驱动, 真机 trace 能)。
+- `--no-spec`: 跳过 draft+verify 走纯 eager `full_denoise_from_observation` (= 用户 --no-spec 真机路径)。
+- `flash_trace_phase_report.py` 加 `_ab_compare`: 给多个 trace 文件 (spec + nospec) 时按文件列 arm_motion 中位数 + 相对比, 一眼看出 spec 是否 < nospec。
+- 全部 opt-in (默认关 = 裸 v2 逐字一致); mock 冒烟通过 (spec 0.6 < nospec 1.1, A/B 比值与 verdict 正确); ruff + py_compile + bash -n 全绿。
+
+### 9.6 真机 A/B (spec vs --no-spec) → 重新定性: draft OOD **过驱动 + 方向偏**, 非欠驱动 (2026-06-18)
+9.4b loader 修复后 (`draft built: num_layers=2`, accept 50/50 fallback 0%), 真机现象变成 **spec 动不对 + 回退**; `--no-spec` 则**能抓衣服、大致跑完叠衣流程**(仍有些回退不流畅)。用 `--trace` 录两次, `flash_trace_phase_report.py <spec.jsonl> <nospec.jsonl>` (传多文件自动按文件 A/B) 对比 (归一化动作空间):
+
+| | arm_motion (chunk 内 max-min 和) | 夹爪 chunk 间方向翻转 gl / gr |
+|---|---|---|
+| spec (draft) | **2.94** | 14% / 24% |
+| no_spec (真模型) | **1.70** | 30% / 29% |
+
+**三条结论**:
+1. **draft 是 spec 失败主因** (no_spec 能做任务, spec 不能) ✅。
+2. **机制与 §9.4 推测相反**: 不是 chunk 间翻转更多 (spec 翻转率反而**更低/持平**), 而是 **spec 过驱动 — arm_motion 是 no_spec 的 1.73×**。draft 在真机 OOD 帧上**动太猛**, 方向又 ~30% 偏 (离线 cosine 0.71)。**§9 加的 mag-weight=1.0 在 OOD 上过校正了** (in-dist 1.16x → OOD 1.73x)。
+3. **"回退/不流畅"是另一个早存在的问题**: spec/no_spec 翻转率都 24-30%, 连真模型都这样 → 基模型 + RTC 的 chunk 间振荡 ("走3退1" / [[real_machine_oscillation_data_tail]] 的 0.99Hz), **与 FLASH 无关**。
+- 读数提醒: 合并 trace 报告里 `fallback=33.5%` 是假象 (no_spec 行打 fb=1.0 标记, 70/209=33.5% 只是占比; spec 实 fallback=0)。
+
+**根本张力**: accept 50/50 + radius 0.015 **只证 draft 自洽, 挡不住 OOD 过驱动 + 方向偏** (§13 盲点的闭环版)。光调幅值治不好 → 这是 draft **方向保真度 + OOD 泛化**问题。
+
+### 9.7 draft v3 配方: cosine 方向损失 + 降 mag-weight (进行中, 2026-06-18)
+`spec_draft_r1d.py` (也随同次 rebase 被回退, 已连同 v2 改动一并复原) 新增/改默认:
+- **`--cos-weight 1.0` (新)**: demeaned 轨迹形状 `(1 - cosine(pred-mean, tgt-mean))`, 正是 magnitude probe 报的 "trend cosine" 度量 → 直接压方向误差 (0.71→目标≥0.9)。
+- **`--mag-weight` 默认 1.0 → 0.3**: v2 的 1.0 在 OOD 过冲 1.73x, 降权让方向损失主导。
+- 复原: `--num-layers 2`、`--loss mse`、`--vel-weight 1.0`、`--step-decay`、多层 `init_from_vlm_layers`、blob 存 `best_train_loss` + 全部 loss 元数据。
+- 时序一致性 (相邻**帧**间 chunk 一致) 需重建 cache (现 cache 不保帧邻接), 本轮先不做; chunk **内**的 vel-weight 已覆盖帧内平滑。
+- 验收 (与 §9 同): 离线 `spec_draft_magnitude_probe.py` 看 spec/full(均值) 回到 ~1.0 (不再 1.73 过冲) **且 cosine ≥0.9**; 达标才上机真机 A/B (arm_motion 应贴近 no_spec, 翻转率不恶化)。
+- 训练: GPU0, `--reuse-cache` (1600/240), 300 epoch, `/tmp/draft_r1d_pure200_v3.pt`。
+
+### 9.5 旧代码无影响核验
+- `draft.py` 改动纯加性: `num_layers` 默认 1 → 单层路径与回退版逐字等价 (tail 为空 ModuleList, forward 循环退化为单 block); 旧 1 层 blob 键集是 2 层超集的子集, `load_state_dict` 照常。
+- 蒸馏脚本所有新损失项 weight>0 才生效, 默认值即 v2 配方; 不触碰任何旧推理/训练路径。
+- 全部新文件 untracked, 不进 git 直到用户明示。
+
+---
 </content>

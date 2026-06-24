@@ -37,17 +37,43 @@ def _load(paths: list[str]) -> list[dict]:
                     line = line.strip()
                     if line:
                         try:
-                            rows.append(json.loads(line))
+                            r = json.loads(line)
+                            r.setdefault("_file", fp)
+                            rows.append(r)
                         except json.JSONDecodeError:
                             pass
     return rows
+
+
+def _ab_compare(rows: list[dict]) -> None:
+    """When >1 trace file is given (e.g. spec vs --no-spec), print per-file arm-motion +
+    accept summary so the real-machine under-actuation A/B is read off directly."""
+    import os
+
+    files = sorted({r.get("_file", "?") for r in rows})
+    if len(files) < 2:
+        return
+    print("\n  -- 按文件 A/B (arm_motion = 归一化动作空间逐维 max-min 之和, 越大动得越多) --")
+    base = None
+    for fp in files:
+        fr = [r for r in rows if r.get("_file") == fp]
+        am = np.array([r.get("arm_motion", np.nan) for r in fr], dtype=np.float64)
+        acc = np.array([r.get("accept", np.nan) for r in fr], dtype=np.float64)
+        mode = fr[0].get("mode", "?") if fr else "?"
+        am_med = float(np.nanmedian(am))
+        if base is None:
+            base = am_med
+        rel = f" ({am_med / base:.2f}x vs first)" if base and base > 1e-9 else ""
+        print(f"     {os.path.basename(fp):42s} mode={mode:8s} n={len(fr):4d} | "
+              f"arm_motion med={am_med:.3f} mean={np.nanmean(am):.3f}{rel} | accept med={np.nanmedian(acc):.0f}")
+    print("     ⇒ 若 spec 的 arm_motion 明显 < no_spec → 真机 OOD 帧上 draft 欠驱动 (offline in-dist probe 测不出)。")
 
 
 def _col(rows, key, default=np.nan):
     return np.array([r.get(key, default) for r in rows], dtype=np.float64)
 
 
-def _bucket_stats(name, mask, accept, fb, rad_mean, rad_max, ah):
+def _bucket_stats(name, mask, accept, fb, rad_mean, rad_max, arm_motion, ah):
     n = int(mask.sum())
     if n == 0:
         print(f"  {name:7s}: (无帧)")
@@ -56,10 +82,12 @@ def _bucket_stats(name, mask, accept, fb, rad_mean, rad_max, ah):
     f = fb[mask]
     rm = rad_mean[mask]
     rx = rad_max[mask]
+    am = arm_motion[mask]
     accept_frac = float(np.nanmean(a)) / ah
     fb_pct = 100.0 * float(np.nanmean(f))
     print(f"  {name:7s}: n={n:5d} | accept={np.nanmean(a):5.1f}/{ah} ({accept_frac:4.0%}) | "
-          f"fallback={fb_pct:5.1f}% | rad_mean={np.nanmean(rm):.4f} | rad_max(p90)={np.nanpercentile(rx,90):.4f}")
+          f"fallback={fb_pct:5.1f}% | rad_mean={np.nanmean(rm):.4f} | rad_max(p90)={np.nanpercentile(rx,90):.4f} | "
+          f"arm_motion={np.nanmedian(am):.3f}")
     return {"n": n, "accept_frac": accept_frac, "fb_pct": fb_pct}
 
 
@@ -81,6 +109,7 @@ def main() -> int:
     fb = _col(rows, "fb", 0.0)
     rad_mean = _col(rows, "rad_mean")
     rad_max = _col(rows, "rad_max")
+    arm_motion = _col(rows, "arm_motion")
     t = _col(rows, "t", 0.0)
     gl_net = np.abs(_col(rows, "gl_net", 0.0))
     gr_net = np.abs(_col(rows, "gr_net", 0.0))
@@ -99,7 +128,9 @@ def main() -> int:
     print(f"  trace rows = {n}  | eval_h = {ah} | span = {span:.1f}s "
           f"(~{n/max(span,1e-9):.1f} infer/s)")
     print(f"  overall: accept={np.nanmean(accept):.1f}/{ah} ({np.nanmean(accept)/ah:.0%}) | "
-          f"fallback={100*np.nanmean(fb):.1f}% | rad_mean={np.nanmean(rad_mean):.4f}")
+          f"fallback={100*np.nanmean(fb):.1f}% | rad_mean={np.nanmean(rad_mean):.4f} | "
+          f"arm_motion med={np.nanmedian(arm_motion):.3f}")
+    _ab_compare(rows)
     if has_grip:
         print(f"  夹爪净位移 |net| (用于相位判定): p50={np.nanpercentile(grip_travel,50):.3f} "
               f"p90={np.nanpercentile(grip_travel,90):.3f} max={np.nanmax(grip_travel):.3f}  "
@@ -108,8 +139,8 @@ def main() -> int:
         print("  ⚠️ trace 无夹爪字段 (gl_net/gr_net) → 无法做相位拆分; 升级 serve_policy_flash.py 后重录。")
 
     print(f"\n  -- 相位拆分 (grasp = max臂|net| > {args.grasp_thr}) --")
-    s_sm = _bucket_stats("smooth", smooth, accept, fb, rad_mean, rad_max, ah)
-    s_gr = _bucket_stats("grasp", grasp, accept, fb, rad_mean, rad_max, ah)
+    s_sm = _bucket_stats("smooth", smooth, accept, fb, rad_mean, rad_max, arm_motion, ah)
+    s_gr = _bucket_stats("grasp", grasp, accept, fb, rad_mean, rad_max, arm_motion, ah)
 
     print("\n  -- verdict --")
     if not has_grip or s_gr is None:

@@ -7,7 +7,8 @@
 ```
 inference/
 ├── README.md                              ← 你在这里
-├── rtc_implementation.md                  RTC (Real-Time Chunking) 算法实现
+├── rtc_implementation.md                  RTC (Real-Time Chunking) 算法实现 (π₀.5/JAX)
+├── xvla_rtc_design.md                     X-VLA RTC 移植设计 (EE6D 前向 inpaint, 设计未实施)
 ├── ipc_inference_deployment_review.md     IPC 推理服务架构 review
 ├── ros2_image_inference_validation_review.md  ROS2 图像处理与推理校验
 ├── sim01_deployment.md                    sim01 部署文档
@@ -26,6 +27,7 @@ inference/
 | 文件 | 行数 | 用途 |
 |---|---|---|
 | [`rtc_implementation.md`](rtc_implementation.md) | ~249 | RTC (Inference Real-Time Chunking) 算法实现, 4 schedules + jax.vjp guidance |
+| [`xvla_rtc_design.md`](xvla_rtc_design.md) | ~design | X-VLA RTC 移植设计 — EE6D 原生空间 + **前向过程 inpaint** (vs 算术平均的 IK/decode 失败率差异) + 多层 IK 兜底; 异步双时钟前置; gated 于 E0 读视觉 |
 | [`ipc_inference_deployment_review.md`](ipc_inference_deployment_review.md) | ~178 | IPC 推理服务架构 — 与原版差异分析 |
 | [`ros2_image_inference_validation_review.md`](ros2_image_inference_validation_review.md) | ~430 | ROS2 图像处理 + 推理结果校验策略 review |
 | [`sim01_deployment.md`](sim01_deployment.md) | ~611 | sim01 仿真机器人部署 / 完整 step-by-step |
@@ -43,6 +45,7 @@ inference/
 | 看 V1 Triton 已实现日志 (异步流水线 / FP8 / SHM) | realtime_vla/v1_triton_log.md |
 | 看下一阶段 Layer B 系统级优化 | realtime_vla/layer_b_plan.md |
 | RTC 算法 (chunk overlap / inpainting / guidance) 怎么实现 | rtc_implementation.md |
+| **把 RTC 移植到 X-VLA** (EE6D / 前向 inpaint / 求逆失败率 / IK 兜底) | xvla_rtc_design.md |
 | IPC 推理服务 (kai0-style) 架构 | ipc_inference_deployment_review.md |
 | ROS2 image topic / 推理 input 校验 | ros2_image_inference_validation_review.md |
 | sim01 上完整部署 ckpt 推理 | sim01_deployment.md |

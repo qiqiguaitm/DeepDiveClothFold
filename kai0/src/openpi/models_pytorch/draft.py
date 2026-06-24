@@ -42,6 +42,7 @@ class DraftChunkHead(nn.Module):
         num_heads: int | None = None,
         num_kv_heads: int = 1,
         head_dim: int | None = None,
+        num_layers: int = 1,
         dtype: torch.dtype = torch.float32,
         attn_implementation: str = "sdpa",
         gemma_config: object | None = None,
@@ -50,6 +51,7 @@ class DraftChunkHead(nn.Module):
         self.chunk_m = int(chunk_m)
         self.out_dim = int(out_dim)
         self.state_dim = int(state_dim)
+        self.num_layers = int(max(1, num_layers))
         self.use_state_token = bool(use_state_token)
         self.pose_rot_dim = int(min(6, self.out_dim))
         self.attn_implementation = str(attn_implementation)
@@ -65,7 +67,7 @@ class DraftChunkHead(nn.Module):
                 hidden_size=int(self.hidden_size),
                 intermediate_size=int(hidden_dim),
                 num_attention_heads=int(self.num_heads),
-                num_hidden_layers=1,
+                num_hidden_layers=int(self.num_layers),
                 num_key_value_heads=int(self.num_kv_heads),
                 vocab_size=257152,
                 hidden_activation="gelu_pytorch_tanh",
@@ -89,6 +91,9 @@ class DraftChunkHead(nn.Module):
             self._state_token = None
         self._action_queries = nn.Embedding(int(self.chunk_m), int(self.hidden_size))
         self._gemma_block = GemmaDecoderLayer(gemma_config, layer_idx=0)
+        self._gemma_blocks_tail = nn.ModuleList(
+            [GemmaDecoderLayer(gemma_config, layer_idx=i) for i in range(1, self.num_layers)]
+        )
         self._rotary_emb = GemmaRotaryEmbedding(gemma_config)
         self._action_head = nn.Linear(int(self.hidden_size), int(self.out_dim))
 
@@ -152,6 +157,20 @@ class DraftChunkHead(nn.Module):
         """Warm-start the draft's single Gemma block from a trained VLM layer 0."""
         self._gemma_block.load_state_dict(layer.state_dict(), strict=True)
 
+    def init_from_vlm_layers(self, layers) -> None:
+        """Warm-start all draft blocks from a list of trained VLM layers.
+
+        layers[0] -> head block, layers[1:] -> tail blocks. If fewer layers are
+        supplied than the draft has, the last available layer is reused (so a
+        1-layer source can still seed a multi-layer draft)."""
+        layers = list(layers)
+        if not layers:
+            return
+        self._gemma_block.load_state_dict(layers[0].state_dict(), strict=True)
+        for i, blk in enumerate(self._gemma_blocks_tail):
+            src = layers[i + 1] if (i + 1) < len(layers) else layers[-1]
+            blk.load_state_dict(src.state_dict(), strict=True)
+
     def forward(
         self,
         *,
@@ -206,17 +225,18 @@ class DraftChunkHead(nn.Module):
         )
         position_ids = self._build_position_ids(prefix_pad_masks=prefix_pad_masks)
         position_embeddings = self._rotary_emb(hidden_states, position_ids)
-        hidden_states = self._gemma_block(
-            hidden_states,
-            attention_mask=attention_mask,
-            position_ids=position_ids,
-            past_key_value=None,
-            output_attentions=False,
-            use_cache=False,
-            cache_position=None,
-            position_embeddings=position_embeddings,
-            adarms_cond=None,
-        )[0]
+        for blk in (self._gemma_block, *self._gemma_blocks_tail):
+            hidden_states = blk(
+                hidden_states,
+                attention_mask=attention_mask,
+                position_ids=position_ids,
+                past_key_value=None,
+                output_attentions=False,
+                use_cache=False,
+                cache_position=None,
+                position_embeddings=position_embeddings,
+                adarms_cond=None,
+            )[0]
 
         query_hidden = hidden_states[:, -int(self.chunk_m) :, :].to(dtype=self._action_head.weight.dtype)
         return self._action_head(query_hidden).to(dtype=torch.float32)

@@ -37,10 +37,13 @@ Run (用 .venv_5090, PyTorch GPU):
 from __future__ import annotations
 
 import argparse
+import contextlib
+import json
 import logging
 import pathlib
 import socket
 import sys
+import time
 
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(_REPO_ROOT / "kai0" / "src"))
@@ -75,22 +78,57 @@ def _build_draft(blob: dict, model, device, dtype) -> DraftChunkHead:
             f"draft img_dim={img_dim} != model hidden_size={vlm_lm.config.hidden_size} "
             "— this draft was distilled for a different VLM backbone; re-distill for this ckpt."
         )
+    num_layers = int(blob.get("num_layers", 1))
     draft = DraftChunkHead(
         img_dim=img_dim,
         chunk_m=int(blob.get("chunk_m", model.config.action_horizon)),
         out_dim=int(blob.get("out_dim", model.config.action_dim)),
         use_state_token=False,
+        num_layers=num_layers,
         gemma_config=vlm_lm.config,
     )
     missing, unexpected = draft.load_state_dict(blob["state_dict"], strict=False)
     if missing:
-        logger.warning("draft missing keys[:3]=%s", list(missing)[:3])
+        logger.warning("draft missing keys[:3]=%s (total %d)", list(missing)[:3], len(missing))
     if unexpected:
-        logger.warning("draft unexpected keys[:3]=%s", list(unexpected)[:3])
+        logger.warning("draft unexpected keys[:3]=%s (total %d)", list(unexpected)[:3], len(unexpected))
+    if missing or unexpected:
+        # A num_layers mismatch silently drops tail layers under strict=False → broken draft.
+        raise SystemExit(
+            f"[flash] draft state_dict mismatch (missing={len(missing)}, unexpected={len(unexpected)}); "
+            f"blob num_layers={num_layers}. Likely a serve/draft num_layers mismatch — refusing to serve a "
+            "partially-loaded draft (would emit a near-static / garbage chunk)."
+        )
+    logger.info("draft built: num_layers=%d", num_layers)
     return draft.to(device=device, dtype=dtype).eval()
 
 
-def _install_flash_sampler(policy, spec: SpeculativeSampler, device) -> None:
+def _chunk_signals(actions, arm_dims, gripper_dims) -> dict:
+    """Per-chunk motion descriptors in the model's normalized action space.
+
+    `arm_motion` (sum over arm dims of max-min over H) is the SAME metric the offline
+    spec_draft_magnitude_probe.py reports — recording it here lets a real-machine trace
+    quantify under-actuation that the in-distribution offline probe cannot see on OOD
+    frames. gripper net/range feed flash_trace_phase_report.py's grasp/smooth split.
+    """
+    a = actions[0].detach().float().cpu().numpy()  # (H, action_dim)
+    arm = a[:, arm_dims]
+    sig = {
+        "arm_motion": float((arm.max(0) - arm.min(0)).sum()),
+        "arm_d_last": float(np.abs(arm[-1] - arm[0]).mean()),
+    }
+    gl, gr = (int(gripper_dims[0]), int(gripper_dims[1])) if len(gripper_dims) >= 2 else (None, None)
+    if gl is not None:
+        sig["gl_net"] = float(a[-1, gl] - a[0, gl])
+        sig["gl_rng"] = float(a[:, gl].max() - a[:, gl].min())
+    if gr is not None:
+        sig["gr_net"] = float(a[-1, gr] - a[0, gr])
+        sig["gr_rng"] = float(a[:, gr].max() - a[:, gr].min())
+    return sig
+
+
+def _install_flash_sampler(policy, spec: SpeculativeSampler, device, *,
+                           trace_path: str | None = None, no_spec: bool = False) -> dict:
     """Replace Policy._sample_actions with the speculative round. Additive monkey-patch.
 
     The seam contract (policy.py:119) is `_sample_actions(device, observation, **kw) ->
@@ -99,18 +137,52 @@ def _install_flash_sampler(policy, spec: SpeculativeSampler, device) -> None:
     bug can never brick the arm. NOTE: we must NOT fall back to the model's *compiled*
     sample_actions — it CUDA-graph-crashes on the 5090 (flash_impl_log.md §2.2); the
     sampler's `full_denoise_from_observation` is the eager, 5090-safe equivalent.
+
+    no_spec=True  → baseline A/B: skip draft+verify entirely, serve pure eager 10-step
+                    denoise (= what the --no-spec robot run sees). Still records arm motion
+                    to the trace so spec vs no-spec chunk magnitude is directly comparable.
+    trace_path    → append one JSONL row per infer (accept/fallback/radius + arm/gripper
+                    motion). Off by default → bit-identical to plain v2.
     """
     counters = {"n": 0, "acc_sum": 0.0, "fallback": 0, "err": 0,
                 "draft_ms": 0.0, "verify_ms": 0.0, "last_accept": float("nan")}
+    ah = int(spec.action_horizon)
+    grip = list(spec.args.gripper_dims)
+    gset = {int(g) for g in grip}
+    arm_dims = [i for i in range(min(14, int(spec.action_dim))) if i not in gset]
+    trace_fh = open(trace_path, "a", buffering=1) if trace_path else None  # noqa: SIM115 (lives for server lifetime)
+    if trace_fh:
+        logger.info("[flash] trace → %s (no_spec=%s)", trace_path, no_spec)
+
+    def _write_trace(row: dict) -> None:
+        if trace_fh is None:
+            return
+        with contextlib.suppress(Exception):  # tracing must never break inference
+            trace_fh.write(json.dumps(row) + "\n")
+
+    def _nospec_sample_actions(dev, observation, **kw):
+        counters["n"] += 1
+        t0 = time.time()
+        actions = spec.full_denoise_from_observation(observation, noise=kw.get("noise"))
+        if trace_fh is not None:
+            row = {"t": t0, "n": counters["n"], "H": ah, "mode": "no_spec",
+                   "accept": ah, "fb": 1.0, **_chunk_signals(actions, arm_dims, grip)}
+            _write_trace(row)
+        return actions
 
     def _flash_sample_actions(dev, observation, **kw):
         counters["n"] += 1
+        t0 = time.time()
         try:
             out = spec.sample(observation, noise=kw.get("noise"))
         except Exception as e:  # safety: degrade to eager full denoise, never crash the robot
             counters["err"] += 1
             logger.warning("[flash] spec.sample raised (%s) → eager full-denoise fallback", e)
-            return spec.full_denoise_from_observation(observation, noise=kw.get("noise"))
+            actions = spec.full_denoise_from_observation(observation, noise=kw.get("noise"))
+            if trace_fh is not None:
+                _write_trace({"t": t0, "n": counters["n"], "H": ah, "mode": "spec_err",
+                              "accept": float("nan"), "fb": 1.0, **_chunk_signals(actions, arm_dims, grip)})
+            return actions
 
         try:
             acc = float(out["accepted_prefix_len"].float().mean().item())
@@ -119,12 +191,24 @@ def _install_flash_sampler(policy, spec: SpeculativeSampler, device) -> None:
             counters["fallback"] += int(bool(out.get("used_full_fallback")))
             counters["draft_ms"] += float(out.get("draft_ms", 0.0))
             counters["verify_ms"] += float(out.get("verify_ms", 0.0))
+            if trace_fh is not None:
+                rad = out.get("radius_dist")
+                rad_mean = rad_max = float("nan")
+                if rad is not None:
+                    rmin = rad.min(dim=-1).values[0].float().cpu().numpy()
+                    rad_mean, rad_max = float(rmin.mean()), float(rmin.max())
+                _write_trace({"t": t0, "n": counters["n"], "H": ah, "mode": "spec",
+                              "accept": acc, "fb": float(bool(out.get("used_full_fallback"))),
+                              "rad_mean": rad_mean, "rad_max": rad_max,
+                              "draft_ms": float(out.get("draft_ms", 0.0)),
+                              "verify_ms": float(out.get("verify_ms", 0.0)),
+                              **_chunk_signals(out["actions"], arm_dims, grip)})
             if counters["n"] % 20 == 0:
                 n = counters["n"]
                 logger.info(
                     "[flash] %d infers | mean_accept=%.1f/%d | fallback=%d (%.0f%%) | "
                     "draft=%.1fms verify=%.1fms | spec_err=%d",
-                    n, counters["acc_sum"] / n, spec.action_horizon,
+                    n, counters["acc_sum"] / n, ah,
                     counters["fallback"], 100.0 * counters["fallback"] / n,
                     counters["draft_ms"] / n, counters["verify_ms"] / n, counters["err"],
                 )
@@ -132,7 +216,9 @@ def _install_flash_sampler(policy, spec: SpeculativeSampler, device) -> None:
             pass
         return out["actions"]
 
-    policy._sample_actions = _flash_sample_actions  # noqa: SLF001
+    policy._sample_actions = _nospec_sample_actions if no_spec else _flash_sample_actions  # noqa: SLF001
+    if no_spec:
+        logger.info("[flash] --no-spec: serving EAGER full-denoise baseline (no draft/verify)")
     return counters
 
 
@@ -240,6 +326,12 @@ def main() -> None:
                     help="R5: every N infers, run a raw-image-blacked vision-SNR probe + log acceptxSNR health. "
                          "0=off (default, bit-identical to plain v2). Adds ~3 eager denoises on probe-frames; "
                          "use large N (e.g. 60) so the node chunk buffer absorbs the slow frame.")
+    ap.add_argument("--trace-out", default=None,
+                    help="append one JSONL row per infer (accept/fallback/radius + arm/gripper chunk motion). "
+                         "Off by default. Works under --no-spec too (arm motion only) for spec-vs-baseline A/B.")
+    ap.add_argument("--no-spec", action="store_true",
+                    help="A/B baseline: skip draft+verify, serve pure EAGER full-denoise (= --no-spec robot run). "
+                         "Combine with --trace-out to record baseline arm motion for comparison.")
     args = ap.parse_args()
 
     logging.basicConfig(level=logging.INFO, force=True,
@@ -294,9 +386,10 @@ def main() -> None:
         full_fallback=not args.no_fallback,
     )
     spec = SpeculativeSampler(model, draft, spec_args)
-    counters = _install_flash_sampler(policy, spec, device)
-    logger.info("[flash] sampler installed (tau=%.3f, eval_h=%d, fallback=%s); warmup deferred to first infer",
-                spec_args.tau_radius, spec_args.max_exec_steps, not args.no_fallback)
+    counters = _install_flash_sampler(policy, spec, device,
+                                      trace_path=args.trace_out, no_spec=args.no_spec)
+    logger.info("[flash] sampler installed (tau=%.3f, eval_h=%d, fallback=%s, no_spec=%s); warmup deferred to first infer",
+                spec_args.tau_radius, spec_args.max_exec_steps, not args.no_fallback, args.no_spec)
 
     serve_policy = policy
     if args.health_probe_every > 0:

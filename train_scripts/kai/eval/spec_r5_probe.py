@@ -5,7 +5,7 @@ R1-d 证明: 在 pure200 同任务 holdout 上 FLASH 接受率**饱和** (50/50,
 分不出"用视觉的好模型"和"开环坏模型"。R5 问: 把同一帧的输入做**视觉消融** (全相机置黑),
 模型输出会变 (vision-sensitivity, = eval_vision_ablation 的 SNR); 那么 FLASH 的**免费副产物**
 (accepted_prefix_len / radius) 会不会也随之变? 若变 → radius 可当 0 成本在线探针; 若不变 →
-坐实"接受率单独不够, 必须接受率 × SNR 联合"。
+坐实"接受率单独不够, 必须接受率 x SNR 联合"。
 
 每帧两条件: real (全相机) vs black (全相机=0)。两路指标解耦:
   • 模型 vision-SNR  (从 sampler 的 eager `_full_denoise` teacher 算, 与 eval_vision_ablation 同义):
@@ -167,7 +167,7 @@ def main() -> int:
     print("  -- verdict --")
     if acc_blind and rad_moves:
         print("     接受率对视觉消融近乎'盲' (Δ<1 步) 但 radius 有响应 → 单看接受率不够,")
-        print("     radius 可作免费视觉敏感度信号; 坐实 R5 '接受率 × (radius/SNR)' 联合。")
+        print("     radius 可作免费视觉敏感度信号; 坐实 R5 '接受率 x (radius/SNR)' 联合。")
     elif acc_blind and not rad_moves:
         print("     接受率与 radius 对置黑都几乎不动 → 此 ckpt 上 FLASH 信号整体对视觉不敏感")
         print("     (可能 ckpt 本身偏开环, vision-SNR 低)。需外接 SNR, FLASH 信号单独不构成门禁。")

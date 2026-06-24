@@ -24,6 +24,10 @@
 | **R5** 接受率↔开环在线探针 | ✅ 2026-06-09 (部分证伪) | `spec_r5_probe.py`; pure200 real vs 全置黑: 模型 vision-SNR **7.36×** (确在用视觉) 但 FLASH 接受率 **50/50→50/50 Δ=0.00**、radius 也不动 (corr≈0) → **接受率/radius 不是开环探针 (证伪)**。机理: 接受率是**自洽**量 (draft 与模型在*同一输入*上一致), 非*信息*量, 对输入退化**结构性失明**。R5 论点锐化: `接受率×SNR` 须**真乘积**、SNR 外接独立。详见 `flash_impl_log.md` §8 |
 | **R5-followup①** server 内"接受率×SNR"健康探针 | ✅ 2026-06-09 | `serve_policy_flash.py` 加 `_FlashHealthPolicy` (opt-in `--health-probe-every N`, 默认 0=关=裸 v2): 每 N 帧对同帧 raw-blacked 重前向算 vision-SNR (外接独立, §8.3 铁律), 与接受率联合日志+挂 `flash_health`。冒烟 (合成图) probe 触发、不崩、动作仍 (50,14)。详见 `flash_impl_log.md` §8.5 |
 | **R5-followup②** 第二个开环 ckpt 直验 | ⏸ 阻塞 | 需第二个**开环 PyTorch ckpt**+其 draft; 现仅 pure200 一个 PyTorch ckpt, 已知开环 ckpt 均 JAX → 需 JAX→PyTorch 转换 (独立工程, 本轮不做)。§8.2 机理已预判两者都饱和; 有 ckpt 时复用 `spec_r5_probe.py` |
+| **R1-真机①** 真机 spec 动得慢/欠完成诊断 | ✅ 2026-06-18 | `spec_draft_magnitude_probe.py`; `--no-spec` 正常但带 spec 慢 → 确诊 **draft v1 幅值欠驱动** (spec/full均值 **0.61**, cosine 0.52)。根因: 1 层+Huber 蒸馏退化为条件均值, 方向对幅值压到 61%; 接受率 50/50 查不出 (verify 锚 draft 自洽盲点)。详见 `flash_impl_log.md` §9 |
+| **R1-真机②** draft v2 重训 (加层+MSE+幅值/速度损失) | ✅ 2026-06-18 | `spec_draft_r1d.py` 加 `--num-layers/--loss mse/--vel-weight/--mag-weight`; `draft.py` 加多层支持 (向后兼容, 默认 1 层)。v2 (2 层+MSE+vel+mag, 300ep): spec/full均值 **0.61→1.16**, cosine **0.52→0.71**, 逐维都回到位。产物 `/tmp/draft_r1d_pure200_v2.pt`。待真机 A/B; 未提交 |
+| **R3** draft↔full 散度作不确定度信号 | ✅ 2026-06 离线证伪 | `spec_r3_probe.py`; in-distribution holdout 上 radius 近恒定 (R1-d 饱和), corr(radius,floor)≈0 → 离线测不出, 需 off-manifold/闭环帧 (docstring 为权威记录, 原 §9 已随 rebase 丢失) |
+| **R6** FLASH Triton kernel 移到 5090 | ✅ 2026-06 量测 | `optimize/v1_triton/bench_v1_per_step_5090.py`; v1 5090: prefill 25ms (vision 4+VLM 21), per-step 0.9ms, full 34ms。FLASH prefill-skip (复用 VLM KV) 下 FLASH+v1 ≈ **3.83×** 但代价是视觉陈旧/开环 (docstring 为权威记录) |
 | **R2/R3** 相位强验证 / 散度触发 | 📋 研究主线 | 见各课题 |
 
 ---
