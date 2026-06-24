@@ -224,6 +224,10 @@ def _episode_rel_paths(episode_id: int) -> list[str]:
     for cam in _CAMERAS:
         paths.append(f"videos/chunk-000/{cam}/{eid}.mp4")
     for cam in _DEPTH_CAMERAS:
+        # New format = single `.zarr.zip` file; legacy = `.zarr/` dir (trailing /
+        # → rsync recurses). List both; rsync skips whichever is absent (the
+        # already-handled "vanished" exit-24 case).
+        paths.append(f"videos/chunk-000/{cam}_depth/{eid}.zarr.zip")
         paths.append(f"videos/chunk-000/{cam}_depth/{eid}.zarr/")
     return paths
 
