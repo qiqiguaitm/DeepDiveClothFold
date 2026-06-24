@@ -11,6 +11,8 @@
 
 **整条 X-VLA smooth800 管线 (p0 + d5anchor) 训练就是纯开环 (vision-blind): 动作是 proprioception 的纯函数, 三路相机像素对输出的影响 = 0.000。不是数据问题、不是部署问题、不是 qdur/归一化问题。在修好 `use_proprio` 捷径前, 换任何数据/qdur/norm 训出的 X-VLA ckpt 都会瞎。**
 
+> **更新 (2026-06-22)**: 两条独立修复链**各自单独都已实测失败** — E1 (断架构链 `use_proprio=False`, 旧 action≡state 数据, 2026-06-10) `d_img`=0.00mm ❌; E0 (断数据链, 真实 action≠state v1 数据 + 官方配方, 但 `use_proprio=True`, 2026-06-22) `d_img`=0.00mm ❌。→ **action≡state 数据捷径 与 proprio 早融合捷径都各自足以让模型完全开环**。当前唯一未被证伪的路径 = **两链叠加 = v1 真实数据 + `use_proprio=False`** (§4.5 `E1_v1_official`, 下一步)。
+
 这也推翻了 Track X 之前的诊断链 ("X3.C 真机失败 = R1 缺 ImageNet 归一化 → 重训 p0 修复"): p0 已修 R1 + ImageNet 归一化, 真机**依旧失败**, 因为真根因是 proprio 捷径, R1 只是表层。
 
 ---
@@ -27,6 +29,23 @@
 | **视觉/本体影响比 (d_img/d_state)** | **0.000** | **0.000** | →0 = 纯开环 vision-blind |
 
 > 对照健康基线: 同一批 smooth800 数据上, **pi0** 之前测出 blank/real MAE = **13.6×** (视觉健康, 见 `reference_vision_ablation_openloop`)。X-VLA 在同数据上是 **0.000**。
+
+### 1.1 ✅ 阳性对照 (2026-06-11) — 官方原版 X-VLA-SoftFold **读视觉** (≈300–400× 我们)
+
+> 验证"我们 ablation 测出的 `d_img≈0` 是模型属性, 不是 harness 天花板", 同时确认根因在数据链而非架构/部署: 拉官方 raw 2toINF `X-VLA-SoftFold` ckpt (与我们**同架构同任务同机器人**: 双臂 Agilex Piper, flatten+fold), 走**官方自带代码** (`models.modeling_xvla.XVLA` + `XVLAProcessor` → `generate_actions`, `domain_id=5` SoftFold, 官方 instruction), 喂**同一条 KAI0 trace** (`trace_20260601_192213`, 同机器人 → 近 in-distribution; ee6d proprio 直接取 npz `state20`, 20 维布局逐位一致), 固定 seed, n=12。脚本 [`eval_xvla_OFFICIAL_vision_ablation.py`](../../../../train_scripts/kai/eval/eval_xvla_OFFICIAL_vision_ablation.py), 结果 `logs/xvla_official_vision_ablation.json`。
+
+| 扰动 (xyz L2, mm) | **官方 X-VLA-SoftFold** | 我们 smooth800 (§1) | 倍数 |
+|---|---|---|---|
+| **换一张图** (state 不变) `d_img` | **12.87mm** | 0.03mm | **≈320×** |
+| **整图置黑** (state 不变) `d_blank` | **34.20mm** | 0.07–0.08mm | **≈430×** |
+| 换 proprio (图不变) `d_state` | 58.47mm | 248–311mm | — |
+| `d_img/d_state` | 0.220 | **0.000** | — |
+| `d_blank/d_state` | 0.585 | ~0.000 | — |
+
+- **逐帧 12/12 的 `d_img` 都在 9–21mm, 没有一帧塌到 0**; 置黑扰动 > 换帧扰动 (34 > 13mm, 符合"全黑更 OOD"); 夹爪也随图像变 (`g_img` 0.04–0.15)。→ **官方原版模型视觉通路是活的, 没有脱离视觉现象**。
+- **决定性**: 官方与我们**架构/部署/归一化/动作表征/proprio 早融合逐项相同**, 唯一实质差异 = **训练数据 action 语义** (官方真实 action≠state vs 我们 relabel 成 ≡state)。同架构官方能读视觉 → **根因坐实在数据链, 非架构/部署** → 直接支撑 §4.1 (E1) 结论并把 **E0 (真实 action≠state) 锁为必需主路径**。
+- **门禁可信度**: 本对照证明 ablation harness **能**检出视觉敏感 (官方 `d_img` 远 > 0)。因此我们模型的 `d_img≈0` / E1 的 `d_img=0.00` 是**真·vision-blind**, 不是测不出。
+- **caveat**: `ratio 0.220` 未到 1.0 — 因 KAI0 ee6d proprio 喂官方 SoftFold 模型存在坐标系/标定偏差, proprio 偏 OOD 抬高了 `d_state` (且官方本就 `use_proprio=True`, 有 proprio 敏感属健康)。**决定性判据是绝对 `d_img`/`d_blank` ≫ 0** (与本文一贯口径一致, 不看比值伪影)。更干净版本可用真正官方 SoftFold obs, 但 300–400× 量级差已足够定论。
 
 ---
 
@@ -76,17 +95,62 @@
 
 修复可断**两条链**任一: ① 数据链 (让 action ≠ state, 官方做法) ② 架构链 (拿掉/遮蔽 proprio)。
 
-### 4.0 实验 E0 — 数据正解: 用真实 action 重训 (官方等价, 推荐主路径)
-- **做法**: X-VLA 训练数据**不用 action≡state relabel 版**, 改用原始 teleop/leader `action` (真实未来轨迹, action ≠ state); 并在 `LeRobotEE6DDataset`/`multi_domain_dataset.py` 加官方 static-frame skip (`|action[1]−action[0]|<1e-5 → continue`)。其余 (proprio 仍开、smooth800 同批 episode、60k) 不变。
-- **目的**: 复现官方 SoftFold 的数据性质 — proprio 无法平凡预测真实未来 → 强制读视觉, 同时**保留 proprio 的精度/平滑收益**。这是治本。
-- **前置**: 确认 smooth800 源是否存在未 relabel 的原始 action 版本 (vePFS `A_new_smooth_800/base` 的 action 列是否 = 当时 commanded/leader); 若已被 relabel 覆盖, 需从更上游 (采集原始 parquet) 重建。⚠️ **待查: 原始 action 是否还在**。
-- **判据**: `eval_xvla_vision_ablation_offline.py` 视觉/本体比 ≳0.5 + 真机会找衣服。
+### 4.0 实验 E0 — 数据正解 + 完全按官方配方 (主路径, ⭐ 进行中 2026-06-18)
+- **数据 (已建好)**: 用 Task_A `v1` (`kai0/data/Task_A/vis_base/v1`) — 真实 teleop `action`, 满足 **action ≠ state** (非 relabel 自述)。转 EE6D (interleaved Rot6D + 二值夹爪, `joint_to_ee6d.py`, **observation.state / action 各自 FK, 不 relabel**) → `xvla/data/self_built/A_v1_noRelabel_ee6d/<6 日期 04-23..04-30>`, **639 ep / 603,242 chunk-sample**, domain_id=20。校验: `mean|action−state|xyz=4.37mm`(action≠state ✓)、`|action[t]−state[t+1]|=2.21mm`(setpoint ✓)、gripper∈{0,1}、20D。
+  - 注: v1 是 **kai0-native schema** (`episode_id`, 非 LeRobot `episode_index`); loader 已加双 schema 兼容 + stale-manifest skip (04-24 ep53 parquet 已清但 manifest 残留 → 自动跳过并打印)。
+  - **static-frame skip (官方有, E0 已实现)**: upstream `datasets/domain_handler/base.py` 丢弃"未来首步双臂 EE 位姿 `|seq[1]−seq[0]|<1e-5`"的退化帧 (action≈proprio 的 copycat 温床)。loader 加 `static_skip` (默认 off, E0 开), 镜像官方逻辑在 EE6D 动作轨迹上判 (排除夹爪维)。**实测 v1 剔除 21,529 帧 (~3.6%)**: 603,242 → **581,713** sample (机器人暂停段确实存在, 非噱头)。
+- **配方 (完全按官方 `X-VLA/train.py`, config `E0_v1_official`)**:
+  | 项 | 官方 / E0 |
+  |---|---|
+  | 精度 | bf16 mixed (autocast) |
+  | weight_decay | **0.0** |
+  | param groups | **4 组**: vlm & soft_prompt ×0.1 (1e-5); transformer_core & action_head ×1.0 (1e-4) |
+  | freeze | 前 **1000** 步冻 **vlm + transformer_core** (仅 soft_prompt+action_head 训练) |
+  | LR schedule | **constant** + warmup 2000 (官方 `use_cosine_decay` 默认 OFF) |
+  | lr / iters | 1e-4 / **50k** |
+  | batch | per-device **16** × 8 卡 = eff **128** |
+  | action 表示 | `action_qdur=2.0` (intention abstraction, 对齐官方 real_world.py) |
+  | static-skip | `static_skip=True` (官方 base.py: 丢未来首步双臂几乎不动的退化帧) |
+  | 图像 | ImageNet norm + ColorJitter(0.2) |
+  - **修了一个真 bug**: 旧 2-group 用 `"florence"/"vision"` name-keying 漏掉 `model.vlm.language_model.*` → VLM 文本编码器一直被 10× LR(1e-4 而非 1e-5)训练。4-group 用 `.vlm.` 匹配整个 VLM 修复。
+  - trainer 改动全部 gated 在 config key 后 (`param_groups`/`bf16`/`lr_schedule` 默认=旧行为) → 历史 config (X3*/E1/A_0423…) 行为不变。
+- **目的**: 复现官方 SoftFold 数据性质 — proprio 无法平凡预测真实未来 → 强制读视觉, 同时**保留 proprio 精度/平滑收益**。治本。
+- **状态 (2026-06-18)**: 数据建好+校验 ✓ | 官方对齐 trainer + `E0_v1_official` config + volc yaml ✓ | smoke 通过 ✓ | volc 8×A100 跑满 **50k 完成** (2026-06-21)。
+- **判据**: `eval_xvla_vision_ablation_*.py` 视觉/本体比 ≳0.5 + 真机会找衣服。
+
+> #### ❌ 结果 (2026-06-22) — E0 **未能让模型读视觉, "数据正解足以治本"被推翻**
+> 50k 训完 (`xvla_e0_v1_official/step_final`, flow loss 全程 ~2–5 噪声带, gnorm 100–430, 无 MAE)。E0 无 trace 且 v1 `observation.state`=20D EE6D (trace 版消融用不了) → 新写**数据集版消融** [`eval_xvla_vision_ablation_dataset.py`](../../../../train_scripts/kai/eval/eval_xvla_vision_ablation_dataset.py) (复用 `multi_domain_dataset` 预处理, 固定 seed), gf0 A100, date 04-23, n=12:
+>
+> | 扰动 | xyz | gripper |
+> |---|---|---|
+> | 换图 hold state `d_img` | **0.00mm** | 0.0000 |
+> | 整图置黑 `d_blank` | **0.00mm** | 0.0000 |
+> | 换 state `d_state` | 315.47mm | 0.3171 |
+> | **视觉/本体比** | **0.000** | **0.000** |
+>
+> - **决定性核验** (排除 harness bug): `config.image_features`=喂的三键 (全消费, `empty_cameras=0`); 输入图 vs 黑图张量差 max=2.12 (图确实变了); **完整 20D 输出**在三路全黑下 max|Δ|=**1.2e-5** (浮点噪声), 而 state 扰动 0.1 → max|Δ|=**0.368** (大 3 万倍)。→ 图有路径、确被喂入、确被改变, 对输出零贡献 = 真·vision-blind。
+> - **结论**: 真实 `action≠state` 数据是**必要但不充分**。折叠准静态 → 未来 2s EE 位姿仍可由当前 EE6D proprio 高度预测, `use_proprio=True` 下模型照样从 proprio 低 loss 回归 action anchors, 绕开视觉。**单断数据链不够** (对称于 E1 单断架构链也不够)。
+> - **含义**: E1 (断架构链, action≡state) 与 E0 (断数据链, proprio ON) **各自单独都失败** → 唯一未证伪路径 = **两者叠加** (见 §4.5 `E1_v1_official` = v1 真实数据 + `use_proprio=False`)。
+> - 详细记录: [`history/experiments/xvla_e0_v1_official_results.md`](../../history/experiments/xvla_e0_v1_official_results.md)。
 
 ### 4.1 实验 E1 — 确诊性 A/B: `use_proprio=False` (已就绪, 最快)
 - **做法**: 复制 p0 训练 config, 仅置 `use_proprio: false` (关 state 输入), 其余 (数据 smooth800 / 60k / lr 1e-4 / ImageNet norm) 完全不变。
 - **目的**: 强制模型只能用视觉。是**确诊**而非最终模型 — 验证"只要拿掉 proprio 捷径, 模型就会读视觉"。
 - **判据**: 训完跑 `eval_xvla_vision_ablation_offline.py`, **视觉/本体影响比从 0.000 抬到 ≳0.5** = 根因坐实。再上真机看是否会"找衣服"。
 - **风险**: 丢掉 proprio 平滑信号, 连续控制可能更抖 (可叠 publish-time EMA 缓解)。
+
+> #### ❌ 结果 (2026-06-10) — E1 **未能让模型读视觉, 假设被推翻**
+> 训完 60k(`xvla_x3c_smooth800_noproprio/step_final`,loss 109→~5),离线 vision-ablation(trace `2026-06-01_192213`,n=12,imagenet-norm,`--no-proprio` 加载 proprio_dim=0 ckpt,load missing=0/unexpected=0):
+>
+> | ckpt | swap-IMAGE d_img | swap-STATE d_state | 解读 |
+> |---|---|---|---|
+> | **p0**(proprio ON,对照) | 0.04mm | **278.6mm** | 视觉盲 + proprio 开环(复现 §1 基线 ✅,验证门禁/trace 可信) |
+> | **E1**(proprio OFF) | **0.00mm** | **0.00mm** | proprio 依赖被拿掉(d_state 279→0,符合设计),但 **视觉仍没起来(d_img 仍 ~0)** |
+>
+> - **比值 3605 是假阳**(d_img/d_state = 0.00/~0 的数值伪影);**真正指标 d_img 没有上升** → E1 **不通过门禁**(视觉没活)。
+> - **结论**: "拿掉 proprio 捷径 → 模型就会读视觉"(§4.4 "断架构链不依赖数据")**被实测推翻**。模型在无 proprio 下**换了一种开环方式 = 复述记忆里的平均折叠轨迹**(对任何输入近乎常量输出)。
+> - **含义(强化 E0)**: 任务太程式化 + 数据 `action≡state` → **视觉从来不被需要**,光断架构链不够,模型总能找到开环解。**根因主要在数据链 → E0(真实 action≠state)从"推荐"升级为"必需"**;E2(proprio-dropout)预计同样不够。
+> - 结果 json:`logs/xvla_e1_vision_ablation.json`。门禁脚本已加 `--no-proprio/--imagenet-norm/--prompt` + `XVLA_BART_TOK` 支持。
 
 ### 4.2 实验 E2 — proprio-dropout (更好的最终模型, 需 patch)
 - **做法**: patch lerobot XVLA 训练, 对每个样本以概率 `p_drop` (起步 0.5) 把 `observation.state` 置零/替换占位 token; 推理仍可给 proprio。
@@ -99,38 +163,60 @@
 - **目的**: 即使有 proprio, 也强迫视觉成为消歧的唯一信息源。
 - **判据**: 同门禁 + 跨衣服位置泛化。
 
+### 4.5 实验 E1_v1_official — ⭐ 两链叠加 (当前唯一未证伪路径, 下一步)
+
+- **由来**: E1 (断架构链, 旧 `action≡state` 数据) ❌ 与 E0 (断数据链, `use_proprio=True`) ❌ **各自单独都失败**。两次失败互补地证明: action≡state 数据**和** proprio 早融合捷径都各自足以让模型开环。**唯一未被证伪的组合 = 同时切断两条链。**
+- **做法**: 完全复用 E0 配方 (`E0_v1_official`: v1 真实 action≠state 数据 + 官方 4group + static-skip + action_qdur=2.0 + ImageNet + 50k), **仅置 `use_proprio=False`** (proprio_dim→0, 切 action_encoder.fc 列)。config 名 `E1_v1_official`。
+- **目的**: 真实数据让"未来动作 ≠ 当前 proprio 的平凡函数" + 关 proprio 彻底断掉早融合捷径 → 视觉成为唯一可用信息源, 强制读视觉。
+- **判据**: 训完跑 [`eval_xvla_vision_ablation_dataset.py`](../../../../train_scripts/kai/eval/eval_xvla_vision_ablation_dataset.py) (数据集版, 无需 trace), **`d_img` 绝对值 ≫ 0** (不看比值伪影 — E1 教训: proprio 关掉后 `d_state→0` 会让比值假阳)。`d_img` 抬到 ~10mm 量级 (对齐官方 SoftFold `d_img`=12.87mm) = 视觉活。再上真机看是否找衣服。
+- **风险**: ① 关 proprio 丢平滑信号, 连续控制可能更抖 (可叠 publish-time EMA / RTC, 见 `../../../deployment/inference/xvla_rtc_design.md`)。② 若 E1_v1_official 仍 `d_img≈0` (即真实数据 + 无 proprio 还开环) → 根因升级为"任务过度程式化, 视觉从不被需要", 退到 E3 (数据位置多样性) 治本。
+- **已就绪**: `E1_v1_official` config 已加入 `train_scripts/xvla/launch/xvla_train.py` (= `E0_v1_official` + `use_proprio=False`)。trainer 的 `use_proprio=False` 分支 (proprio_dim=0, 切 fc 列) 在 E1 已验证可用。**待提交 volc 8×A100 50k** (复用 E0 yaml, 改 `--config E1_v1_official` + 输出目录)。
+
 ### 4.4 对照矩阵
 
 | 组 | use_proprio | proprio-dropout | 数据 action | static-skip | 终判 |
 |---|---|---|---|---|---|
 | **baseline (现状)** | True | — | ≡state | 无 | 视觉比 **0.000** ❌ |
-| **E0 (数据正解)** | True | — | **真实 action (≠state)** | **加** | 视觉比 ≳0.5 + 真机找衣服 + 保 proprio 精度 |
-| **E1 (确诊, 已就绪)** | **False** | — | ≡state | 无 | 视觉比 ≳0.5? (断架构链, 不依赖数据) |
-| **E2** | True | **0.5** | ≡state | 无 | 视觉比 ≳0.5 + 真机成功率 |
-| **E3** | True/dropout | 0.5 | 真实+位置多样 | 加 | 跨位置泛化 |
+| **E1 (确诊, 已跑)** | **False** | — | ≡state | 无 | ❌ **d_img 仍 0.00mm**(视觉没活)— 断架构链**不够**, 模型转常量开环 |
+| **E0 (数据正解, 已跑)** | True | — | **真实 action (≠state)** | 加 | ❌ **d_img 0.00mm**(2026-06-22)— 断数据链**不够**, 保留 proprio 仍开环 |
+| **E1_v1_official ⭐ (下一步)** | **False** | — | **真实 action (≠state)** | 加 | 待跑: `d_img` ≫ 0 (~10mm) = 视觉活 → 两链叠加 |
+| **E2** | True | **0.5** | 真实 (≠state) | 加 | 退路: 若 E1_v1_official 抖, 用 dropout 保 proprio 精度 |
+| **E3** | True/dropout | 0.5 | 真实+位置多样 | 加 | 治本退路: 若两链叠加仍开环 (任务太程式化) |
 
-> E1 断架构链 (不管数据如何, 无 proprio 就没法复制) → 最快确诊; E0 断数据链 (官方做法) → 保 proprio 收益的治本。两者正交, 都成立则根因 = "action≡state × proprio 早融合" 双重确证。
+> ~~E1 断架构链 → 最快确诊~~ ❌ (2026-06-10) **+** ~~E0 断数据链 → 必需主路径~~ ❌ (2026-06-22): **两条链各自单独都不够**。E1_v1_official (两链叠加) 是当前唯一未证伪路径; 若仍开环, 说明任务过度程式化 (视觉从不被需要) → 退 E3 数据多样性治本。
 
 ---
 
 ## 5. 离线门禁 (新增, 强制)
 
-**以后任何 X-VLA ckpt 上真机前, 必须先跑离线 vision-ablation, 视觉/本体影响比 ≳ 0.5 才放行** (类比 pi0 的夹爪 SNR≳15× 门禁)。MAE / val loss **不作为视觉依赖判据** (测不出开环)。
+**以后任何 X-VLA ckpt 上真机前, 必须先跑离线 vision-ablation, `d_img` 绝对值 ≫ 0 (~10mm 量级, 对齐官方 SoftFold 12.87mm) 才放行** (类比 pi0 的夹爪 SNR≳15× 门禁)。MAE / val loss **不作为视觉依赖判据** (测不出开环)。**比值 `d_img/d_state` 仅在 proprio ON 时参考; proprio OFF (E1 系) 时 `d_state→0` 会让比值假阳, 只认 `d_img` 绝对值** (见 §4.1 E1 教训)。
+
+两个门禁脚本, 按是否有真机 trace 选:
 
 ```bash
+# (A) 有真机 trace (server_images + server_arrays, state=14D 关节): trace 版
 CUDA_VISIBLE_DEVICES=<free> kai0/.venv_xvla/bin/python \
   train_scripts/kai/eval/eval_xvla_vision_ablation_offline.py \
   --trace /tmp/xvla_stack/trace_<ts> \
-  --ckpt /data1/DATA_IMP/checkpoints/ckpt_xvla/<ckpt> --n 12
+  --ckpt /data1/DATA_IMP/checkpoints/ckpt_xvla/<ckpt> --n 12 --imagenet-norm true
+
+# (B) 无 trace (如 E0/E1_v1_official 训完即判): 数据集版 — 直接拿 v1 数据集帧 (20D EE6D state),
+#     复用训练 multi_domain_dataset 预处理, 无需真机录制。在 gf0/ckpt 所在机跑。
+CUDA_VISIBLE_DEVICES=<free> xvla/X-VLA-env/.venv/bin/python \
+  train_scripts/kai/eval/eval_xvla_vision_ablation_dataset.py \
+  --ckpt xvla/ckpts/<exp>/step_final \
+  --data-root xvla/data/self_built/A_v1_noRelabel_ee6d/2026-04-23 --n 12
 ```
-读 "视觉/本体影响比": →0 = vision-blind 禁止上机; ~1 = 健康闭环。
+判读: `d_img`/`d_blank` →0 = vision-blind 禁止上机; ~10mm+ = 视觉通路活。**务必核验图像确被消费** (config.image_features 命中三键 + 输入图 vs 黑图张量差 ≫ 0), 排除 harness 假零 (见 §4.0 E0 核验)。
 
 ---
 
 ## 6. 行动顺序
 
 1. **停止盲调 X-VLA ckpt** (换 qdur/norm/数据日期都不会改变 vision-blind, 根因在 action≡state × 架构)。
-2. 跑 **E1 (`use_proprio=False`, 已就绪)** 做确诊 → ablation 比值是否抬起 (断架构链, 不依赖数据, 最快验根因)。
-3. **查原始 action 是否还在** (vePFS `A_new_smooth_800/base` 的 action 列是否被 relabel 覆盖) → 决定 E0 是否需从上游重建数据。
-4. E1 确诊成立 → 走 **E0 (真实 action + static-skip)** 做治本的最终模型 (保 proprio 收益); 原始 action 已丢则退 **E2 (proprio-dropout)**。
-5. 把 §5 门禁纳入 X-VLA 上机流程。
+2. ✅ **E1 (`use_proprio=False`, 旧 action≡state 数据) 已跑 (2026-06-10) → 推翻"断架构链就够"**: d_img 仍 0.00mm。
+3. ✅ **E0 (真实 action≠state v1 数据 + 官方配方, proprio ON) 已跑完 50k (2026-06-21) → 实测仍 vision-blind (2026-06-22)**: d_img 0.00mm, 视觉/本体比 0.000。**推翻"断数据链就够 / E0 是必需主路径足以治本"**。详见 §4.0 ❌ 结果 + [`history/experiments/xvla_e0_v1_official_results.md`](../../history/experiments/xvla_e0_v1_official_results.md)。
+4. ⭐ **下一步 = E1_v1_official (两链叠加, §4.5)**: `E0_v1_official` 配方 + `use_proprio=False`。config 已加入 `xvla_train.py`, 待提交 volc 8×A100 50k (复用 E0 yaml 改 `--config E1_v1_official` + 输出目录)。
+5. E1_v1_official 出 ckpt → 跑 `eval_xvla_vision_ablation_dataset.py` 门禁 (**`d_img` 绝对值 ≫ 0**, ~10mm 量级对齐官方 12.87mm; 不看比值伪影) 再上真机。
+6. 若 E1_v1_official 仍 `d_img≈0` → 根因升级"任务过度程式化, 视觉从不被需要" → 退 E3 (数据位置多样性) 治本; E2 (proprio-dropout) 为保平滑的中间退路。
+7. 把数据集版消融门禁纳入 X-VLA 上机流程 (§5)。

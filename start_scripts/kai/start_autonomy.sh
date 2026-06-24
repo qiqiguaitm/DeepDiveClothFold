@@ -104,6 +104,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 KAI0_DIR="$PROJECT_ROOT/kai0"
 ROS2_WS="$PROJECT_ROOT/ros2_ws"
+CAN_ACTIVATE="$PROJECT_ROOT/piper_tools/activate_can.sh"
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; CYAN='\033[0;36m'; NC='\033[0m'
 ok()   { echo -e "${GREEN}[OK]${NC} $1"; }
@@ -148,8 +149,11 @@ else
 fi
 
 # ROS2 daemon restart (clean DDS state)
+# Clean stale env first to prevent old workspace pollution.
+unset AMENT_PREFIX_PATH COLCON_PREFIX_PATH CMAKE_PREFIX_PATH PYTHONPATH 2>/dev/null || true
+export PATH="/usr/bin:$PATH"
 eval "$(conda shell.bash hook 2>/dev/null)" 2>/dev/null; conda deactivate 2>/dev/null || true
-source /opt/ros/jazzy/setup.bash
+source /opt/ros/humble/setup.bash
 ros2 daemon stop 2>/dev/null || true
 ros2 daemon start 2>/dev/null || true
 
@@ -188,37 +192,26 @@ if [[ "$SIM" != "true" ]]; then
     echo ""
     echo "--- Step 3: CAN activation ---"
 
-    CAN_UP=0
-    if [[ "$REPLAY" == "true" ]]; then
-        # replay 只用 slave (mode=1 arm_reader 订阅 /master/joint_* → CAN)
-        IFACES="can_left_slave can_right_slave"
+    if [[ -x "$CAN_ACTIVATE" ]]; then
+        info "running: $CAN_ACTIVATE ${KAI0_ROBOT_ID:+--robot $KAI0_ROBOT_ID}"
+        bash "$CAN_ACTIVATE"
     else
-        IFACES="can_left_mas can_left_slave can_right_mas can_right_slave"
+        fail "CAN activation script not found or not executable: $CAN_ACTIVATE"
     fi
+
+    CAN_UP=0
+    IFACES="can_left_mas can_right_mas"
     for iface in $IFACES; do
         if ip link show "$iface" &>/dev/null; then
-            sudo -n ip link set "$iface" down 2>/dev/null || true
-            sudo -n ip link set "$iface" type can bitrate 1000000 2>/dev/null || true
-            sudo -n ip link set "$iface" up 2>/dev/null || true
             CAN_UP=$((CAN_UP + 1))
             ok "$iface up"
         fi
     done
 
-    if [[ "$REPLAY" == "true" ]]; then
-        if [ "$CAN_UP" -ge 2 ]; then
-            ok "$CAN_UP CAN interfaces up (replay slave-only)"
-        else
-            warn "only $CAN_UP CAN interfaces (replay needs 2: left+right slave)"
-        fi
+    if [ "$CAN_UP" -ge 2 ]; then
+        ok "$CAN_UP CAN interfaces up"
     else
-        if [ "$CAN_UP" -ge 4 ]; then
-            ok "$CAN_UP CAN interfaces up (dual arm master+slave)"
-        elif [ "$CAN_UP" -ge 2 ]; then
-            warn "only $CAN_UP CAN interfaces (need 4 for dual arm master+slave)"
-        else
-            warn "only $CAN_UP CAN interfaces"
-        fi
+        warn "only $CAN_UP CAN interfaces (expected can_left_mas + can_right_mas)"
     fi
 else
     info "skip CAN activation (--sim: 不驱动真机)"
@@ -286,7 +279,7 @@ fi
 
 if [ "$NEEDS_BUILD" = true ]; then
     info "source changed, rebuilding..."
-    (cd "$ROS2_WS" && source /opt/ros/jazzy/setup.bash && colcon build --packages-select piper 2>&1 | tail -3)
+    (cd "$ROS2_WS" && unset AMENT_PREFIX_PATH COLCON_PREFIX_PATH CMAKE_PREFIX_PATH PYTHONPATH 2>/dev/null; export PATH="/usr/bin:$PATH"; source /opt/ros/humble/setup.bash && colcon build --packages-select piper --cmake-args -DPython3_EXECUTABLE=/usr/bin/python3.10 2>&1 | tail -3)
     ok "rebuild done"
 else
     ok "install up to date"
@@ -296,13 +289,24 @@ fi
 echo ""
 echo "--- Step 6: launching ---"
 
-source /opt/ros/jazzy/setup.bash
+# Clean stale AMENT/COLCON/PYTHONPATH from other workspaces that shadow packages.
+unset AMENT_PREFIX_PATH COLCON_PREFIX_PATH CMAKE_PREFIX_PATH PYTHONPATH 2>/dev/null || true
+
+# Ensure system python3.10 is found BEFORE miniforge python3.12 for ROS2 Humble.
+# The ros2 CLI uses #!/usr/bin/python3 shebang; if miniforge's python3.12 shadows
+# it, rclpy imports fail with "No module named 'rclpy._rclpy_pybind11'".
+export PATH="/usr/bin:$PATH"
+
+source /opt/ros/humble/setup.bash
 source "$ROS2_WS/install/setup.bash"
 
-# Add venv bin to PATH (for rerun CLI). Replay 不依赖 venv 里的 jax/openpi 但保留无害.
-[ -d "$KAI0_DIR/.venv/bin" ] && export PATH="$KAI0_DIR/.venv/bin:$PATH"
+# Do NOT add venv to global PATH — ROS2 Humble nodes run Python 3.10 and
+# venv's Python 3.12 site-packages cause numpy/rclpy import failures.
+# JAX-dependent nodes (rerun_viz) are launched with explicit venv in their
+# launch config.
 
-# Unset proxy vars that can interfere with JAX/gRPC
+# Unset proxy vars that can interfere with JAX/gRPC.
+# Also unset PYTHONPATH to prevent stale workspace paths from contaminating ROS2 nodes.
 unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY 2>/dev/null || true
 
 # ── 部署模式 marker ──

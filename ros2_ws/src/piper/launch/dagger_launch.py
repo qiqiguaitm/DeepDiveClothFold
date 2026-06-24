@@ -97,6 +97,25 @@ def generate_launch_description():
         'record_inference', default_value='true',
         description='Form C: also record policy rollouts to <task>/inference/<date-v2>/ '
                     '(intervention=0). Set false to record dagger/ only.')
+    # Head (D435) depth default OFF for dagger: V1/v0 inference doesn't consume
+    # depth, and the extra USB3 bandwidth + per-frame depth grab in
+    # multi_camera_node adds color-frame jitter that staled the V1 obs. Set
+    # KAI0_HEAD_DEPTH=1 (→ start_dagger_collect.sh passes 'true') to record it.
+    enable_head_depth_arg = DeclareLaunchArgument(
+        'enable_head_depth', default_value='false',
+        description="D435 top_head depth: dagger default 'false' (was 'auto' → on)")
+    # CPU affinity prefixes — isolate the recorder mp4 encode + master_servo CAN
+    # loops onto dedicated physical cores so they cannot steal the inference
+    # cores. Default '' = no pinning (legacy). Set by start_dagger_collect.sh.
+    camera_cpu_prefix_arg = DeclareLaunchArgument(
+        'camera_cpu_prefix', default_value='',
+        description="Launch prefix for multi_camera (forwarded to autonomy_launch)")
+    recorder_cpu_prefix_arg = DeclareLaunchArgument(
+        'recorder_cpu_prefix', default_value='',
+        description="Launch prefix for dagger_recorder (e.g. 'nice -n 10 ionice -c2 -n7 taskset -c 16-23,48-55')")
+    servo_cpu_prefix_arg = DeclareLaunchArgument(
+        'servo_cpu_prefix', default_value='',
+        description="Launch prefix for the 2× master_servo (e.g. 'taskset -c 24-27,56-59')")
 
     # ── Compose autonomy_launch.py: same policy + slave + cameras (no rerun) ──
     # Three key overrides:
@@ -117,6 +136,11 @@ def generate_launch_description():
             # forks start_dagger_session.sh. Avoids loading JAX (~22s) at
             # infra bring-up before the user has even opened the dashboard.
             'enable_policy': 'false',
+            # Forward head-depth + camera affinity so the infra cameras honor
+            # them (IncludeLaunchDescription does NOT auto-pass parent CLI args;
+            # only the keys listed here reach the included launch).
+            'enable_head_depth': LaunchConfiguration('enable_head_depth'),
+            'camera_cpu_prefix': LaunchConfiguration('camera_cpu_prefix'),
         }.items(),
     )
 
@@ -127,6 +151,7 @@ def generate_launch_description():
     master_left = Node(
         package='piper', executable='arm_master_servo_node.py',
         name='piper_master_left', output='screen',
+        prefix=LaunchConfiguration('servo_cpu_prefix'),
         parameters=[{
             'can_port': _LEFT_MASTER_CAN,
             'speed_percent': 30,
@@ -146,6 +171,7 @@ def generate_launch_description():
     master_right = Node(
         package='piper', executable='arm_master_servo_node.py',
         name='piper_master_right', output='screen',
+        prefix=LaunchConfiguration('servo_cpu_prefix'),
         parameters=[{
             'can_port': _RIGHT_MASTER_CAN,
             'speed_percent': 30,
@@ -167,6 +193,7 @@ def generate_launch_description():
     dagger_node = Node(
         package='piper', executable='dagger_recorder_node.py',
         name='dagger_recorder', output='screen',
+        prefix=LaunchConfiguration('recorder_cpu_prefix'),
         parameters=[{
             'task_name':      LaunchConfiguration('record_task'),
             'prompt':         LaunchConfiguration('record_prompt'),
@@ -205,6 +232,8 @@ def generate_launch_description():
     return LaunchDescription([
         set_py,
         record_task_arg, record_prompt_arg, record_subset_arg, record_inference_arg,
+        enable_head_depth_arg,
+        camera_cpu_prefix_arg, recorder_cpu_prefix_arg, servo_cpu_prefix_arg,
         autonomy,  # includes mode_arg/gpu_arg/config_arg/ckpt_arg/etc. transitively
         master_left_delayed,
         master_right_delayed,

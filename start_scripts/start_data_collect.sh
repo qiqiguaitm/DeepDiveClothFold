@@ -157,12 +157,70 @@ export CAM_FPS=30
 # bilateral capture (master command goes into action). Consumed by
 # web/data_manager/backend/app/ros_bridge.py::get_state_action.
 export KAI0_ACTION_EQ_STATE="${KAI0_ACTION_EQ_STATE:-1}"
+# V3 collection (2026-06-15): generate V3 datasets directly at record time.
+#   KAI0_FRONT_TRIM=1         online leading-idle trim (EpisodeWriter rolling
+#                             buffer; same semantics as build_no_release, keeps
+#                             MARGIN=15 lead-in — NOT a full delete).
+#   KAI0_TAIL_TRIM=1          online trailing-idle cap (EpisodeWriter holds the
+#                             post-task idle run, keeps TAIL_CAP=15 terminal settle
+#                             frames; same semantics as build_no_release tail-cap —
+#                             arm AND gripper must be static, so a final gripper
+#                             release/place is never dropped). Defaults to follow
+#                             KAI0_FRONT_TRIM.
+#   KAI0_GRIPPER_FROM_MASTER=1 action gripper dims (6,13) follow the master
+#                             (teleop leader) grasp command; 12 arm dims stay = state.
+# Set either to 0 to opt back out (e.g. legacy V2 capture).
+export KAI0_FRONT_TRIM="${KAI0_FRONT_TRIM:-1}"
+export KAI0_TAIL_TRIM="${KAI0_TAIL_TRIM:-$KAI0_FRONT_TRIM}"
+export KAI0_GRIPPER_FROM_MASTER="${KAI0_GRIPPER_FROM_MASTER:-1}"
+# Per-episode alignment self-check at finalize: assert first-pts==0,
+# video-frames==parquet-rows, and the first frame decodes (catches a black/
+# keyframe-broken video). Cheap now (demux + 1-frame decode, ~0.2s); default ON
+# so bad data raises on save instead of shipping silently. KAI0_VALIDATE_TRIM=0
+# to disable.
+export KAI0_VALIDATE_TRIM="${KAI0_VALIDATE_TRIM:-1}"
+# Async writer (2026-06-22): capture thread preps+enqueues, bg thread encodes.
+# DEFAULT ON — this is what keeps the 30Hz loop fed (no startup stall, ~29fps)
+# AND, paired with nvenc (fast GPU encode), the writer keeps up so the queue is
+# ~empty at save → finalize ≈ 0.7s (depth-pack + parquet + the cheap demux
+# validate), well under the pedal's 5s timeout. The earlier >5s save / pedal
+# failures were the OLD full-decode validate (~10s), now fixed to ~46ms.
+# Output is bit-identical to sync. KAI0_ASYNC_WRITER=0 reverts to inline encode.
+export KAI0_ASYNC_WRITER="${KAI0_ASYNC_WRITER:-1}"
+# Dataset CONTENT version → auto-creates a version folder and tags the date leaf.
+# Layout: KAI0/<Task>/<subset>/<vN>/<date>-<vN>/  (e.g. Task_A/base/v3/2026-06-15-v3).
+# The recorder mkdir's the full path, so the v2/v3 folder is created on the fly
+# and each episode lands under its version's subtree (train v2/v3 separately).
+#   V3 = online front-trim + gripper-action-from-master; else legacy v2.
+#   Override the version explicitly with KAI0_DATASET_VERSION=vN.
+if [[ "$KAI0_FRONT_TRIM" == "1" && "$KAI0_GRIPPER_FROM_MASTER" != "0" ]]; then
+    export KAI0_DATASET_VERSION="${KAI0_DATASET_VERSION:-v3}"
+else
+    export KAI0_DATASET_VERSION="${KAI0_DATASET_VERSION:-v2}"
+fi
+export KAI0_DATE_SUFFIX="-${KAI0_DATASET_VERSION}"   # date leaf suffix (layout.py)
+# Video encode: DEFAULT nvenc (GPU). Real recordings showed nvenc holds ~29-30fps
+# while libx264 (CPU) drops to ~19fps under live contention (cameras+teleop+API
+# server competing for CPU/GIL) — GPU offload is what keeps the recorder at rate.
+# nvenc's per-episode ~0.4-0.6s session-init (which used to drop the first ~0.5s of
+# frames) is now paid by EpisodeWriter._warmup_encoders at construction time
+# (recorder.start(), before the capture loop) → ZERO startup drops, clean 30fps from
+# frame 0 (verified). KAI0_ENCODER_WARMUP=0 disables it; KAI0_VIDEO_CODEC=h264 forces
+# CPU libx264 (no startup spike anyway, but worse steady-state under load).
+export KAI0_VIDEO_CODEC="${KAI0_VIDEO_CODEC:-nvenc}"
+export KAI0_NVENC_GPU="${KAI0_NVENC_GPU:-0}"
 if [[ "${ACTION:-start}" == "start" || "${ACTION:-start}" == "restart" ]]; then
     if [[ "$KAI0_ACTION_EQ_STATE" == "1" ]]; then
-        info "data convention: action == state (KAI0 official; master topic ignored for action field)"
+        info "data convention: action == state (KAI0 official); gripper-from-master=$KAI0_GRIPPER_FROM_MASTER (dims 6,13 ← teleop leader)"
     else
         info "data convention: action = master (legacy bilateral; falls back to state if master topic missing)"
     fi
+    info "V3 front-trim: $([ "$KAI0_FRONT_TRIM" = "1" ] && echo 'ON (leading-idle trimmed at record time, keep 15-frame lead-in)' || echo 'OFF (raw V2 capture)')"
+    info "V3 tail-trim:  $([ "$KAI0_TAIL_TRIM" = "1" ] && echo 'ON (trailing post-task idle capped to 15-frame settle; arm+gripper static)' || echo 'OFF')"
+    info "async writer:  $([ "$KAI0_ASYNC_WRITER" = "1" ] && echo 'ON (capture thread enqueues; bg thread encodes → no record-time frame drops)' || echo 'OFF (inline encode)')"
+    info "dataset version: $KAI0_DATASET_VERSION → auto folder <task>/<subset>/$KAI0_DATASET_VERSION/$(date +%Y-%m-%d)$KAI0_DATE_SUFFIX/"
+    info "video codec: $KAI0_VIDEO_CODEC$([ "$KAI0_VIDEO_CODEC" = "nvenc" ] && echo " (GPU h264_nvenc @ GPU $KAI0_NVENC_GPU; auto-falls back to libx264 if unavailable)")"
+    info "depth fmt: packed 1 file/episode (.zarr.zip) — EpisodeWriter.finalize auto-packs the per-frame zarr dir"
 fi
 
 exec bash "$RUN_SH" "$ACTION" "${@:2}"

@@ -1,0 +1,81 @@
+# 跨 episode 重复度 V0 探针 — cnsh Robot-GPU 开发机队列, 2× A100 (Flexible)
+#   Plan: docs/training/future_plans/plans/cross_episode_recurrence_value_plan.md §3.1
+#   双 GPU 并行两份探针:
+#     GPU0: A_new_smooth_800/base (vis, 部署域)        → temp/recurrence_v0
+#     GPU1: kai0_advantage (有 stage_progress_gt GT)   → temp/recurrence_v0_kai0
+#   DINOv2 权重已缓存 vePFS (HF_HOME 指过去, 离线加载)。
+# Submit: source ~/.volc_creds && kai0/.venv/bin/python \
+#   train_scripts/kai/volc/submit_yaml.py train_scripts/kai/volc/recurrence_v0_cnsh_2gpu.yaml
+
+TaskName: "recurrence-v0-probe-cnsh-2gpu"
+Description: "V0: 跨episode重复度→milestone 探针 (DINOv2+KMeans+coverage), 2xA100 dev queue, smooth800+kai0_adv 双数据集"
+Tags: []
+
+ImageUrl: "visincept-cn-shanghai.cr.volces.com/grasp/h2r:1.0"
+ResourceQueueName: "Robot-GPU开发机队列"
+Framework: "PyTorch"
+
+TaskRoleSpecs:
+  - RoleName: "worker"
+    RoleReplicas: 1
+    Flavor: "ml.pni2.7xlarge"     # 2× A100-80G (开发机队列禁 Flexible, 用 Preset 小规格)
+
+ActiveDeadlineSeconds: 14400      # 探针 ~30-60min, 4h 上限兜底
+EnableTensorBoard: false
+
+Storages:
+  - Type: "Vepfs"
+    VepfsId: "vepfs-cnsh075262e1f815"
+    SubPath: ""
+    MountPath: "/vePFS"
+
+CacheType: "Cloudfs"
+
+Envs:
+  - Name: HF_HUB_OFFLINE
+    Value: "1"
+  - Name: TRANSFORMERS_OFFLINE
+    Value: "1"
+  - Name: HF_HOME
+    Value: "/vePFS/tim/workspce/hf_cache"     # dinov2-small 已缓存 (hub_default 经 HF_HUB_CACHE 指定)
+  - Name: HF_HUB_CACHE
+    Value: "/vePFS/tim/workspce/hf_cache/hub_default"
+  - Name: TOKENIZERS_PARALLELISM
+    Value: "false"
+  - Name: OMP_NUM_THREADS
+    Value: "8"
+
+Entrypoint: |
+  set -uo pipefail
+  STAMP=$(date -u +%Y%m%d_%H%M%S)
+  REPO=/vePFS/tim/workspace/deepdive_kai0
+  LOG_DIR=$REPO/logs
+  mkdir -p "$LOG_DIR"
+  exec >> "$LOG_DIR/recurrence_v0_${STAMP}.log" 2>&1
+  echo "=== recurrence V0 probe start $(date) host=$(hostname) ==="
+  nvidia-smi -L
+  cd "$REPO"
+  PY=kai0/.venv/bin/python
+  $PY -c "import torch, transformers, sklearn, av; print('deps OK, cuda', torch.cuda.is_available(), torch.cuda.device_count())"
+
+  run_probe() {  # gpu dataset out n
+    CUDA_VISIBLE_DEVICES=$1 $PY train_scripts/kai/data/recurrence_v0_probe.py \
+      --dataset "$2" --n-episodes "$4" --out "$3" \
+      > "$LOG_DIR/recurrence_v0_${STAMP}_$(basename $3).log" 2>&1
+    echo "[probe $(basename $3)] rc=$?"
+  }
+  run_probe 0 kai0/data/Task_A/self_built/A_new_smooth_800/base temp/recurrence_v0      50 &
+  P0=$!
+  run_probe 1 kai0/data/Task_A/kai0_advantage                   temp/recurrence_v0_kai0 50 &
+  P1=$!
+  wait $P0 $P1
+  echo "=== summaries ==="
+  grep -A8 "V0 SUMMARY" "$LOG_DIR"/recurrence_v0_${STAMP}_recurrence_v0*.log || true
+  ls -la temp/recurrence_v0/ temp/recurrence_v0_kai0/ || true
+  echo "=== DONE $(date) ==="
+
+RetryOptions:
+    EnableRetry: false
+    MaxRetryTimes: 0
+
+AccessType: "Public"

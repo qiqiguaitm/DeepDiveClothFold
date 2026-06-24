@@ -198,4 +198,4 @@
 - C 详细: `task_a_new_pure_1800_new_norm_base_mixed1_results.md`
 - NEW SOTA 详细: `task_a_new_pure_200_new_norm_results.md`
 - uc03 smooth_800 (另一 1800 ep 类似实验, mixed_1_clean init): `task_a_new_smooth_800_new_norm_results.md`
-- Mining 安全事件 (uc02/03 训练受影响): `docs/deployment/incidents/2026-05-16_uc_security_incident_and_backup.md`
+- Mining 安全事件 (uc02/03 训练受影响): `docs/backup/2026-05-16_uc_security_incident_and_backup.md`

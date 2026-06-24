@@ -349,7 +349,21 @@ class RclpyBridge:
 
         state = _pick("left_slave") + _pick("right_slave")
         if os.environ.get("KAI0_ACTION_EQ_STATE", "1") == "1":
-            return state, list(state)
+            action = list(state)
+            # V3 convention: 12 arm-joint action dims = slave state (unchanged);
+            # the 2 gripper dims (6=L, 13=R) follow the MASTER (teleop leader)
+            # gripper command — captures human grasp intent instead of the
+            # slave's lagged readback. Falls back to slave gripper (=state) when
+            # a master topic isn't present. Disable with KAI0_GRIPPER_FROM_MASTER=0.
+            if os.environ.get("KAI0_GRIPPER_FROM_MASTER", "1") == "1":
+                with self._lock:
+                    has_lm = "left_master" in self._latest_joint
+                    has_rm = "right_master" in self._latest_joint
+                if has_lm:
+                    action[6] = _pick("left_master")[6]
+                if has_rm:
+                    action[13] = _pick("right_master")[6]
+            return state, action
 
         l_master = _pick("left_master")
         r_master = _pick("right_master")

@@ -2,56 +2,132 @@
 # 按已有映射激活 CAN 接口并重命名为 ROS2 launch 期望的符号名。
 #
 # 用法:
-#   bash can_tools/activate_can.sh              # 激活全部 4 臂 (遥操/DAgger)
-#   bash can_tools/activate_can.sh --slave-only # 只激活 2 个 slave 臂 (纯推理)
+#   bash piper_tools/activate_can.sh              # 按机器 profile 激活
+#   bash piper_tools/activate_can.sh --machine visrobot02
+#   bash piper_tools/activate_can.sh --robot visrobot02    # --machine 的兼容别名
+#   bash piper_tools/activate_can.sh --two-can    # visrobot02: 左/右各一条共享 CAN
+#   bash piper_tools/activate_can.sh --four-can   # visrobot01: 原始 4-CAN
+#   bash piper_tools/activate_can.sh --slave-only # 只激活 slave 臂 (纯推理)
 #
 # 映射由 calibrate_can_mapping.py 校准后自动更新。
 #
-# sim01 bus-info (2026-05-21 calibrate_can_mapping.py 校准):
-#   3-2.2.2:1.0 → can_left_mas  (左 master (示教左臂))
-#   3-2.2.1:1.0 → can_left_slave  (左 slave (执行左臂))
-#   3-2.2.3:1.0 → can_right_mas  (右 master (示教右臂))
-#   3-2.2.4:1.0 → can_right_slave  (右 slave (执行右臂))
+# visrobot02: 左右各一条共享 CAN; visrobot01: 原始 4-CAN.
 
 set -eo pipefail
 
 BITRATE=1000000
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+PROFILE_SH="$PROJECT_ROOT/config/robot_profiles.sh"
+if [[ -f "$PROFILE_SH" ]]; then
+    # shellcheck disable=SC1090
+    source "$PROFILE_SH"
+fi
 
 if [[ $(id -u) -eq 0 ]]; then
     SUDO=""
 else
     SUDO="sudo"
-    sudo -v || { echo "[FAIL] 无法获取 sudo 权限"; exit 1; }
+    if sudo -n true >/dev/null 2>&1; then
+        :
+    elif [[ -n "${SUDO_PASSWORD:-}" || -r "$HOME/.sudo_password" ]]; then
+        _ASKPASS_SCRIPT="/tmp/.kai0_can_askpass_$$.sh"
+        cleanup_askpass() { rm -f "$_ASKPASS_SCRIPT" 2>/dev/null; }
+        trap cleanup_askpass EXIT
+        if [[ -n "${SUDO_PASSWORD:-}" ]]; then
+            _PW="$SUDO_PASSWORD"
+        else
+            _PW="$(head -n1 "$HOME/.sudo_password")"
+        fi
+        cat > "$_ASKPASS_SCRIPT" <<EOF
+#!/bin/sh
+printf '%s\n' '$_PW'
+EOF
+        chmod 700 "$_ASKPASS_SCRIPT"
+        unset _PW
+        export SUDO_ASKPASS="$_ASKPASS_SCRIPT"
+        sudo -A -v || { echo "[FAIL] 无法获取 sudo 权限"; exit 1; }
+        SUDO="sudo -A"
+    else
+        sudo -v || { echo "[FAIL] 无法获取 sudo 权限"; exit 1; }
+    fi
 fi
 
 # ── 映射配置: "bus-info:symbolic_name" ───────────────────────────────────────
 # calibrate_can_mapping.py 会自动更新这两个数组
 SLAVE_MAPPINGS=(
-    "3-2.2.1:1.0:can_left_slave"
-    "3-2.2.4:1.0:can_right_slave"
+    "${KAI0_LEFT_SLAVE_BUS_INFO:-1-1:1.0}:can_left_slave"
+    "${KAI0_RIGHT_SLAVE_BUS_INFO:-}:can_right_slave"
 )
 MASTER_MAPPINGS=(
-    "3-2.2.2:1.0:can_left_mas"
-    "3-2.2.3:1.0:can_right_mas"
+    "${KAI0_LEFT_MASTER_BUS_INFO:-1-13:1.0}:can_left_mas"
+    "${KAI0_RIGHT_MASTER_BUS_INFO:-1-12:1.0}:can_right_mas"
+)
+TWO_CAN_MAPPINGS=(
+    "${KAI0_LEFT_SHARED_BUS_INFO:-${KAI0_LEFT_MASTER_BUS_INFO:-1-13:1.0}}:can_left_mas"
+    "${KAI0_RIGHT_SHARED_BUS_INFO:-${KAI0_RIGHT_MASTER_BUS_INFO:-1-12:1.0}}:can_right_mas"
 )
 
 # ── 解析参数 ─────────────────────────────────────────────────────────────────
 SLAVE_ONLY=false
-if [[ "${1:-}" == "--slave-only" ]]; then
-    SLAVE_ONLY=true
+TWO_CAN=false
+FOUR_CAN=false
+MACHINE="${VIS_ROBOT_ID:-${KAI0_ROBOT_ID:-${KAI0_MACHINE_ID:-}}}"
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --slave-only) SLAVE_ONLY=true; shift ;;
+        --two-can) TWO_CAN=true; shift ;;
+        --four-can) FOUR_CAN=true; shift ;;
+        --machine|--robot) MACHINE="${2:-}"; shift 2 ;;
+        -h|--help) sed -n '1,13p' "$0"; exit 0 ;;
+        *) echo "[FAIL] 未知参数: $1" >&2; exit 1 ;;
+    esac
+done
+
+if [[ -n "$MACHINE" ]]; then
+    export KAI0_MACHINE_ID="$MACHINE"
+    export VIS_ROBOT_ID="${VIS_ROBOT_ID:-$MACHINE}"
+    export KAI0_ROBOT_ID="${KAI0_ROBOT_ID:-$MACHINE}"
+fi
+if declare -F apply_kai0_robot_profile >/dev/null; then
+    apply_kai0_robot_profile teleop
+fi
+if ! $TWO_CAN && ! $FOUR_CAN && ! $SLAVE_ONLY; then
+    case "${KAI0_CAN_TOPOLOGY:-${KAI0_DEFAULT_CAN_TOPOLOGY:-auto}}" in
+        2can|two-can) TWO_CAN=true ;;
+        4can|four-can) FOUR_CAN=true ;;
+        auto)
+            if [[ "$(ip -br link show type can 2>/dev/null | wc -l)" -lt 4 ]]; then
+                TWO_CAN=true
+            else
+                FOUR_CAN=true
+            fi
+            ;;
+    esac
+fi
+if $TWO_CAN && $FOUR_CAN; then
+    echo "[FAIL] --two-can 与 --four-can 不能同时使用" >&2
+    exit 1
 fi
 
 echo "=============================="
 echo "  CAN 臂激活"
-echo "  模式: $(if $SLAVE_ONLY; then echo 'slave-only (纯推理)'; else echo '全部 (遥操/DAgger)'; fi)"
+echo "  机器: ${KAI0_MACHINE_ID:-unknown} (${KAI0_ROBOT_PROFILE:-auto})"
+echo "  模式: $(if $TWO_CAN; then echo 'two-can (visrobot02 左/右共享 CAN)'; elif $SLAVE_ONLY; then echo 'slave-only (纯推理)'; else echo 'four-can (visrobot01 原始拓扑)'; fi)"
 echo "=============================="
 
 # ── 构建目标列表 ─────────────────────────────────────────────────────────────
 declare -a TARGETS=()
-for entry in "${SLAVE_MAPPINGS[@]}"; do
-    TARGETS+=("$entry")
-done
-if ! $SLAVE_ONLY; then
+if $TWO_CAN; then
+    for entry in "${TWO_CAN_MAPPINGS[@]}"; do
+        TARGETS+=("$entry")
+    done
+else
+    for entry in "${SLAVE_MAPPINGS[@]}"; do
+        TARGETS+=("$entry")
+    done
+fi
+if ! $SLAVE_ONLY && ! $TWO_CAN; then
     for entry in "${MASTER_MAPPINGS[@]}"; do
         TARGETS+=("$entry")
     done
@@ -81,6 +157,11 @@ for entry in "${TARGETS[@]}"; do
     symbolic="${entry##*:}"
     bus_info="${entry%:*}"
 
+    if [[ -z "$bus_info" ]]; then
+        echo "  [SKIP] $symbolic 未配置 bus-info"
+        continue
+    fi
+
     current="${BUS_TO_IFACE[$bus_info]:-}"
     if [[ -z "$current" ]]; then
         echo "  [SKIP] 未找到 bus-info=$bus_info ($symbolic)"
@@ -103,6 +184,10 @@ echo "--- Step 2: 重命名为符号名并激活 ---"
 for entry in "${TARGETS[@]}"; do
     symbolic="${entry##*:}"
     bus_info="${entry%:*}"
+
+    if [[ -z "$bus_info" ]]; then
+        continue
+    fi
 
     tmp_name="${BUS_TO_TMP[$bus_info]:-}"
     if [[ -z "$tmp_name" ]]; then

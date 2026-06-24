@@ -92,6 +92,7 @@ class LeRobotEE6DDataset(Dataset):
         image_size_wrist: int = 224,
         image_aug: bool = False,
         action_qdur: Optional[float] = None,
+        static_skip: bool = False,
     ):
         self.root = Path(root)
         self.domain_id = int(domain_id)
@@ -133,19 +134,54 @@ class LeRobotEE6DDataset(Dataset):
             for line in f:
                 ep = json.loads(line)
                 self.episodes.append(ep)
-        # Build (ep_index, frame_index) index
-        # Each ep has "length" — total frames. Frame valid for sampling: 0 .. length-action_chunk
-        self.samples = []
-        for ep in self.episodes:
-            ep_idx = ep["episode_index"]
-            length = ep["length"]
-            for f_idx in range(max(0, length - action_chunk + 1)):
-                self.samples.append((ep_idx, f_idx))
-
-        # Parquet path template + video path template
+        # Parquet path template + video path template (needed before sample build for existence check)
         self.parquet_tpl = info.get("data_path", "data/chunk-{episode_chunk:03d}/episode_{episode_index:06d}.parquet")
         self.video_tpl = info.get("video_path", "videos/chunk-{episode_chunk:03d}/{video_key}/episode_{episode_index:06d}.mp4")
         self.chunks_size = info.get("chunks_size", 1000)
+
+        # 官方 static-frame skip (X-VLA domain_handler/base.py): 丢弃"未来首步双臂 EE 位姿几乎不动"
+        # 的样本 (|seq[1]−seq[0]|<1e-5), 专剔 action≈proprio 的退化帧 (copycat 捷径温床)。
+        # 仅 static_skip=True 时启用 (E0); 需逐 ep 读 action 列 → 略增 init 耗时, 故默认 off。
+        self.static_skip = bool(static_skip)
+        _POSE_IDX = [i for i in range(20) if i not in (9, 19)]  # 排除夹爪, 比 EE 位姿(xyz+rot6d)
+
+        # Build (ep_index, frame_index) index
+        # Each ep has "length" — total frames. Frame valid for sampling: 0 .. length-action_chunk
+        self.samples = []
+        n_skipped = 0      # episodes dropped (missing parquet)
+        n_static = 0       # frames dropped (static, official skip)
+        for ep in self.episodes:
+            # LeRobot v2.1 uses "episode_index"; kai0-native (e.g. Task_A vis_base/v1) uses
+            # "episode_id" with parquet/mp4 filenames numbered by that id → accept both.
+            ep_idx = ep["episode_index"] if "episode_index" in ep else ep["episode_id"]
+            length = ep["length"]
+            # Defensive: skip stale manifest entries whose parquet was cleanup-deleted
+            # (kai0 datasets sometimes leave episodes.jsonl ahead of the deleted files).
+            pq_path = self._parquet_path(ep_idx)
+            if not pq_path.exists():
+                n_skipped += 1
+                continue
+            acts = None
+            if self.static_skip:
+                acts = np.stack([np.asarray(a, dtype=np.float32)
+                                 for a in pq.read_table(pq_path, columns=["action"]).to_pandas()["action"]])
+            for f_idx in range(max(0, length - action_chunk + 1)):
+                if acts is not None:
+                    # mirror official lseq[1]-lseq[0]: first future anchor vs current, both from action traj
+                    if self.action_qdur is not None:
+                        a1 = int(np.clip(round(f_idx + self.action_qdur * float(self.fps) / action_chunk),
+                                         0, len(acts) - 1))
+                    else:
+                        a1 = min(f_idx + 1, len(acts) - 1)
+                    if np.abs(acts[a1] - acts[f_idx])[_POSE_IDX].max() < 1e-5:
+                        n_static += 1
+                        continue
+                self.samples.append((ep_idx, f_idx))
+        if n_skipped:
+            print(f"[LeRobotEE6DDataset] {self.root.name}: skipped {n_skipped} episode(s) "
+                  f"with missing parquet (stale manifest)")
+        if self.static_skip:
+            print(f"[LeRobotEE6DDataset] {self.root.name}: static-skip dropped {n_static} frame(s)")
 
     def __len__(self):
         return len(self.samples)

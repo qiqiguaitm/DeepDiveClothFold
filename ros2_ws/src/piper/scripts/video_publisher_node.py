@@ -26,9 +26,53 @@ unchanged.
 from __future__ import annotations
 
 import os
+import shutil
+import tempfile
 import threading
 import time
+import zipfile
 from pathlib import Path
+
+
+def _resolve_depth_artifact(zarr_dir: Path | None) -> Path | None:
+    """Given base `.../episode_X.zarr`, return the lossless FFV1 `.mkv` (newest,
+    preferred), then the packed `.zarr.zip`, then the legacy `.zarr/` dir, else
+    None. Mirrors data_manager depth_archive."""
+    if zarr_dir is None:
+        return None
+    mkv = Path(str(zarr_dir).removesuffix(".zarr") + ".mkv")
+    if mkv.is_file():
+        return mkv
+    zp = Path(str(zarr_dir) + ".zip")
+    if zp.is_file():
+        return zp
+    if zarr_dir.is_dir():
+        return zarr_dir
+    return None
+
+
+def _open_depth_zip_or_dir(artifact: Path):
+    """Open a depth artifact read-only. Returns (depth_array, tmpdir|None).
+    `.mkv` = lossless FFV1 gray16le -> full (T,H,W) uint16 numpy (supports
+    .shape / arr[i]); `.zarr.zip` -> extract to temp dir; `.zarr/` -> in place."""
+    if artifact.suffix == ".mkv":
+        import av
+        import numpy as np
+        c = av.open(str(artifact))
+        frames = [f.to_ndarray() for f in c.decode(video=0)]
+        c.close()
+        return np.stack(frames), None
+    import zarr
+    if artifact.is_dir():
+        return zarr.open(str(artifact), mode="r"), None
+    tmp = tempfile.mkdtemp(prefix="kai0_depthz_")
+    try:
+        with zipfile.ZipFile(artifact) as zf:
+            zf.extractall(tmp)
+        return zarr.open(tmp, mode="r"), tmp
+    except Exception:
+        shutil.rmtree(tmp, ignore_errors=True)
+        raise
 
 import cv2
 import numpy as np
@@ -52,7 +96,9 @@ class _VideoSrc:
 
     def __init__(self, mp4_path: Path, zarr_path: Path | None, logger):
         self.mp4_path = mp4_path
-        self.zarr_path = zarr_path if zarr_path and zarr_path.is_dir() else None
+        # zarr_path is the base `.../episode_X.zarr` path; the artifact on disk is
+        # either the packed `.zarr.zip` (new) or the legacy `.zarr/` dir.
+        self.zarr_path = _resolve_depth_artifact(zarr_path) if zarr_path else None
         self._logger = logger
         self._cap = None
         self._cur_idx = -1
@@ -62,6 +108,7 @@ class _VideoSrc:
         self._color_n = 0
         self._zarr = None
         self._depth_n = 0
+        self._depth_tmp = None  # temp dir if we unzipped a .zarr.zip
 
     def open(self) -> tuple[bool, str]:
         if not self.mp4_path.is_file():
@@ -76,7 +123,7 @@ class _VideoSrc:
         if self.zarr_path is not None:
             try:
                 import zarr
-                self._zarr = zarr.open(str(self.zarr_path), mode="r")
+                self._zarr, self._depth_tmp = _open_depth_zip_or_dir(self.zarr_path)
                 self._depth_n = int(self._zarr.shape[0])
             except Exception as e:  # noqa: BLE001
                 self._logger.warn(f"zarr open failed for {self.zarr_path}: {e}")
@@ -126,6 +173,10 @@ class _VideoSrc:
         if self._cap is not None:
             self._cap.release()
             self._cap = None
+        self._zarr = None
+        if self._depth_tmp is not None:
+            shutil.rmtree(self._depth_tmp, ignore_errors=True)
+            self._depth_tmp = None
 
 
 class VideoPublisherNode(Node):
@@ -211,7 +262,7 @@ class VideoPublisherNode(Node):
             for cam_name in CAM_MAP:
                 mp4 = videos_dir / cam_name / f"episode_{ep_id:06d}.mp4"
                 zarr_dir = videos_dir / f"{cam_name}_depth" / f"episode_{ep_id:06d}.zarr"
-                src = _VideoSrc(mp4, zarr_dir if zarr_dir.is_dir() else None,
+                src = _VideoSrc(mp4, zarr_dir,
                                 self.get_logger())
                 ok, msg = src.open()
                 if not ok:

@@ -84,6 +84,15 @@ class Pi0Config(_model.BaseModelConfig):
     # (Track C Stage 2 analogue).
     freeze_mode: str = "none"
 
+    # ===== LeWM vision-encoder 变体 (pi05_from_paligemma_base_training_plan.md §9) =====
+    # 默认 "siglip" → 行为与上游 pi0/pi05 完全一致 (旁路代码不触发)。仅当 "lewm" 时,
+    # PyTorch 路径用 DINOv3-L/16(冻) + LeWM OctCompactor 替换 SigLIP (15 token vs 768)。
+    # ⚠️ 纯加法: 这些字段全有默认值, 所有现有 config 不受影响。
+    vision_encoder: str = "siglip"          # "siglip" (默认/官方) | "lewm"
+    lewm_ckpt_path: str | None = None        # LeWM ckpt (取 compactor.{th,hl,hr}.*)
+    lewm_dinov3_dir: str | None = None       # DINOv3-L/16 本地权重目录 (offline)
+    lewm_freeze_compactor: bool = False      # True=冻 compactor(L-freeze) / False=随策略微调(L-nofreeze)
+
     def __post_init__(self):
         if self.max_token_len is None:
             object.__setattr__(self, "max_token_len", 200 if self.pi05 else 48)

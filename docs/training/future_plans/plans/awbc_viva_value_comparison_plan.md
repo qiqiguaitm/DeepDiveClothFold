@@ -7,8 +7,8 @@
 
 **上游/关联**:
 - AWBC pipeline 全貌 → [`../../../deployment/strategy/awbc_implementation_plan.md`](../../../deployment/strategy/awbc_implementation_plan.md)(4-step RECAP)
-- 历史失败教训 → [`awbc_pi07style_experiment.md`](awbc_pi07style_experiment.md)(π0.7-style，全失败，根因:demo-only advantage 方差 η²≈3%、prompt 信号弱)
-- 已实施的 v2 数据扩充 → [`awbc_v2_training_plan.md`](awbc_v2_training_plan.md)(base+dagger+mirror，12,024 ep)
+- 历史失败教训 → [`awbc_pi07style_experiment.md`](../../history/experiments/awbc_pi07style_experiment.md)(π0.7-style，全失败，根因:demo-only advantage 方差 η²≈3%、prompt 信号弱)
+- 已实施的 v2 数据扩充 → [`awbc_v2_training_plan.md`](../../history/experiments/awbc_v2_training_plan.md)(base+dagger+mirror，12,024 ep)
 - ViVa 论文 → [arXiv 2604.08168](http://arxiv.org/abs/2604.08168) / 仓库 `/vePFS/zundong/ViVa`(GigaAI-research/ViVa)
 
 ### 参与对比的 value 模型(2 个 ViVa 变体,均 WAN2.2-TI2V-5B / 5.00B / step 7000 / task_a_0509v2)

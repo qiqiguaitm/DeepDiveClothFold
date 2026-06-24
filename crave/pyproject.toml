@@ -1,0 +1,31 @@
+[project]
+name = "crave"
+version = "0.1.0"
+description = "CRAVE — Cross-episode Recurrence As Value Estimation: zero-train milestone/value from frozen visual features"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy",
+    "scikit-learn",
+    "opencv-python-headless",
+    "pandas",
+    "matplotlib",
+    "av",
+    "h5py",
+]
+
+# torch / transformers are intentionally NOT pinned here: CRAVE runs inside an existing
+# runtime (e.g. the `srpo` env: torch 2.10 + transformers 4.57) that already provides them.
+# DINOv3 needs transformers >= 4.56 (model_type `dinov3_vit`); fp16 overflows → use bf16.
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+crave = ["py.typed"]

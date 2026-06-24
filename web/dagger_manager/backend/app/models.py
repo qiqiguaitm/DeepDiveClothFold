@@ -36,6 +36,10 @@ class DaggerStatus(BaseModel):
     # State machine snapshot (latched on /dagger/state); None until the
     # dagger_recorder node first publishes.
     state: Optional[str] = None
+    # Rollout pause flag (latched on /dagger/rollout_paused): True = between
+    # rollouts (waiting for scene reset + "start next"); False = rollout running;
+    # None = unknown. Lets the UI show whether the button will END or START.
+    rollout_paused: Optional[bool] = None
     # Writer flag — independent of state. True iff pedal opened a dagger
     # episode and it hasn't been closed yet. None if dagger_recorder hasn't
     # been seen yet (stack not started).

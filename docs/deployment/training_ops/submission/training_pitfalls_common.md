@@ -2,7 +2,7 @@
 
 > **作用**: 汇总**与集群无关、任何训练提交都会踩**的坑 (数据/init/eval/config)。集群**特有**的坑见各自文档:
 > - Volc (cnbj/cnsh): [`volc_ml_platform.md`](volc_ml_platform.md) §"Volc 特有踩坑"
-> - uc (uc01/02/03): [`uc_cluster_jobs.md`](uc_cluster_jobs.md) §12.10 / §12.11
+> - uc (uc01/02/03): [`../../../backup/uc_cluster_jobs.md`](../../../backup/uc_cluster_jobs.md) §12.10 / §12.11 (uc 已停用)
 >
 > 提交前还要过 [`README.md`](README.md) 的 Pre-Submit Checklist。本文是 checklist 的"为什么 + 怎么修"展开。
 > **建立**: 2026-06-01 (从多轮迁移实战归纳)。
@@ -32,7 +32,7 @@
 - **`info.json` 的 `chunks_size` 必须 ≥ `total_episodes`(>1000 ep 数据集致命)** ⚠️: 自建脚本把所有 ep 写进单个 `data/chunk-000/`, 但 `chunks_size` 从源 info 抄来常是 **1000**。lerobot 用 `episode_chunk = ep_idx // chunks_size` 算路径 → ep≥1000 期望 `chunk-001/episode_001000.parquet`(不存在)→ 文件 assert 失败 → `get_safe_version` 打 HF hub → `OfflineModeIsEnabled` 崩。**症状极隐蔽**: <1000 ep 数据集(如 955)完全正常, 一旦 ≥1000(1033/1940)就崩; 按 `episode_chunk=0` 写的体检脚本**查不出来**(必须用真实 `ep//chunks_size`)。判据: `info.chunks_size` vs `total_episodes`, 且 `ls data/` 只有 `chunk-000`。修复无需重建: `info["chunks_size"] = max(1000, N)`(单 chunk 布局下 chunks_size≥N 即合法)。(build_no_release.py / build_smooth800_dagger.py commit 已修; 2026-06-04 Exp-C 1940ep + dagger-A 1033ep 实例)。
 - **`info.json` 的 `total_episodes`/`total_videos`/`splits` 必须 = 实际写入 ep 数, 不是请求数** ⚠️: build 脚本若**跳过坏视频 ep**(如 vis_base restructure 留下的 broken symlink), 写入数 < 请求数。若 info 用请求数(pre-skip)→ 多出幽灵尾索引 `episode_00045X` → 同上 lerobot 文件 assert 失败 → `get_safe_version → list_repo_refs` 打 HF hub → `OfflineModeIsEnabled` 崩 (与上一条**同症不同因**)。判据: `info.total_episodes` vs `wc -l meta/episodes.jsonl` vs `ls data/chunk-000/*.parquet | wc -l` **三者必须一致**。修复无需重建: 按 `episodes.jsonl` 行数 patch info.json 的三字段即可 (files 本就连续 0..N-1)。(build_smooth800_dagger.py commit `0daee64` 已修: 用 `new_idx` 非 `len(all_eps)`)。
 - **`.kai0_ts_validated` marker**: kai0 patch 的 lerobot 靠它跳过 timestamp 校验。自建集没有 → 首次 load 会做 timestamp 检查 (慢但不致命)。可 `touch .kai0_ts_validated` 跳过 (确认数据对齐后)。
-- 其它 (parquet 7 标准列 / episode meta 完整) 见 `uc_cluster_jobs.md §12.8`。
+- 其它 (parquet 7 标准列 / episode meta 完整) 见 `../../../backup/uc_cluster_jobs.md §12.8`。
 
 ## 4. init ckpt 完整性 — 按 SIZE 校验, 不按文件数 ⚠️
 
@@ -70,7 +70,7 @@
 - 多机 orbax `CheckpointManager` 要求**所有进程写同一个物理共享目录**: primary(proc0)建 `array_metadatas` 等目录, 其余进程跨盘等它出现。若 ckpt-base-dir 解析到**各节点本地盘**(每台一块不同物理盘), proc1 永远等不到 proc0 的目录 → `Timed out waiting for array_metadatas base directory creation (timeout=600s)` → `Shutdown barrier` → 全崩, **无任何 finalized ckpt**。
 - 典型陷阱: `kai0/checkpoints` 在某些机器是 **symlink → 节点本地 SSD**(为单机加速, 见 uc `local_ckpts` / sim01 `/data1`)。**单机训练正好要这个本地盘; 多机训练这恰恰是致命的**。
 - **修复**: 多机一律显式 `--checkpoint-base-dir <真共享 FS>`(uc: workspace NFS `/data/shared/ubuntu/workspace/multinode_ckpts`; volc: vePFS 本就是共享, 默认 `kai0/checkpoints` 即可)。
-- **稳定判据(关键)**: `Step N: loss` 同步下降**只证明 NCCL/前反向通, 不证明能落盘**。多机真正过关 = **熬过第一次 ckpt save**(看到 finalized `<step>/` 目录、非 `*.orbax-checkpoint-tmp-*`, 且训练继续)。详见 [`uc_cluster_jobs.md §12.11 坑 9`](uc_cluster_jobs.md)。
+- **稳定判据(关键)**: `Step N: loss` 同步下降**只证明 NCCL/前反向通, 不证明能落盘**。多机真正过关 = **熬过第一次 ckpt save**(看到 finalized `<step>/` 目录、非 `*.orbax-checkpoint-tmp-*`, 且训练继续)。详见 [`../../../backup/uc_cluster_jobs.md §12.11 坑 9`](../../../backup/uc_cluster_jobs.md)。
 
 ## 10. 任务"实例异常结束"但**无 entrypoint 日志** = 死在 pod 启动层 ⚠️
 

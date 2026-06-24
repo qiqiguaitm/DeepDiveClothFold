@@ -79,6 +79,29 @@ class PaliGemmaWeightLoader(WeightLoader):
         return _merge_params(loaded_params, params, missing_regex=".*")
 
 
+@dataclasses.dataclass(frozen=True)
+class PaliGemmaLocalWeightLoader(WeightLoader):
+    """Like PaliGemmaWeightLoader but loads the big_vision PaliGemma .npz from a LOCAL path (offline
+    clusters where the official GCS bucket is unreachable / anon-revoked). Tolerates a community-mirror
+    export that (a) lacks the top-level 'params/' wrapper (keys are 'img/...'/'llm/...') and/or (b) is
+    f16 — the merge casts every loaded array to the model param's dtype, so precision is unified at load.
+    Path resolved from `npz_path` field, else env `PALIGEMMA_NPZ`."""
+
+    npz_path: str = ""
+
+    def load(self, params: at.Params) -> at.Params:
+        import os
+        path = self.npz_path or os.environ.get("PALIGEMMA_NPZ", "")
+        if not path or not os.path.isfile(path):
+            raise FileNotFoundError(f"PaliGemma npz not found: {path!r} (set field npz_path or env PALIGEMMA_NPZ)")
+        with open(path, "rb") as f:
+            flat = dict(np.load(f, allow_pickle=False))
+        tree = flax.traverse_util.unflatten_dict(flat, sep="/")
+        sub = tree["params"] if "params" in tree else tree  # community npz often lacks the 'params/' wrapper
+        loaded_params = {"PaliGemma": sub}
+        return _merge_params(loaded_params, params, missing_regex=".*")
+
+
 def _merge_params(loaded_params: at.Params, params: at.Params, *, missing_regex: str) -> at.Params:
     """Merges the loaded parameters with the reference parameters.
 

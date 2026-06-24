@@ -1,0 +1,86 @@
+# LeWM 变体 wiring SMOKE (pi05_from_paligemma_base_training_plan.md §9) — cnbj Robot-North-H20 8 H20
+#   验证 pi0.5+LeWM 全链路接线: DINOv3(standalone纯torch) + compactor → 15 token → LLM → expert →
+#   flow loss → backward → loss↓. 30 步, pi05_base init (验 WIRING; 正式 run 才用 from-PaliGemma).
+#   Config: pi05_lewm_smoke (vision_encoder=lewm, North-E DINOv3/compactor/pi05_base/vis_v2_full).
+# Submit: source ~/.volc_creds && kai0/.venv/bin/python train_scripts/kai/volc/submit_yaml.py train_scripts/kai/volc/lewm_smoke_cnbj_8gpu.yaml
+
+TaskName: "pi05-lewm-smoke-cnbj-8gpu"
+Description: "LeWM 变体 wiring smoke: DINOv3+compactor→15tok→pi0.5, PyTorch 1-host 8 H20, 30步"
+Tags: []
+
+ImageUrl: "dvs-cr-cn-beijing.cr.volces.com/vis_robot/kai:kai0-gf1"
+ResourceQueueName: "Robot-North-H20"
+Framework: "PyTorch"
+
+TaskRoleSpecs:
+  - RoleName: "worker"
+    RoleReplicas: 1
+    Flavor: "ml.hpcpni3ln.45xlarge"   # 8× H20-SXM5-96GB single node
+
+ActiveDeadlineSeconds: 14400   # 4h (smoke; 加载+30步)
+EnableTensorBoard: false
+
+Storages:
+  - Type: "Vepfs"
+    VepfsId: "vepfs-cnbj875793a96d6b"
+    MountPath: "/vePFS-North-E/vis_robot"
+    SubPath: "/vis_robot"
+
+CacheType: "Cloudfs"
+
+Envs:
+  - Name: HF_HUB_OFFLINE
+    Value: "1"
+  - Name: TRANSFORMERS_OFFLINE
+    Value: "1"
+  - Name: TOKENIZERS_PARALLELISM
+    Value: "false"
+  - Name: NCCL_DEBUG
+    Value: "WARN"
+  - Name: OMP_NUM_THREADS
+    Value: "8"
+
+Entrypoint: |
+  STAMP=$(date -u +%Y%m%d_%H%M%S)
+  LOG_DIR=/vePFS-North-E/vis_robot/workspace/deepdive_kai0/logs
+  mkdir -p "$LOG_DIR"
+  LOG="$LOG_DIR/lewm_smoke_${STAMP}.log"
+  exec >> "$LOG" 2>&1
+  echo "=== LeWM smoke start $(date) (1-host 8 H20) ==="
+  set -ex
+  nvidia-smi -L
+
+  KAI0=/vePFS-North-E/vis_robot/workspace/deepdive_kai0/kai0
+  cd "$KAI0"
+  source .venv/bin/activate
+  python -c "import torch; print('torch', torch.__version__, 'cuda', torch.cuda.is_available(), 'ndev', torch.cuda.device_count())"
+
+  # pi0_pytorch.__init__ 要求 transformers_replace (siglip 补丁) 已装入 venv
+  TF_DIR=$(python -c "import transformers,os; print(os.path.dirname(transformers.__file__))")
+  cp -r src/openpi/models_pytorch/transformers_replace/* "$TF_DIR"/ 2>/dev/null || true
+  python -c "from transformers.models.siglip import check; assert check.check_whether_transformers_replace_is_installed_correctly(); print('transformers_replace OK')"
+
+  # PRE-FLIGHT (North-E assets)
+  DINO=/vePFS-North-E/shared_data/shock/.CACHE/hf_cache/hub/dinov3-vitl16-pretrain-lvd1689m
+  LEWM=/vePFS-North-E/shared_data/shock/distill-wm/data/exps/lewm-kai0-3view-V1-aa27438-TS0617.0224/lewm-kai0-3view_epoch_10.pt
+  INIT=/vePFS-North-E/vis_robot/openpi_cache/modelscope_cache/lerobot/pi05_base/model.safetensors
+  TRAIN=/vePFS-North-E/vis_robot/workspace/deepdive_kai0/kai0/data/Task_A/self_built/vis_v2_full
+  [ -f "$DINO/model.safetensors" ] || { echo "FATAL: DINOv3 missing $DINO" >&2; exit 13; }
+  [ -f "$LEWM" ] || { echo "FATAL: LeWM ckpt missing $LEWM" >&2; exit 13; }
+  [ -f "$INIT" ] || { echo "FATAL: pi05_base pytorch missing $INIT" >&2; exit 13; }
+  [ -f "$TRAIN/meta/episodes.jsonl" ] || { echo "FATAL: vis_v2_full missing $TRAIN" >&2; exit 13; }
+  echo "[$(date)] preflight OK (DINOv3 + LeWM ckpt + pi05_base + vis_v2_full)"
+
+  MASTER_PORT="${TORCH_DDP_MASTER_PORT:-15947}"
+  exec torchrun \
+    --nnodes=1 --node_rank=0 --nproc_per_node=8 \
+    --master_addr=127.0.0.1 --master_port=$MASTER_PORT \
+    scripts/train_pytorch.py pi05_lewm_smoke \
+    --exp_name=lewm_smoke \
+    --batch-size 16 \
+    --overwrite
+
+RetryOptions:
+    EnableRetry: false
+
+AccessType: "Public"

@@ -66,7 +66,8 @@ fi
 eval "$(conda shell.bash hook 2>/dev/null)"; conda deactivate 2>/dev/null || true
 
 VENV=$REPO/kai0/.venv_5090_trt
-export CUDA_VISIBLE_DEVICES=0
+# V1 Triton 推理 GPU; 默认 0, 可用 KAI0_SERVE_GPU 覆盖 (如 shadow 对比时让 kai0 让出 GPU0 给 gwp)。
+export CUDA_VISIBLE_DEVICES="${KAI0_SERVE_GPU:-0}"
 unset http_proxy https_proxy
 
 echo "=== Launching V1 Triton serve on :${PORT} (Phase ${PHASE}) ==="

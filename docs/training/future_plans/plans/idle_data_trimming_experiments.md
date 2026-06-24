@@ -2,7 +2,7 @@
 
 > **核心目的(本系列的真正主线,之前文档未点明)**: 验证**裁掉 episode 里的 idle(静止)帧能否让模型真机表现更好**。idle 帧分两类:① **前端**"投放等待"长静止段(机械臂不动、操作员往台上放衣服);② **中段**操作里的停顿/犹豫/反复。假设:idle 帧被 BC 忠实模仿 → 真机走停 / 犹豫 / cloth loop / 拉取松手。
 > **分步走**: **Step 1 前端投放裁剪**(= 之前的 v2→v3 / no_release,已做)→ **Step 2 中段 idle 裁剪**(未来)→ Step 3 节奏归一(可选)。
-> **状态**: Step 1 ✅ 真机成立(前端投放裁有效);**Step 2 ❌ 结案(2026-06-09)** —— v3.2 中段选择性下采样**真机退化**(抓取欠到位/抓不到衣角),三方收敛(文献+量化+真机)→ **回退 v3(front-trim-only)为默认,不重建 v3.2**,见 §3.6。
+> **状态**: Step 1 ✅ 真机成立(前端投放裁有效);**Step 2 ❌ 结案(2026-06-09)** —— v3.2 中段选择性下采样**真机退化**(抓取欠到位/抓不到衣角),三方收敛(文献+量化+真机)→ **回退 v3(front-trim-only)为默认,不重建 v3.2**,见 §3.6。**Step 3 ✅ 尾部裁剪(2026-06-16)** —— 完成后静止尾巴 **CAP 截断到 15 帧**(调研支持 + 机制上比中段安全),**就地覆盖 v3**(staging→原子 swap;v3 现 = 前端+尾部裁);28 日期全处理完成,见 **Step 3 节**。
 > **建立**: 2026-06-07(**完整合并自** `v2v3_data_window_scaling_experiments.md`(2026-06-08 该文件已删,明细见 §5)+ [`data_root_cause_probe_experiments.md`](data_root_cause_probe_experiments.md) H1,围绕 idle 主题重组)。
 > ⚠️ **方法学铁律**: **真机为终判,offline MAE 系统性反指** —— idle 多的慢/停顿轨迹逐帧 teacher-forcing MAE 反而低,真机却灾难。MAE 仅用于确认训练健康 + 选 ckpt。
 
@@ -27,7 +27,7 @@
 - **前端裁(非全删!)**:`cut = max(0, onset - margin)`,删 parquet 行 `[0:cut]` + 同步裁 3 路 mp4(`assert video_frames == parquet_rows`)。**保留 onset 前 `margin=15` 帧(≈0.5s)lead-in** —— 不把投放段整段删光,留一小段进入运动的过渡(对齐文献"keep short settle ≤15 frames",这也是 front-trim work 的原因之一,见 §3.6)。
   - `--mode no_release`:对指定 2 天做前裁(单实验对照)。
   - `--per-date`(v3):对 `vis_base/v2/<date>` 每个 ep 前裁 → 输出 `vis_base/v3/<date>-v3`。
-- **版本含义**: **v2 = 未裁原始;v3 = 前端投放已裁**。(只裁前端,中段 idle 仍在 → Step 2。)
+- **版本含义(图例)**:**v2** = 未裁原始;**v3** = **前端投放裁(Step 1)+ 尾部 tail-cap(Step 3,2026-06-16 起就地并入 v3)**;**v3.2** = v3 前裁 + **中段选择性下采样**(Step 2,❌真机退化已弃,独立目录);~~purge~~ = 全删所有 idle(从未实建的极端假设)。⚠️ 历史:Step 3 中途曾用过 `v3.1/` 独立目录暂存,后已就地换入 v3、删除 v3.1;"v3.1" 不再是独立版本。
 
 ---
 
@@ -40,9 +40,9 @@
 3. **主流数据集不做"全删低速帧"**:DROID 只删 operator-gated idle(投放/setup 等待),非速度阈值全删;openpi pi0-DROID 只过滤"整块都 idle 的 chunk"。"删 idle 是常见标准做法"被**证伪(0-3 vote)**。
 4. **全删的风险**:任务需要的 pause(叠衣 settle / regrasp 稳定)被删 → 策略学不会"该等时等";train/deploy 分布漂移;丢失恢复力。[DP 明确"因任务需要故意不删 idle"]
 5. **领域推荐的是"删的替代方案"**:action chunking(已有)+ **upweight changepoint 关键帧**(Keyframe-Focused IL `2106.06452`)+ **语义/熵感知选择性下采样**(ESPADA `2512.07371` ~2×、DemoSpeedup `2506.05064` ~3×,压缩 casual 段、保留高精度段;**ESPADA 含真机叠衣**)。
-6. **关键空白 = 本实验的价值**:目前**无任何"在 chunked VLA 上直接 ablate 删中段 pause vs 靠 chunking 吸收"的工作** → 本系列 v3.1 实验正好填空白。研究**预测:全删 ≈ 或略差于 前端裁(v3)**。
+6. **关键空白 = 本实验的价值**:目前**无任何"在 chunked VLA 上直接 ablate 删中段 pause vs 靠 chunking 吸收"的工作** → 本系列(中段裁 v3.2)实验正好填空白。研究**预测:全删 ≈ 或略差于 前端裁(v3)**。
 
-> **据此定 Step 2(按最优解)**:**主线 = v3.2 选择性**(前端裁 + 中段长 pause 设上限/下采样、保留短功能性 settle);**不做 v3.1 全删**(非必要/有风险/chunked 边际小),仅留作可选极端对照。两个实验都用 v3.2,各自对 v3(前端裁)baseline。详见 §3。
+> **据此定 Step 2(按最优解)**:**主线 = v3.2 选择性**(前端裁 + 中段长 pause 设上限/下采样、保留短功能性 settle);**不做全删 idle(purge,从未实建)**(非必要/有风险/chunked 边际小),仅留作可选极端对照。两个实验都用 v3.2,各自对 v3(前端裁)baseline。详见 §3。
 >
 > ✅ **2026-06-09 结果坐实**:本节 point 2/6 的预测(chunked 吸收 chunk 内 pause → 删中段 ≈ 无收益,且有风险)被**真机验证** —— v3.2 真机退化(抓取欠到位),第二轮文献调研(99 agents)进一步坐实"删低速帧→速度膨胀伤抓取"。**Step 2 结案:回退 v3,不重建 v3.2**,见 §3.6。
 >
@@ -65,8 +65,8 @@
 
 ## 3. ⭐ Step 2 — 两个实验(按调研最优解:v3.2 选择性 idle 处理)
 
-> **决策(按最优解,2026-06-07)**: 调研(§1.5)证据明确 —— **不做"全删 idle(v3.1)"**(非必要/有风险/pi05 chunked 边际小),改做**最优解 v3.2 = 前端投放裁 + 中段长 pause 设上限/下采样、保留短功能性 settle**(ESPADA/DemoSpeedup 式选择性下采样)。两个实验都用 v3.2。
-> ~~v3.1 全删~~ 仅留作**可选极端对照**(若 v3.2 证明"裁中段有用"再考虑跑极端验上限),不作主线。
+> **决策(按最优解,2026-06-07)**: 调研(§1.5)证据明确 —— **不做"全删 idle(purge)"**(非必要/有风险/pi05 chunked 边际小),改做**最优解 v3.2 = 前端投放裁 + 中段长 pause 设上限/下采样、保留短功能性 settle**(ESPADA/DemoSpeedup 式选择性下采样)。两个实验都用 v3.2。
+> ~~全删 idle(purge)~~ 仅留作**可选极端对照**(若 v3.2 证明"裁中段有用"再考虑跑极端验上限),不作主线。
 
 ### 3.1 v3.2 数据构建 — 选择性 idle 处理(待实现)
 - **定义**: v3.2 = v3(前端投放已裁)+ **对中段静止段**:
@@ -100,20 +100,23 @@
 - **2d** ⏳ 对齐各自 v3 baseline(复用现成 ckpt)+ **真机对比** → 落 §3.3 判据 + 回填(终判)。
 
 ### 3.5 offline 结果(inline-eval `vis_v2_merged_val`)
-**Exp-1 `v32_le0510`(≤5-10 v3.2,985ep)— 训完 50k(2026-06-09):**
+**Exp-1 `v32_le0510`(≤5-10 v3.2,985ep)— ⭐ grasp-protected 重建版,训完 50k(2026-06-11):**
+
+> 注:这是 **grasp 保护修复后**(§3.6 → `build_no_release.py` commit `78eb65f`:idle 判别器加夹爪保护)**重建数据集 + 重跑** 的版本。原 pre-fix run(grasp-dwell 被下采样)已弃。数据集 `A_v32_le0510` 重建后 985ep / **1,073,200 帧**(grasp 保护比 pre-fix +7,386 帧,即被找回的抓取停顿)。
 
 | step | MAE@1 | @10 | @25 | @50 |
 |---|---|---|---|---|
-| 8000 | 0.0088 | 0.0223 | 0.0465 | 0.0845 |
-| 16000 | 0.0079 | 0.0191 | 0.0369 | 0.0640 |
-| 24000 | 0.0074 | 0.0180 | 0.0344 | 0.0593 |
-| 32000 | 0.0071 | 0.0176 | 0.0335 | 0.0577 |
-| 40000 | 0.0069 | 0.0174 | 0.0331 | 0.0571 |
-| **48000** | **0.0069** | **0.0173** | **0.0329** | **0.0569** |
+| 8000 | 0.0089 | 0.0222 | 0.0461 | 0.0834 |
+| 16000 | 0.0079 | 0.0190 | 0.0363 | 0.0624 |
+| 24000 | 0.0074 | 0.0178 | 0.0339 | 0.0579 |
+| 32000 | 0.0071 | 0.0173 | 0.0329 | 0.0562 |
+| 40000 | 0.0070 | 0.0171 | 0.0324 | 0.0556 |
+| **49999** ⭐ | **0.0069** | **0.0170** | **0.0323** | **0.0555** |
 
-- 单调收敛、末端平台(40k≈48k @1=0.0069)。最佳已保存 ckpt = `49999`(48000 最低但未存;keep_period=10000)。
+- 单调收敛、末端平台(40k≈49999 @1=0.0069)。**最佳 ckpt = `49999`**。
+- **vs pre-fix 版**:@1 `0.0069 = 0.0069`(持平),@50 `0.0555 < 0.0569`(grasp 保护略好,offline 小幅);差异小,**真机才是判据**。
 - **最佳 ckpt**:`/vePFS-North-E/vis_robot/workspace/deepdive_kai0/kai0/checkpoints/pi05_flatten_fold_v32_le0510/v32_le0510_cnbj/49999`
-- **Exp-2 `v32_all`(全量1940ep v3.2)** cnbj 训练中,训完回填。
+- **Exp-2 `v32_all`(全量1940ep v3.2)**:pre-fix run 已 kill(grasp-dwell 被下采样);grasp-protected 全量版未重跑(本轮只重建/重跑 Exp-1)。
 - ⚠️ **offline 仅确认收敛**:idle 裁剪是否有用是**真机判据**(v3.2 vs 各自 v3 前端裁 baseline);idle 多的慢轨迹逐帧 MAE 反指(§铁律),offline 看不出。
 
 ### 3.6 ⭐⭐ 真机退化复盘 + 三方收敛 + 决策结案(2026-06-09)
@@ -151,6 +154,77 @@
 2. **为什么 front-trim 对、middle-trim 错**(文献给的分界):**前端 idle = 操作员投放/setup 等待、超 chunk 长度、任务无关 → 裁了帮忙**(DROID 同);**中段 idle = 任务内、含功能性 settle/grasp-dwell → 删了伤**。我们 front-trim 有效、middle-trim 退化正踩这条线。
 3. ⚠️ **front-trim 不是"全删前端",而是保留 `margin=15` 帧 lead-in**(`cut = onset − margin`,§1),正好对齐文献"keep short settle ≤15 frames"——这也是它 work 的原因之一。
 4. **想要更快 → 推理期做**(SAIL 式接触感知变速:转移段快、抓取段慢),不靠训练数据过滤。
+
+---
+
+## Step 3 — 尾部裁剪(tail-cap):完成后静止尾巴(2026-06-16)
+
+> **第三类 idle**:episode 末端"任务已完成后"的纯静止 hold 段(机械臂叠完衣保持不动、操作员还没停录)。区别于前段(投放等待)与中段(任务内停顿)。
+> **决策(✅ 2026-06-16)**:**CAP 截断 = 保留末端 15 帧收尾,裁掉更长的尾巴**;不全删、不保留满尾。**就地覆盖 v3**(build 到暂存 `v3_tailtmp` → 原子 swap 换入 v3,per-date crash-safe;v3 现 = 前端+尾部裁)。已对全部 28 日期处理完成(见 S3.6)。
+
+### S3.1 三类 idle 对照(本系列最终认知)
+
+| | **前段** 投放等待 | **中段** 任务内停顿 | **后段** 完成后尾巴 |
+|---|---|---|---|
+| 性质 | 任务无关、操作员投放 | 任务内、含功能性 settle/grasp-dwell | 任务**已完成**、纯保持 |
+| 超 chunk(H=50)? | 是(长)→ chunking 盖不住 | 否(chunk 内吸收)| 部分超(dagger 尾可达 300 帧)|
+| **删了会速度膨胀?** | 不会 | **会**(删低速帧→定长 chunk 位移膨胀→抓取变粗)| **不会**(删末端零位移帧,不跨任务活跃段)|
+| 主流做法 | DROID 裁 setup | 不裁 | 训练管线裁(pi0-FAST/OpenVLA)|
+| **本系列决策** | ✅ **裁**(v3,MARGIN=15 lead-in)| ❌ **不裁**(v3.2 退化,§3.6)| ✅ **CAP 截断**(就地并入 v3,TAIL_CAP=15)|
+
+### S3.2 深度调研结论(2026-06-16,100 agents / 18 源 / 25 claim 三票核验,14 confirmed)
+
+> **Bottom line**:**CAP/截断到一小段收尾(~10–20 帧),不 delete-all、不 keep-full**;tail-trim 机制上**比中段裁安全**(不触发速度膨胀)。
+
+1. **保留 idle 帧 → 真机"卡住/冻结"** 是反复记录的主失败模式。DP:"BC-RNN/IBC idle 不删→真机 get stuck";LSTM-GMM 真机 **8/20 卡住**。OpenVLA:"数据里机器人几乎不动的步→推理卡在这些步"。Policy-idling(`2508.15669`):idling = 策略自己出不来的"吸引盆"。[`2303.04137` · openvla · `2508.15669`]
+2. **机制 = copycat/因果混淆**:动作时序强相关 + 历史可恢复过去动作时触发——**纯 hold 尾巴正是相关性最大的极限**,直接喂"复制上一动作=继续保持"先验。[Fighting Copycat, NeurIPS2020]
+3. **chunking 只吸收到 horizon 为止**:超过 H=50 的尾巴必然产生整段全 hold 的 chunk → 漏 hold 先验。我们 dagger 尾巴可达 300 帧 ≫ 50。[DP]
+4. **主流 VLA 都删 idle 不靠长尾教停**:pi0-FAST 在 DROID 显式过滤 all-zero idle(后加 chunk-aware 版)。⚠️ **但其 all-zero 检测是给 delta/velocity 用的,对我们 absolute joint 不成立** → 必须按**低关节位移 + 静止夹爪**判尾。[`2501.09747`]
+5. **教"停下"的正解是显式终止信号**(RT-1 terminate token / done 维),不是长 hold 尾;DROID `is_terminal` 对所有 demo=True 无区分力。[RT-1 · DROID]
+6. ⚠️ **caveat**:无论文直接研究"连续 chunked absolute-action 的尾部 idle";证据多在非 chunked 策略,迁到 pi05 是**合理机制外推非实测**。"全删致完成后抽搐"是 prudent hypothesis(非 cited)→ 这正是**选 CAP 而非全删**的主因。被 refute 掉 11 条(如"删 idle 是 BC 默认""OpenVLA 显式过滤 Bridge 全零")已剔除。
+
+### S3.3 裁剪标准(✅ 三段统一,2026-06-16 用户定档)
+
+| 段 | 判别 | 裁法 | 关键参数 |
+|---|---|---|---|
+| 前段 | 12 臂维 \|Δa\| 均值持续 **>3e-3** 达 WIN=10 帧 = onset | `cut=max(0,onset−15)` | THR=3e-3 / MARGIN=15 |
+| 中段 | — | **完全不裁** | — |
+| **后段** | 末端连续"非活跃"帧:臂 \|Δa\|≤**3e-3**(对齐前段)**AND** 夹爪 \|Δ\|≤**0.02** | 保留末端 **15 帧**,删更早尾巴 | TAIL_CAP=15 / idle_thr=3e-3 / grip_thr=0.02 |
+
+- ✅ **TAIL_CAP=15 帧(0.5s)**:与前段 MARGIN=15 对称;< action_horizon=50;够教终止、不留长 hold 先验。
+- ✅ **idle_thr=3e-3**:对齐前段 THR(用户定)。
+- ✅ **grip_thr=0.02 夹爪保护**(关键安全阀):末端夹爪一动(松手/放下)即停止裁剪,绝不切真实终止动作。实测 AH1 尾段夹爪 0/60 在动 = 纯 hold,安全。
+- ✅ **中段维持完全不裁**(用户定;沿用 §3.6 结论)。
+
+### S3.4 实测(dry-run,idle_thr=3e-3 / tail_cap=15)
+
+| 源 | trimmed ep | tail-drop 中位 | max | 删帧% |
+|---|---|---|---|---|
+| Task_AH1(横向折,200ep)| 195/200 | 21 帧 | 120(4s)| 1.83% |
+| vis_base/v3 5-10(95ep)| 48/95 | 1 | 65 | 0.26% |
+| vis_dagger/v3 5-29(64ep)| 64/64 | **40** | **321(10.7s)** | 2.02% |
+
+→ **dagger 尾巴最长**(纠错轨迹常以长 hold 收尾),收益最大;base 早期段尾巴短。
+
+### S3.5 实现(`build_no_release.py --tail-cap`)
+
+- 函数 `tail_cap_keep_indices(action, tail_cap=15, idle_thr=3e-3, grip_thr=0.02)`:从末尾数连续"非活跃"帧(臂静 AND 爪静),返回 `arange(0, T−(tail−tail_cap))` 的连续前缀。只动尾、不动中段。
+- builder `build_per_date_tailcap(date_v3, v3_root, ..., inplace=True)`:读 `<root>/v3/<date>-v3` → build 到暂存 `<root>/v3_tailtmp/<date>` → **原子 swap 换入 `<root>/v3/<date>`**(rmtree+rename,per-date crash-safe;所有 src 读取在 swap 前完成);复用 `select_video_pyav` 重编码(assert 帧数==);**自动探测源视频目录命名**(feature-key vs 裸名)、**统一输出 feature-key 目录**(顺带修正 AH1 的目录/模板不一致);兼容 episodes.jsonl 的 `tasks` 与 AH1 的 `prompt`/`episode_id`;裁 frame 后重排 frame_index/index/timestamp;尾部保前缀→PTS 从 0 起,无 v3-PTS-bug。**幂等**:对已裁 v3 再跑 = 0 额外裁剪。
+- CLI:`--per-date-tailcap <dates|all> --tailcap-src {base,dagger,ah1} --tail-cap 15 --tail-idle-thr 3e-3 --grip-thr 0.02`(`--dry-run` 只算不写;`--no-inplace` 保留在 staging 不换入 v3)。
+- 输出落点:**就地更新** `vis_base/v3` · `vis_dagger/v3` · `Task_AH1/base/v3`(无独立 v3.1 目录)。
+
+### S3.6 批量重处理(✅ 2026-06-16 完成,就地覆盖 v3)
+
+- **范围 + 结果**:全部 **28 日期就地 tail-cap 并入 v3** —— vis_base/v3(19)+ vis_dagger/v3(8)+ Task_AH1/base/v3(1)。
+  | 源 | 日期 | 帧 in→out | 删帧 |
+  |---|---|---|---|
+  | vis_base + vis_dagger | 27 | 6,562,620 → 6,456,716 | **105,904(1.61%)** |
+  | Task_AH1 | 1 | 277,153 → 272,086 | 5,067(1.83%)|
+  | **合计** | **28** | — | **~110,971** |
+  - 按源:base 早期段尾短(0.2–1.8%)、**dagger 尾最长**(2–3.4%,纠错轨迹常长 hold)、AH1 1.83%。
+- **校验**:28/28 日期 info/episodes 一致 + parquet==3 路视频帧数(抽样)+ 文件数 == ep×3 → **全 PASS,0 失败**;swap 28/28 成功,无 v3_tailtmp / v3.1 残留。
+- **机器**:gf0(实为 56 核 / 463GB / 2×A100,旧"12GB jumpbox"记忆已更正)`BUILD_WORKERS=3` 后台 CPU 重编码(A100 无 NVENC → 视频编码不能 GPU 加速,NVDEC 解码非瓶颈);per-date **不算 norm**(merge/最终 build 时重算)。
+- **影响**:v3 现 = 前端+尾部裁,**下游从 v3 build/merge 的新数据集自动含尾裁**;既有已 build 的 A_v3_* 合并集是独立副本,不受影响(需要时从新 v3 重 build)。
 
 ---
 

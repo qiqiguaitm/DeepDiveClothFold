@@ -5,6 +5,30 @@
 > **建立**: 2026-06-07
 > **代码**: `realtime-vla-flash/` (root) · 模型 `huggingface.co/Dexmal/RealtimeVLA-Flash`
 > **关联**: [`roadmap.md`](roadmap.md) §3.1 阶段5 "#3 Flash 推测推理" (本文把它从"研究性、边际有限"升级为有明确抓手的课题) · [[reference_vision_ablation_openloop]] · `../../strategy/rlt_implementation_plan.md` · `../../strategy/dagger_implementation_plan.md`
+> **执行日志**: [`flash_impl_log.md`](flash_impl_log.md) — 逐步实施记录 (改动/决策/验证), **铁律: 只新增文件, 不影响旧推理路径**。
+
+---
+
+## 执行进度 (live)
+
+> 起步顺序见 §3。每个增量在 [`flash_impl_log.md`](flash_impl_log.md) 有详细记录。
+
+| 子任务 | 状态 | 产出 / 备注 |
+|---|---|---|
+| **R1-a** draft head + 双夹爪接受逻辑 (CPU) | ✅ 2026-06-07 | `draft.py` + `spec_pi0_pytorch.py`(纯函数) + CPU 单测 16/16; 双夹爪(6,13)泛化完成 |
+| **R1-b(seam)** draft 挂真模型 + 延迟实测 | ✅ 2026-06-08 | `spec_draft_attach_probe.py`; 真 pi05 prefix(968×2048)挂载成功, VLM-layer0 warm-start OK, **draft 2.5ms vs eager-full 263ms**; 确认投机在 32-D padded 空间 |
+| **R1-b(full)** `SpeculativeSampler` 完整状态机 | ✅ 2026-06-08 | wrapper(不改 PI0Pytorch); draft→K-way verify→accept→双臂夹爪门控→stitch→fallback; 机制验证: 垃圾draft全拒+回退(radius3.0), oracle draft全接受50/50(radius0.012) |
+| **R1-c** draft 蒸馏 (smoke) | ✅ 2026-06-08 | `spec_draft_distill.py`; 96 帧蒸馏 → holdout 平均接受 **27.9/50** (huber 5e-4); 坑: 训练发散需 grad-clip+cosine+best-ckpt |
+| **R1-d** 扩数据重蒸 + 真实接受率基线 | ✅ 2026-06-09 | `spec_draft_r1d.py`(零噪声 teacher + 磁盘分片 cache + 真实 verify-from-draft eval) + `spec_draft_r1d_control.py`(证伪); 1600 帧蒸 → holdout **真实接受 50.0/50, 0 回退, radius 0.018** (逼近 oracle); 证伪: 同路径未训 draft 0/50+全回退 → 50/50 是真信号。⚠️ 离线天花板≠上机, 接受率在此 ckpt **饱和** → 坐实 R5 需"接受率×SNR"联合 |
+| **R1-深(部署)** FLASH server + v2 一键启动 | ✅ 2026-06-09 | `kai0/scripts/serve_policy_flash.py` (server-only, 替换 `Policy._sample_actions` 一个 seam) + `start_scripts/kai/start_autonomy_from_ckpt_v2.sh` (拉 server → `start_autonomy.sh --mode websocket`); emit 标准 joint 14D, **现有 ROS2 客户端零改动**。冒烟: `policy.infer`→(50,14), accept 50/50 radius 0.017 draft16+verify102ms vs full≈510ms; fallback 强制抛错走 eager `full_denoise_from_observation` 不崩 (5090 compiled 路径会崩, 见 impl_log §7.3)。**未上真机/未提交** (部署红线: 真机 A/B 通过再 commit) |
+| **R5** 接受率↔开环在线探针 | ✅ 2026-06-09 (部分证伪) | `spec_r5_probe.py`; pure200 real vs 全置黑: 模型 vision-SNR **7.36×** (确在用视觉) 但 FLASH 接受率 **50/50→50/50 Δ=0.00**、radius 也不动 (corr≈0) → **接受率/radius 不是开环探针 (证伪)**。机理: 接受率是**自洽**量 (draft 与模型在*同一输入*上一致), 非*信息*量, 对输入退化**结构性失明**。R5 论点锐化: `接受率×SNR` 须**真乘积**、SNR 外接独立。详见 `flash_impl_log.md` §8 |
+| **R5-followup①** server 内"接受率×SNR"健康探针 | ✅ 2026-06-09 | `serve_policy_flash.py` 加 `_FlashHealthPolicy` (opt-in `--health-probe-every N`, 默认 0=关=裸 v2): 每 N 帧对同帧 raw-blacked 重前向算 vision-SNR (外接独立, §8.3 铁律), 与接受率联合日志+挂 `flash_health`。冒烟 (合成图) probe 触发、不崩、动作仍 (50,14)。详见 `flash_impl_log.md` §8.5 |
+| **R5-followup②** 第二个开环 ckpt 直验 | ⏸ 阻塞 | 需第二个**开环 PyTorch ckpt**+其 draft; 现仅 pure200 一个 PyTorch ckpt, 已知开环 ckpt 均 JAX → 需 JAX→PyTorch 转换 (独立工程, 本轮不做)。§8.2 机理已预判两者都饱和; 有 ckpt 时复用 `spec_r5_probe.py` |
+| **R1-真机①** 真机 spec 动得慢/欠完成诊断 | ✅ 2026-06-18 | `spec_draft_magnitude_probe.py`; `--no-spec` 正常但带 spec 慢 → 确诊 **draft v1 幅值欠驱动** (spec/full均值 **0.61**, cosine 0.52)。根因: 1 层+Huber 蒸馏退化为条件均值, 方向对幅值压到 61%; 接受率 50/50 查不出 (verify 锚 draft 自洽盲点)。详见 `flash_impl_log.md` §9 |
+| **R1-真机②** draft v2 重训 (加层+MSE+幅值/速度损失) | ✅ 2026-06-18 | `spec_draft_r1d.py` 加 `--num-layers/--loss mse/--vel-weight/--mag-weight`; `draft.py` 加多层支持 (向后兼容, 默认 1 层)。v2 (2 层+MSE+vel+mag, 300ep): spec/full均值 **0.61→1.16**, cosine **0.52→0.71**, 逐维都回到位。产物 `/tmp/draft_r1d_pure200_v2.pt`。待真机 A/B; 未提交 |
+| **R3** draft↔full 散度作不确定度信号 | ✅ 2026-06 离线证伪 | `spec_r3_probe.py`; in-distribution holdout 上 radius 近恒定 (R1-d 饱和), corr(radius,floor)≈0 → 离线测不出, 需 off-manifold/闭环帧 (docstring 为权威记录, 原 §9 已随 rebase 丢失) |
+| **R6** FLASH Triton kernel 移到 5090 | ✅ 2026-06 量测 | `optimize/v1_triton/bench_v1_per_step_5090.py`; v1 5090: prefill 25ms (vision 4+VLM 21), per-step 0.9ms, full 34ms。FLASH prefill-skip (复用 VLM KV) 下 FLASH+v1 ≈ **3.83×** 但代价是视觉陈旧/开环 (docstring 为权威记录) |
+| **R2/R3** 相位强验证 / 散度触发 | 📋 研究主线 | 见各课题 |
 
 ---
 
@@ -39,6 +63,7 @@ FLASH = **首个面向 diffusion/flow-matching VLA 的"投机推理"(speculative
 | **R6** | 5090(Blackwell)kernel 移植 + roofline | 工程 | 复用已有 wgmma 工作 | `layer_b_plan.md` |
 | **R7** | draft 作"轻量校正头"绕开重训 | 研究 | 救夹爪漂移数据 | 夹爪校准漂移结论 |
 | **R8** | 把投机推理推广到 X-VLA(Florence2) | 研究 | 更慢的模型更受益 | `reference_xvla_inference` |
+| **R9** | **MTP 式联合训练原生 draft 头**(取代 R1-c 事后蒸馏) | 研究 ⭐ | 接受率上限更高 → 真正高 Hz | LLM 投机解码演进 (DeepSeek MTP / EAGLE-3) |
 
 ---
 
@@ -86,6 +111,25 @@ FLASH = **首个面向 diffusion/flow-matching VLA 的"投机推理"(speculative
 - **联系**: kai0 另有 X-VLA(Florence2 + flow-matching, `reference_xvla_inference`), 比 pi05 更慢更重。FLASH 思路 model-agnostic(只要是 diffusion/flow VLA)。
 - **研究问题**: 给 X-VLA 蒸一个 DraftChunkHead 是否能拿到比 pi05 更大的相对加速(基数更慢)? Florence2 prefix embedding 与 Gemma draft 的对接如何设计?
 
+### R9 — MTP 式联合训练原生 draft 头 (取代 R1-c 事后蒸馏) ⭐
+- **动机 (LLM 演进映射)**: LLM 投机解码已从"外挂/事后蒸 draft"(DistillSpec) 演进到"**把多 token 预测头作为一等训练目标从头训进模型**"(DeepSeek-V3 **MTP** / **EAGLE-3**)——模型出生即自带 draft, 草稿与目标**共享表示、同分布** → 接受率显著更高。kai0 现在的 R1-c 走的正是被 LLM 那边超越的"事后蒸馏"路线。
+- **做什么**: 训 pi05 时**联合挂一个 DraftChunkHead**, 在主 flow-matching 损失之外加一项 draft 回归损失 (draft 预测整条 chunk → 监督到主模型自身的 teacher chunk 或 GT, step-weighted)。主模型与 draft **同时优化**, draft 吃的是**正在被训练**的 prefix 表示而非冻结快照。
+- **研究问题**: (a) 联合训练能把 kai0 接受率拉到多高? —— 注意 R1-d 事后蒸馏在**离线同任务 holdout 上已达 50/50 天花板**, 故 R9 的真正增益不在离线分内, 而在 **off-manifold / 闭环漂移帧**: 那里 R1-c/R1-d 的冻结-prefix 事后对齐会掉接受率+起回退, R9 的同分布共享表示应更抗掉。衡量 R9 要用闭环或扰动帧的接受率, 不是离线分。(b) 加 draft 损失是否轻微正则/损伤主策略 MAE? (c) draft 损失权重、是否 detach prefix 梯度 (EAGLE 不 detach, Medusa 常 detach) 的取舍。
+- **价值**: 接受率是投机加速的天花板; R1-c 蒸馏受限于"冻结 prefix"与"事后对齐", R9 直接抬高这个天花板 → 才可能支撑 R4 的真·高 Hz 重规划。
+
+#### R9 vs R1-c 取舍 (关键决策点)
+| 维度 | **R1-c 事后蒸馏** (已 smoke ✅) | **R9 联合训练** (本条) |
+|---|---|---|
+| 碰不碰主模型训练 | **不碰** (冻结 pi05, 只训 head) — 合"只动部署"红线 | **碰** (改 TrainConfig/训练 loop, 重训 pi05) |
+| 成本 | 极低 (几分钟~小时, 单卡, 复用 ckpt) | 高 (一次完整 pi05 微调, 8×A100 量级) |
+| 接受率上限 | 受限 (冻结 prefix + 事后对齐) | 更高 (同分布共享表示, LLM 已验证) |
+| 风险 | 零 (主模型不变, 失败只是 draft 不好用) | 可能轻微动主策略 MAE; 需 A/B 守门 |
+| 落地时机 | **现在** (R1-d 扩数据即可) | **后置** (等某次 pi05 重训窗口顺带挂上) |
+| 互斥? | **否, 互补**: 先用 R1-c 在现有 ckpt 上拿基线/验证 R5; 下次重训 pi05 时再上 R9 抬上限 |
+
+- **结论性建议**: **R1-c 不是被 R9 否定, 而是 R9 的前置探针**——R1-c 几乎零成本地回答"draft 头在 kai0 上能不能用 / 接受率↔开环 (R5) 假说成不成立", 这些结论再决定值不值得为 R9 花一次 pi05 重训。**先 R1-c/R1-d 拿证据, 再在下一个 pi05 训练窗口顺带做 R9。** 切忌为 R9 单独起一次重训。
+- **风险/坑**: 联合训练需在带补丁 venv 的 PyTorch 训练栈 (非冻结推理); draft 损失权重过大会抢主模型容量; 同样要处理 kai0 双臂夹爪 (6,13) 的 step-weighted + 相位加权 (FLASH 训练里已埋 hook, 见 `flash_impl_log.md` §阶段2)。
+
 ---
 
 ## 3. 建议起步顺序
@@ -94,5 +138,6 @@ FLASH = **首个面向 diffusion/flow-matching VLA 的"投机推理"(speculative
 2. 并行 **R5**(几乎零成本, 复用 R1 的统计)验证"接受率↔开环"假说 → 立刻反哺部署门禁。
 3. **R2 + R3**(研究主线): 把 FLASH 从"提速"升级为"闭环安全 + 主动学习触发", 直接打本仓库核心病(开环抓取)。
 4. R4 / R6 / R7 / R8 视 R1 结果再排。
+5. **R9**(联合训练 draft 头)**后置**: 必须先用 R1-c/R1-d 的零成本蒸馏拿到接受率基线 + 验证 R5 假说, **再决定**是否在下一个 pi05 重训窗口顺带挂 MTP 头。R1-c 是 R9 的前置探针, 二者互补非互斥 (详见 §2 R9 取舍表)。
 
 > **一句话立项理由**: FLASH 与 kai0 同源(pi0), 落地成本低; 而它的两个机制——**半径接受**(免费不确定性)与**夹爪相位强验证**(精度事件保护)——恰好正面命中本仓库这轮诊断出的**开环抓取/视觉脱钩**根问题。提速是表, 闭环安全与在线健康度才是对 deepdive_kai0 更大的价值。

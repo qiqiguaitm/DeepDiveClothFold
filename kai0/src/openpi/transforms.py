@@ -314,6 +314,25 @@ class ResizeImages(DataTransformFn):
 
 
 @dataclasses.dataclass(frozen=True)
+class ResizeImagesPerView(DataTransformFn):
+    """Per-key (H, W) resize — for the LeWM vision-encoder variant (faithful per-view
+    resolution §9: base/top_head 288×384, wrists 192×256; all 4:3 like native 640×480 so
+    resize_with_pad adds no padding). Keys absent from `sizes` fall back to `default`.
+
+    ⚠️ Additive: only LeWM-variant configs use this; standard configs keep ResizeImages(224,224).
+    """
+    sizes: dict  # image-key -> (H, W), e.g. {"base_0_rgb": (288,384), "left_wrist_0_rgb": (192,256), ...}
+    default: tuple[int, int] = (224, 224)
+
+    def __call__(self, data: DataDict) -> DataDict:
+        data["image"] = {
+            k: image_tools.resize_with_pad(v, *self.sizes.get(k, self.default))
+            for k, v in data["image"].items()
+        }
+        return data
+
+
+@dataclasses.dataclass(frozen=True)
 class SubsampleActions(DataTransformFn):
     stride: int
 

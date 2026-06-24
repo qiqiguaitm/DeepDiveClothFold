@@ -486,6 +486,10 @@ class PolicyInferenceNode(Node):
         self.declare_parameter('enable_rtc', True)
         self.declare_parameter('rtc_execute_horizon', 16)
         self.declare_parameter('rtc_max_guidance_weight', 0.5)
+        # obs 图像 resize 目标 (resize_with_pad). 默认 224x224 (openpi 模型输入, kai0 不变)。
+        # gwp 世界模型 server 侧拼成 768x192, 需要近原生帧 → 用更大值 (如 480x640) 少损失。
+        self.declare_parameter('obs_image_h', 224)
+        self.declare_parameter('obs_image_w', 224)
         # Layer 1.1B — chunk overlap smoothing method. Default 'min_jerk' (quintic
         # smoothstep 6t^5 - 15t^4 + 10t^3, 1st+2nd derivatives vanish at endpoints →
         # minimum-jerk chunk-boundary transition; LiPo paper arXiv:2506.05165).
@@ -513,6 +517,15 @@ class PolicyInferenceNode(Node):
         # TracerBoolConversionError at pi0_rtc.py:323. Left as function default
         # (False) until the model uses jax.lax.cond for that branch.
         self.declare_parameter('gripper_offset', 0.003)
+        # Gripper close-snap (autonomy-only, flag-gated, default ON). 位控夹爪在
+        # action==state 数据上训练 → 抓软物只输出"布料厚度"对应的小开度 (≈5mm) →
+        # 到位后位置误差≈0 → 保持力≈0 → 脱手. 把 RAW 模型夹爪输出 < thresh 的部分
+        # 裁成 0 (软阈值: ≥ thresh 原样通过, 不动开侧/释放轨迹), 让固件保持位置误差
+        # 顶到电流上限 → 夹紧力. 默认开 (5mm 阈值很保守, 只吃掉"已经基本闭合"的指令,
+        # 对 action≠state 新模型几乎无副作用); 如需关闭设 gripper_close_snap:=false.
+        # 作用于 joint 发布路径, v0/v1/v2 共用本节点 → 全链生效.
+        self.declare_parameter('gripper_close_snap', True)
+        self.declare_parameter('gripper_close_snap_thresh', 0.005)  # 5mm, 对齐模型 RAW 输出
         self.declare_parameter('img_front_topic', '/camera_f/camera/color/image_raw')
         self.declare_parameter('img_left_topic', '/camera_l/camera/color/image_raw')
         self.declare_parameter('img_right_topic', '/camera_r/camera/color/image_raw')
@@ -580,7 +593,11 @@ class PolicyInferenceNode(Node):
         self._enable_rtc = _to_bool(self.get_parameter('enable_rtc').value)
         self._rtc_execute_horizon = int(self.get_parameter('rtc_execute_horizon').value)
         self._rtc_max_guidance_weight = float(self.get_parameter('rtc_max_guidance_weight').value)
+        self._obs_image_h = int(self.get_parameter('obs_image_h').value)
+        self._obs_image_w = int(self.get_parameter('obs_image_w').value)
         self.gripper_offset = self.get_parameter('gripper_offset').value
+        self._grip_close_snap = bool(self.get_parameter('gripper_close_snap').value)
+        self._grip_close_snap_thr = float(self.get_parameter('gripper_close_snap_thresh').value)
         self._ee_grip_binarize = bool(self.get_parameter('ee_gripper_binarize').value)
         self._ee_grip_open_m = float(self.get_parameter('ee_gripper_open_m').value)
         # P2 Step 1+2: fast obs pipeline (skip JPEG + CvBridge + cvtColor)
@@ -875,6 +892,12 @@ class PolicyInferenceNode(Node):
                     self.stream_buffer.decay_alpha = float(p.value)
                 elif p.name == 'gripper_offset':
                     self.gripper_offset = float(p.value)
+                elif p.name == 'gripper_close_snap':
+                    self._grip_close_snap = bool(p.value)
+                    self.get_logger().info(f'gripper_close_snap → {self._grip_close_snap}')
+                elif p.name == 'gripper_close_snap_thresh':
+                    self._grip_close_snap_thr = float(p.value)
+                    self.get_logger().info(f'gripper_close_snap_thresh → {self._grip_close_snap_thr}')
                 elif p.name == 'prompt':
                     self.prompt = str(p.value)
                 elif p.name == 'replay_episode_path':
@@ -2233,10 +2256,11 @@ class PolicyInferenceNode(Node):
             ]
             imgs = [cv2.cvtColor(im, cv2.COLOR_BGR2RGB) for im in imgs]
         # 与原版一致: 相同分辨率时走 batch resize, 否则逐张
+        _ih, _iw = self._obs_image_h, self._obs_image_w
         if imgs[0].shape == imgs[1].shape == imgs[2].shape:
-            imgs = list(image_tools.resize_with_pad(np.array(imgs), 224, 224))
+            imgs = list(image_tools.resize_with_pad(np.array(imgs), _ih, _iw))
         else:
-            imgs = [image_tools.resize_with_pad(im[np.newaxis], 224, 224)[0] for im in imgs]
+            imgs = [image_tools.resize_with_pad(im[np.newaxis], _ih, _iw)[0] for im in imgs]
 
         qpos = np.concatenate((
             np.array(joint_left_msg.position),
@@ -2742,6 +2766,16 @@ class PolicyInferenceNode(Node):
         # gripper an extra `gripper_offset` mm tighter than the original
         # demonstration — destroys faithfulness, particularly bad for corner
         # grasping tasks where mm-scale precision matters.
+        # Gripper close-snap (flag-gated, on RAW model output, BEFORE gripper_offset
+        # so the threshold matches "模型输出 < thresh"). 软阈值: 仅把 < thresh 的部分
+        # 裁成 0, ≥ thresh 原样通过 (开侧/释放轨迹保真). 修旧 action==state ckpt 抓软
+        # 物到位后保持力≈0 脱手的问题: snap 到 0 → 固件保持位置误差 → 顶到电流上限 →
+        # 夹紧力. replay 模式跳过 (与 gripper_offset 同理由, 保持示范忠实)。
+        if self._grip_close_snap and self._replay_mode != 'replay':
+            if left[6] < self._grip_close_snap_thr:
+                left[6] = 0.0
+            if right[6] < self._grip_close_snap_thr:
+                right[6] = 0.0
         gripper_corr = 0.0 if self._replay_mode == 'replay' else self.gripper_offset
         left[6] = max(0.0, left[6] - gripper_corr)
         right[6] = max(0.0, right[6] - gripper_corr)

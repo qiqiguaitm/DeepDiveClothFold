@@ -1,0 +1,96 @@
+# Task_A (横向折) + Task_AV1 (竖向折 v1) 混合 1:1 co-train — cnbj 1-host 8 H20, 50k
+#   闲时任务 (Preemptible): 借空闲资源可被抢占; 入口自动从最新 ckpt resume (ckpt 在共享 vePFS).
+#   plan: docs/training/future_plans/plans/pi05_task_a_av1_mixed_1to1_plan.md
+#   Config: pi05_task_a_av1_mixed_1to1 (KaiVisMergedDataConfig, domain_weights=(1.0,3.256), per-domain prompt/norm/token)
+#   Data:   a_av1_merged (domain0 A_smooth800_dagger_full 1033ep / domain1 AV1 304ep) | Init: mixed_1_clean
+#   ⚠️ JAX 训练路径 (scripts/train.py) —— 加权采样仅 JAX 实现.
+# Submit: source ~/.volc_creds && kai0/.venv/bin/python train_scripts/kai/volc/submit_yaml.py train_scripts/kai/volc/a_av1_mixed_1to1_cnbj_8gpu.yaml
+TaskName: "pi05-a-av1-mixed-1to1-cnbj-8gpu"
+Description: "Task_A+AV1 混合1:1 co-train: JAX 1-host 8 H20, mixed_1_clean init, 50k, 闲时+resume"
+Tags: []
+
+ImageUrl: "dvs-cr-cn-beijing.cr.volces.com/vis_robot/kai:kai0-gf1"
+ResourceQueueName: "Robot-North-H20"
+Framework: "PyTorch"
+Preemptible: true               # 闲时任务: 借空闲资源, 可被抢占 → 入口自动 resume
+
+TaskRoleSpecs:
+  - RoleName: "worker"
+    RoleReplicas: 1
+    Flavor: "ml.hpcpni3ln.45xlarge"   # 8× H20-SXM5-96GB single node
+
+ActiveDeadlineSeconds: 1209600  # 14 天/run (被抢占后重提 deadline 重置)
+EnableTensorBoard: false
+
+Storages:
+  - Type: "Vepfs"
+    VepfsId: "vepfs-cnbj875793a96d6b"
+    MountPath: "/vePFS-North-E/vis_robot"
+    SubPath: "/vis_robot"
+
+CacheType: "Cloudfs"
+
+Envs:
+  - Name: HF_HUB_OFFLINE
+    Value: "1"
+  - Name: TRANSFORMERS_OFFLINE
+    Value: "1"
+  - Name: TOKENIZERS_PARALLELISM
+    Value: "false"
+  - Name: NCCL_DEBUG
+    Value: "WARN"
+  - Name: OMP_NUM_THREADS
+    Value: "8"
+  - Name: XLA_PYTHON_CLIENT_MEM_FRACTION
+    Value: "0.85"
+  - Name: JAX_COMPILATION_CACHE_MIN_ENTRY_SIZE_BYTES
+    Value: "-1"
+  - Name: JAX_COMPILATION_CACHE_MIN_COMPILE_TIME_SECS
+    Value: "1"
+  - Name: JAX_ENABLE_EMPTY_ARRAYS
+    Value: "true"
+
+Entrypoint: |
+  set -uo pipefail
+  STAMP=$(date -u +%Y%m%d_%H%M%S)
+  NODE=${MLP_ROLE_INDEX:-0}
+  LOG_DIR=/vePFS-North-E/vis_robot/logs
+  mkdir -p "$LOG_DIR"
+  LOG="$LOG_DIR/a_av1_mixed_1to1_${STAMP}_node${NODE}.log"
+  exec >> "$LOG" 2>&1
+  echo "=== entrypoint start $(date) (1-host 8 H20, 闲时任务) ==="
+  set -x
+  nvidia-smi -L
+  REPO=/vePFS-North-E/vis_robot/workspace/deepdive_kai0
+  cd "$REPO/kai0"
+  source .venv/bin/activate
+  python -c "import jax; print(f'jax {jax.__version__} devs={len(jax.devices())}')"
+
+  TRAIN=$REPO/kai0/data/Task_A/self_built/a_av1_merged
+  INIT=/vePFS-North-E/vis_robot/shared_ckpt/Task_A/mixed_1_clean/params
+  VAL=$REPO/kai0/data/Task_A/self_built/vis_v2_merged_val
+  [ -f "$TRAIN/meta/episodes.jsonl" ]              || { echo "FATAL: merged data missing $TRAIN" >&2; exit 13; }
+  [ -f "$TRAIN/norm_domain0_kai/norm_stats.json" ] || { echo "FATAL: domain0 norm missing" >&2; exit 13; }
+  [ -f "$TRAIN/norm_domain1_vis/norm_stats.json" ] || { echo "FATAL: domain1 norm missing" >&2; exit 13; }
+  [ -f "$INIT/_METADATA" ]                         || { echo "FATAL: mixed_1_clean init missing $INIT" >&2; exit 13; }
+  [ -f "$VAL/meta/episodes.jsonl" ]                || { echo "FATAL: inline-eval val missing $VAL" >&2; exit 13; }
+  echo "[$(date)] preflight OK (a_av1_merged + 2 per-domain norms + mixed_1_clean init + val)"
+
+  # 自动 resume: ckpt 在共享 vePFS; 有 step 目录 → --resume, 否则 --overwrite (新建).
+  EXP=a_av1_mixed_1to1
+  CKPT_DIR=$REPO/kai0/checkpoints/pi05_task_a_av1_mixed_1to1/$EXP
+  if ls -d "$CKPT_DIR"/[0-9]*/ >/dev/null 2>&1; then RESUME_FLAG="--resume"; echo "[resume] found ckpt -> --resume"; else RESUME_FLAG="--overwrite"; echo "[resume] fresh --overwrite"; fi
+
+  # save-interval 1000 (2026-06-16: 从 4000 降): 闲时 H20 窗口(~49min,~2.5s/it)只够 ~500-900 有效步,
+  #   4000 永远到不了存盘点→ckpt 卡在 16k 净进度 0. 降到 1000 让每个抢占窗口内能落盘一次, 进度才累积.
+  exec python -u scripts/train.py pi05_task_a_av1_mixed_1to1 \
+    --exp-name "$EXP" \
+    --no-wandb-enabled \
+    --save-interval 1000 \
+    $RESUME_FLAG
+
+RetryOptions:
+    EnableRetry: true
+    MaxRetryTimes: 10
+
+AccessType: "Public"

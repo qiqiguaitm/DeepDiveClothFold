@@ -128,14 +128,24 @@ def write_pseudo_labels_parquet(
     table = pq.read_table(src_path)
     n_parquet = table.num_rows
 
-    # Pseudo stage_progress_gt: 0 (flat) → 0.25, 1 (fold) → 0.75
+    # Pseudo stage_progress_gt: per-stage LINEAR INTERPOLATION 0→1 (README Step-0 spec), NOT a flat
+    # per-stage constant. K=2 stages (flat=0, fold=1), boundary t_star = first fold frame:
+    #   flat[0,t*) → 0.0 + 0.5·(pos/len_flat);  fold[t*,n) → 0.5 + 0.5·(pos/len_fold).
+    # ⚠️ 旧版写 0.25/0.75 平阶跃 → AE 回归目标(sp_gt[t]−sp_gt[t-100])段内恒 0(~94%)→ AE 塌缩成≈0
+    # (dead value). 段内连续爬升才让目标稠密、AE 训得通 (KAI0 人工标就是连续的). 见 memory ae-stage-label-collapse.
     n_labels = min(len(pseudo_labels), n_parquet)
+    lab = pseudo_labels[:n_labels].numpy() if n_labels > 0 else np.zeros(0, np.int64)
+    # boundary = first fold(==1) frame; clamp to [0, n_labels]
+    fold_idx = np.where(lab == 1)[0]
+    t_star = int(fold_idx[0]) if len(fold_idx) else n_labels  # n_labels = all-flat (no fold)
     pseudo_sp_gt = np.zeros(n_parquet, dtype=np.float32)
-    pseudo_sp_gt[:n_labels] = np.where(pseudo_labels[:n_labels].numpy() == 0, 0.25, 0.75).astype(np.float32)
+    if t_star > 0:
+        pseudo_sp_gt[:t_star] = 0.5 * (np.arange(t_star, dtype=np.float32) / t_star)
+    if t_star < n_labels:
+        lf = n_labels - t_star
+        pseudo_sp_gt[t_star:n_labels] = 0.5 + 0.5 * (np.arange(lf, dtype=np.float32) / lf)
     if n_labels < n_parquet:
-        # pad with last label
-        last_val = pseudo_sp_gt[n_labels - 1] if n_labels > 0 else 0.25
-        pseudo_sp_gt[n_labels:] = last_val
+        pseudo_sp_gt[n_labels:] = pseudo_sp_gt[n_labels - 1] if n_labels > 0 else 1.0
 
     # Add column (replace if exists)
     col = pa.array(pseudo_sp_gt, type=pa.float32())

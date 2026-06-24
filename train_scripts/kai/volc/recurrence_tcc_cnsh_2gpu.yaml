@@ -1,0 +1,44 @@
+TaskName: "recurrence-tcc-cnsh-2gpu"
+Description: "round3: TCC v2 train kai0(GT eval) + smooth800, xvla venv"
+Tags: []
+ImageUrl: "visincept-cn-shanghai.cr.volces.com/grasp/h2r:1.0"
+ResourceQueueName: "Robot-GPU开发机队列"
+Framework: "PyTorch"
+TaskRoleSpecs:
+  - RoleName: "worker"
+    RoleReplicas: 1
+    Flavor: "ml.pni2.7xlarge"
+ActiveDeadlineSeconds: 10800
+EnableTensorBoard: false
+Storages:
+  - Type: "Vepfs"
+    VepfsId: "vepfs-cnsh075262e1f815"
+    SubPath: ""
+    MountPath: "/vePFS"
+CacheType: "Cloudfs"
+Envs:
+  - Name: HF_HUB_OFFLINE
+    Value: "1"
+  - Name: TRANSFORMERS_OFFLINE
+    Value: "1"
+  - Name: HF_HUB_CACHE
+    Value: "/vePFS/tim/workspce/hf_cache/hub_default"
+Entrypoint: |
+  set -uo pipefail
+  REPO=/vePFS/tim/workspace/deepdive_kai0
+  exec >> "$REPO/logs/recurrence_round3_$(date -u +%H%M%S).log" 2>&1
+  cd "$REPO"; PY=xvla/X-VLA-env/.venv/bin/python
+  CUDA_VISIBLE_DEVICES=0 $PY -u train_scripts/kai/data/tcc_train_features.py \
+    --dataset kai0/data/Task_A/kai0_advantage --n-train 120 --n-val 20 --steps 4000 --lr 1e-3 \
+    --out temp/tcc_kai0 > $REPO/logs/r3_tcc_kai0.log 2>&1 &
+  CUDA_VISIBLE_DEVICES=1 $PY -u train_scripts/kai/data/tcc_train_features.py \
+    --dataset kai0/data/Task_A/self_built/A_new_smooth_800/base --n-train 150 --n-val 30 --steps 4000 --lr 1e-3 \
+    --out temp/tcc_smooth800 > $REPO/logs/r3_tcc_s800.log 2>&1 &
+  wait
+  grep -a -A6 "TCC EVAL" $REPO/logs/r3_tcc_kai0.log | head -8 || true
+  grep -a -A6 "TCC EVAL" $REPO/logs/r3_tcc_s800.log | head -8 || true
+  echo "ROUND3_DONE"
+RetryOptions:
+    EnableRetry: false
+    MaxRetryTimes: 0
+AccessType: "Public"

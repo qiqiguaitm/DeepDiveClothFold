@@ -1,0 +1,98 @@
+# AWBC vis-native S2 — retrain Advantage Estimator on stage-labeled vis set
+#   plan: docs/training/future_plans/plans/awbc_vis_task_a_full_pipeline_plan.md §3
+#   Config: ADVANTAGE_TORCH_VIS_AWBC (AdvantageEstimatorConfig, loss_value=1/action=0, init pi05_base strict=False)
+#   Data:   vis_awbc_merged_stage (1699ep, stage_progress_gt∈{0.25,0.75} from reused E1 classifier)
+#   PyTorch DDP torchrun 8 A100, 100k steps, save 10k. Robot-GPU开发机队列.
+# Submit: source ~/.volc_creds && kai0/.venv/bin/python train_scripts/kai/volc/submit_yaml.py train_scripts/kai/volc/awbc_s2_ae_cnsh_8gpu.yaml
+
+TaskName: "awbc-s2-ae-cnsh-8gpu"
+Description: "AWBC vis-native S2: retrain AE (ADVANTAGE_TORCH_VIS_AWBC) on vis_awbc_merged_stage, PyTorch 8 A100 100k"
+Tags: []
+
+ImageUrl: "visincept-cn-shanghai.cr.volces.com/grasp/h2r:1.0"
+ResourceQueueName: "Robot-GPU开发机队列"
+Framework: "PyTorch"
+
+TaskRoleSpecs:
+  - RoleName: "worker"
+    RoleReplicas: 1
+    Flavor: "ml.hpcpni2.28xlarge"     # 8× A100-80G
+
+ActiveDeadlineSeconds: 259200           # 72 h cap (PyTorch AE 慢)
+EnableTensorBoard: false
+
+Storages:
+  - Type: "Vepfs"
+    VepfsId: "vepfs-cnsh075262e1f815"
+    SubPath: ""
+    MountPath: "/vePFS"
+
+CacheType: "Cloudfs"
+
+Envs:
+  - Name: HF_HUB_OFFLINE
+    Value: "1"
+  - Name: TRANSFORMERS_OFFLINE
+    Value: "1"
+  - Name: WANDB_MODE
+    Value: "offline"
+  - Name: TOKENIZERS_PARALLELISM
+    Value: "false"
+  - Name: OMP_NUM_THREADS
+    Value: "8"
+  - Name: TORCH_NCCL_BLOCKING_WAIT
+    Value: "0"
+  - Name: NCCL_ASYNC_ERROR_HANDLING
+    Value: "1"
+
+Entrypoint: |
+  set -uo pipefail
+  STAMP=$(date -u +%Y%m%d_%H%M%S)
+  LOG_DIR=/vePFS/tim/workspace/deepdive_kai0/logs
+  mkdir -p "$LOG_DIR"
+  LOG="$LOG_DIR/awbc_s2_ae_${STAMP}.log"
+  exec >> "$LOG" 2>&1
+  echo "=== S2 AE train start $(date) (PyTorch DDP 8 A100) ==="
+  set -ex
+  nvidia-smi -L
+
+  KAI0=/vePFS/tim/workspace/deepdive_kai0/kai0
+  # venv bootstrap: symlink vePFS-staged uv (PyTorch cnsh pattern, no fresh install)
+  mkdir -p /home/tim/.local/share /root/.local/share
+  ln -sfn /vePFS/tim/.local/share/uv /home/tim/.local/share/uv
+  ln -sfn /vePFS/tim/.local/share/uv /root/.local/share/uv
+  cd "$KAI0"
+  source .venv/bin/activate
+  apt-get update 2>&1 | tail -1 && apt-get install -y ffmpeg 2>&1 | tail -1 || echo "ffmpeg install skipped"
+  python -c "import torch; print(f'torch {torch.__version__} cuda={torch.cuda.is_available()} dev={torch.cuda.device_count()}')"
+
+  # PRE-FLIGHT  (_interp: 段内连续插值标签, 修复旧平阶跃导致的 AE dead-value 塌缩)
+  TRAIN=/vePFS/tim/workspace/deepdive_kai0/kai0/data/Task_A/self_built/vis_awbc_merged_stage_interp
+  INIT=/vePFS/tim/workspace/openpi_cache/modelscope_cache/lerobot/pi05_base
+  [ -f "$TRAIN/meta/episodes.jsonl" ] || { echo "FATAL: train data missing $TRAIN" >&2; exit 13; }
+  python -c "import pyarrow.parquet as pq,glob,sys; f=sorted(glob.glob('$TRAIN/data/chunk-000/*.parquet'))[0]; cols=[c.name for c in pq.read_schema(f)]; sys.exit(0 if 'stage_progress_gt' in cols else 13)" || { echo "FATAL: stage_progress_gt missing in train data" >&2; exit 13; }
+  [ -f "$INIT/model.safetensors" ] || { echo "FATAL: pi05_base pytorch init missing $INIT" >&2; exit 13; }
+  echo "[$(date)] preflight OK (vis_awbc_merged_stage + stage_progress_gt + pi05_base init)"
+
+  # auto-resume: if exp ckpt dir has steps → --resume, else fresh
+  # v2 = fresh exp on _interp 连续标签 (v1 是平阶跃 dead-value 的废 ckpt, 不复用 → 换名避免误 resume)
+  EXP=adv_est_vis_v2
+  CKPT_DIR=$KAI0/checkpoints/ADVANTAGE_TORCH_VIS_AWBC/$EXP   # = config.checkpoint_dir (was wrong: experiment/)
+  RES=""
+  if ls -d "$CKPT_DIR"/[0-9]*/ >/dev/null 2>&1; then RES="--resume"; echo "[resume] found ckpt → --resume"; fi
+
+  MASTER_PORT="${TORCH_DDP_MASTER_PORT:-15842}"
+  exec torchrun \
+    --nnodes=1 --node_rank=0 --nproc_per_node=8 \
+    --master_addr=127.0.0.1 --master_port=$MASTER_PORT \
+    scripts/train_pytorch.py ADVANTAGE_TORCH_VIS_AWBC \
+    --exp_name=$EXP \
+    --save_interval 10000 \
+    --batch-size 144 \
+    $RES
+
+RetryOptions:
+    EnableRetry: true
+    MaxRetryTimes: 2
+
+AccessType: "Public"

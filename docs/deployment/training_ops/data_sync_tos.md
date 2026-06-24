@@ -85,7 +85,7 @@ tar -cf - A_new_smooth_800/ | tosutil cp - tos://transfer-shanghai/KAI0/dataset/
 | **gf3** | `/vePFS-North-E/vis_robot/workspace/deepdive_kai0/kai0/data/...` | `cd /vePFS-North-E/vis_robot/workspace/deepdive_kai0/kai0/data && tosutil cp -r tos://transfer-shanghai/KAI0/Task_A/<sub>/ ./Task_A/` |
 | **uc01** (仅 uc01, 经 NFS 自动同步给 uc02/03) ⭐ | `/data/shared/ubuntu/workspace/deepdive_kai0/kai0/data/Task_A/...`(2026-05-28 起,原 `dataset/` 已迁此) | 原始 base 拉到 `vis_base/`:`cd …/kai0/data/Task_A/vis_base && tosutil cp -r tos://transfer-shanghai/KAI0/Task_A/base/<date>-v2/ ./`;官方/构建集对应 `kai0_*` / `self_built/`。同步脚本 `from_tos_file.py/to_tos.py` 仍在 `dataset/KAI0/` |
 
-> ⭐ **uc 集群只在 uc01 拉一次** — `/data/shared/ubuntu/workspace/` 是 uc01 export 的 NFS root (`10.60.0.0/16`, 走管理网 eth0), uc02/03 通过 NFSv4.1 自动看到同一份 (跨机 inode 一致, 2026-05-28 实测). **不要 for-loop 各机各拉一份** — 浪费 3× TOS 带宽, 还会因不同步导致训练读到不同内容。详见 `uc_cluster_data_sharing_analysis.md`。
+> ⭐ **uc 集群只在 uc01 拉一次** — `/data/shared/ubuntu/workspace/` 是 uc01 export 的 NFS root (`10.60.0.0/16`, 走管理网 eth0), uc02/03 通过 NFSv4.1 自动看到同一份 (跨机 inode 一致, 2026-05-28 实测). **不要 for-loop 各机各拉一份** — 浪费 3× TOS 带宽, 还会因不同步导致训练读到不同内容。详见 `../../backup/uc_cluster_data_sharing_analysis.md` (uc 已停用)。
 
 **关键: 路径前缀对齐**:
 ```
@@ -325,6 +325,24 @@ vis_dagger/
 **当前 dagger 日期** (2026-06-03, 4 日期 / 2.5G, 三处一致 gf0+gf3+TOS): `2026-05-29-v2` (64 ep) / `2026-06-01-v2` (32) / `2026-06-02-v2` (71) / `2026-06-03-v2` (24)。
 
 > **2026-06-03 重构 SOP** (同 §6.8 v2/v3 教训): 建 `vis_dagger/v2/` → mv 现有 `<date>-v2` 进去 → 改脚本 DST `vis_dagger` → `vis_dagger/v2` (commit `653c655`) → 跑一次追平 (gf0/gf3 各补 06-02 +25 ep & 全新 06-03 24 ep) → 装 cron。**uc 待补**: 同流程 (建 v2 + 装 cron `27 * * * *`)。
+
+### 6.10 sim01 `hot_sync_latest` — 当天活跃目录近实时上传 TOS ⭐ (2026-06-12)
+
+**目的**: 让**正在采集的当天日期目录**在几分钟内到 TOS, 不必等每小时全量 `sync_kai0_to_tos.sh` (~90min/轮) 绕回来。解决"最新日期数据非实时同步"。
+
+| 项 | 值 |
+|---|---|
+| 机器 | **sim01** (数据源头) |
+| 脚本 | `/data1/DATA_IMP/sync/hot_sync_latest.sh` (upload-only, 不做 delete-mirror) |
+| 触发 | systemd user timer `kai0-tos-hotsync.timer` (`OnUnitInactiveSec=3min`, lingering=yes 扛重启) |
+| 目标 | `find Task_*/<subset>/<date>/` 中**最近 `ACTIVE_WINDOW_MIN`(默认 360)分钟内有文件改动**的日期目录 → `tosutil cp -r -flat -u` |
+| **排除** | **`-exclude=*top_head_depth*`** ⭐ (见下, 决定性) |
+| 锁 | 独立 `flock -n` (`/tmp/kai0_tos_hotsync.lock`), 与全量 sync 并发无冲突 (二者幂等, 仅全量删) |
+| 日志 | `/data1/tim/.tos_fix/sync_logs/hotsync_*.log` (留最近 200) |
+
+> ⭐ **决定性: 必须排除 depth zarr**。V1 数据集 (`Task_AV1` 等) 单日期 `top_head_depth/` 含 **~15.5 万个小 chunk 文件 (23G)**, tosutil 逐对象列举要 **~2.5h** → "每 3min 高频"形同虚设。排除 depth 后只追 parquet+RGB+meta (~450 对象): **空跑 3s / 有新 ep ~44s** (实测 158min → 44s)。depth 体量大且非实时刚需, 交给每小时全量 sync 兜底。
+>
+> **分工**: 全量 `sync_kai0_to_tos.sh` (每小时, 含 depth + delete-mirror 对账, 权威) ‖ `hot_sync_latest.sh` (每 3min, 仅当天活跃目录 RGB, 实时)。
 
 ---
 

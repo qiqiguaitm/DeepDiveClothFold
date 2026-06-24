@@ -33,10 +33,40 @@ export default function ControlsCard({ s }: Props) {
   // 开始 needs HUMAN_RECORD + not recording; 保存/丢弃 need an open episode.
   const canStart = rosAlive && sessionUp && inDagger && !recording;
   const canEnd = rosAlive && recording;
+  // Per-rollout boundary: only meaningful while the policy is running (POLICY_RUN).
+  const canRollout = rosAlive && sessionUp && s?.state === "POLICY_RUN";
+  // rollout_paused: true = paused between rollouts (next press STARTS), false =
+  // a rollout is running (next press ENDS), null = unknown.
+  const paused = s?.rollout_paused;
 
   return (
     <div className="card controls-card">
-      <h2>Recording {recording && <span style={{ color: "#f8514a" }}>● REC</span>}</h2>
+      <h2>Rollout 采集</h2>
+      {/* Current-state banner so the operator always knows what the button does next */}
+      <div className="kv" style={{ marginBottom: 8 }}>
+        <div className="k">当前</div>
+        <div className="v">
+          {!canRollout ? <span style={{ opacity: 0.6 }}>— (需 POLICY_RUN)</span>
+            : paused === true ? <span style={{ color: "#d29922", fontWeight: 600 }}>⏸ 已暂停 · 重置场景后开始下一轮</span>
+            : paused === false ? <span style={{ color: "#3fb950", fontWeight: 600 }}>● 采集中 · 本轮进行</span>
+            : <span style={{ opacity: 0.6 }}>采集中 (状态未知)</span>}
+        </div>
+      </div>
+      <div className="row-buttons">
+        <button
+          className={paused === true ? "" : "danger"}
+          style={paused === true ? { background: "#238636", borderColor: "#2ea043", color: "white" } : undefined}
+          disabled={!canRollout || busy}
+          onClick={() => call(() => api.rolloutNext())}
+          title="一轮 = 一次自主任务尝试(叠衣/抓取/擦拭…任意场景)。本轮完成按一次=结束并暂停(标 success);重置场景后再按一次=开始下一轮(自动 flush RTC, 模型不重载)">
+          {paused === true ? "▶ 开始下一轮" : "⏹ 本轮完成 · 暂停"}
+        </button>
+      </div>
+      <div className="hint">
+        一轮 = 一次自主任务尝试 (不限叠衣, 抓取/擦拭等同理)。本轮完成按一次 = 切一个干净的 inference rollout(success) 并暂停;
+        重置场景后再按一次 = 开始下一轮 (自动 flush RTC, 模型不重载)。失败由接管自动标记, 无需手动。
+      </div>
+      <h2 style={{ marginTop: 16 }}>Recording {recording && <span style={{ color: "#f8514a" }}>● REC</span>}</h2>
       <div className="row-buttons">
         <button className="primary" disabled={!canStart || busy}
                 onClick={() => call(() => api.recordStart())}

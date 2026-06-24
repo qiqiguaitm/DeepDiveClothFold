@@ -93,6 +93,22 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 PY=/data1/miniconda3/bin/python
 
+# ── CPU affinity (2026-06-15) ───────────────────────────────────────────────
+# Pin the inference loop (policy_inference_node + its ObsPrefetchWorker thread)
+# and the V1 serve to dedicated physical cores, so the dagger recorder/servo
+# encode load (pinned to a disjoint set by start_dagger_collect.sh) cannot
+# steal them — this is what kept the V1 20 Hz loop from sustaining 20 Hz under
+# dagger. 64-thread EPYC, SMT sibling = core+32. KAI0_CPU_PIN=0 disables.
+# See docs/deployment/inference/dagger_v1_inference_tuning.md.
+POLICY_PREFIX=""
+SERVE_TASKSET=()
+if [[ "${KAI0_CPU_PIN:-1}" == "1" ]]; then
+    AFF_INF="${KAI0_AFFINITY_INFERENCE:-0-11,32-43}"
+    POLICY_PREFIX="taskset -c $AFF_INF"
+    SERVE_TASKSET=(taskset -c "$AFF_INF")
+    echo "[cpu] inference pinned → $AFF_INF (KAI0_CPU_PIN=0 to disable)" >&2
+fi
+
 # ── Common sidecar validation (both variants need the orbax meta + sidecar) ──
 SIDECAR="$CHECKPOINT_DIR/train_config.json"
 [[ ! -f "$SIDECAR" ]] && { echo "[FAIL] $SIDECAR missing (pack_inference_ckpt.py?)" >&2; exit 1; }
@@ -115,6 +131,15 @@ if [[ -n "$ASSET_ID" ]] && [[ ! -f "$NORM_STATS" ]]; then
     echo "[FAIL] $NORM_STATS missing (override_asset_id mismatch)" >&2
     exit 1
 fi
+
+# Deploy-time gripper frame remap (old 100mm-range ckpt → real 0–70mm robot).
+# The dagger POLICY loads HERE (infra runs enable_policy:=false), so the env must
+# be set in this script. Default ON (本机已官方 0–70mm 标定, 部署的多是旧 frame
+# ckpt); 部署新 frame ckpt 时设 =0 关。Read by v0 create_trained_policy + v1
+# serve_policy_v1. 见 docs/deployment/data_collection/gripper_calibration.md
+export KAI0_GRIPPER_DEPLOY_REMAP="${KAI0_GRIPPER_DEPLOY_REMAP:-1}"
+export KAI0_GRIPPER_REAL_RANGE="${KAI0_GRIPPER_REAL_RANGE:-0.0,0.07}"
+[ "$KAI0_GRIPPER_DEPLOY_REMAP" = "1" ] && echo "[gripper-remap] ON: 夹爪 norm_stats [q01,q99]→真机[$KAI0_GRIPPER_REAL_RANGE]m (dims 6,13)"
 
 # ── Resolve variant ──────────────────────────────────────────────────────
 if [[ "$VARIANT" == "auto" ]]; then
@@ -154,6 +179,7 @@ if [[ "$VARIANT" == "v0" ]]; then
         "execute_mode:=true"
     )
     [[ -n "$EFFECTIVE_PROMPT" ]] && LAUNCH_ARGS+=("prompt:=$EFFECTIVE_PROMPT")
+    [[ -n "$POLICY_PREFIX" ]] && LAUNCH_ARGS+=("policy_cpu_prefix:=$POLICY_PREFIX")
     exec ros2 launch piper session_launch.py "${LAUNCH_ARGS[@]}" "${EXTRA[@]}"
 fi
 
@@ -243,7 +269,7 @@ echo "[1/2] launching V1 serve on :$SERVE_PORT (log: $SERVE_LOG) ..."
 SERVE_ARGS=(--port "$SERVE_PORT" --pkl "$V1_PKL" --norm "$NORM_STATS")
 [[ -n "$EFFECTIVE_PROMPT" ]] && SERVE_ARGS+=(--prompt "$EFFECTIVE_PROMPT")
 [[ -n "$DELTA_FLAG" ]] && SERVE_ARGS+=("$DELTA_FLAG")
-CUDA_VISIBLE_DEVICES="$GPU_ID" bash "$SERVE_SH" "${SERVE_ARGS[@]}" > "$SERVE_LOG" 2>&1 &
+CUDA_VISIBLE_DEVICES="$GPU_ID" "${SERVE_TASKSET[@]}" bash "$SERVE_SH" "${SERVE_ARGS[@]}" > "$SERVE_LOG" 2>&1 &
 SERVE_PID=$!
 
 SERVE_READY=false
@@ -282,11 +308,16 @@ LAUNCH_ARGS=(
     "latency_k:=6"
     "min_smooth_steps:=8"
     "rtc_execute_horizon:=12"
-    "publish_rate:=80"
+    # publish_rate = action playback rate. _publish_action pops exactly ONE action
+    # per tick (StreamActionBuffer.pop_next_action: popleft + k+=1), so this MUST
+    # equal the ckpt's action temporal resolution. kai0 data is 30 fps → 30 Hz.
+    # (Was 80 → replayed the 30 Hz chunk ~2.67× too fast.)
+    "publish_rate:=30"
     "transport:=shm"
     "fast_obs_pipeline:=true"
     "pipelined_obs:=true"
 )
+[[ -n "$POLICY_PREFIX" ]] && LAUNCH_ARGS+=("policy_cpu_prefix:=$POLICY_PREFIX")
 [[ -n "$EFFECTIVE_PROMPT" ]] && LAUNCH_ARGS+=("prompt:=$EFFECTIVE_PROMPT")
 
 # Foreground (NOT exec) so the EXIT trap can tear down the serve. When the

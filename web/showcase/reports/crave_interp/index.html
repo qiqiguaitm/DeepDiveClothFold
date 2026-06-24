@@ -1,0 +1,400 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CRAVE · 技术报告 · kai0_base ep2302</title>
+<style>
+:root{
+  --bg:#020010; --bg2:#05001a; --bg3:#0a0024; --panel:rgba(10,0,36,0.72);
+  --border:#1e1a6e; --border2:#3730a3; --text:#e8eaf6; --text2:#9aa2d4; --text3:#5a5e8c;
+  --accent:#7c3aed; --accent3:#a78bfa; --glow:rgba(124,58,237,0.35);
+  --green:#22c55e; --red:#ef4444; --yellow:#eab308; --blue:#818cf8; --grid:rgba(80,40,200,0.08);
+}
+*{margin:0;padding:0;box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans CJK SC',sans-serif;background:var(--bg);color:var(--text);line-height:1.7;position:relative;overflow-x:hidden}
+body::before{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);background-size:42px 42px}
+body::after{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;background:radial-gradient(ellipse 80% 50% at 50% -10%,rgba(79,70,229,0.16) 0%,transparent 70%)}
+.wrap{position:relative;z-index:1;max-width:1180px;margin:0 auto;padding:0 24px;display:grid;grid-template-columns:230px 1fr;gap:40px}
+@media(max-width:900px){.wrap{grid-template-columns:1fr}.toc{display:none}}
+
+/* header */
+header{position:relative;z-index:1;border-bottom:1px solid var(--border2);background:rgba(5,0,22,0.82);backdrop-filter:blur(10px)}
+.hd{max-width:1180px;margin:0 auto;padding:18px 24px;display:flex;align-items:center;justify-content:space-between;gap:16px}
+.hd .brand{font-weight:700;letter-spacing:.5px}
+.hd .brand b{color:var(--accent3)}
+.hd a{color:var(--text2);text-decoration:none;font-size:13px;border:1px solid var(--border2);padding:6px 12px;border-radius:8px;transition:.2s}
+.hd a:hover{color:var(--text);border-color:var(--accent);box-shadow:0 0 14px var(--glow)}
+
+/* hero */
+.hero{position:relative;z-index:1;text-align:center;padding:56px 24px 30px}
+.hero .kicker{display:inline-block;font-size:12px;letter-spacing:2px;color:var(--accent3);border:1px solid var(--border2);border-radius:20px;padding:5px 14px;margin-bottom:18px;text-transform:uppercase}
+.hero h1{font-size:38px;line-height:1.25;font-weight:800;background:linear-gradient(120deg,#fff,#a78bfa 60%,#7c3aed);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;margin-bottom:14px}
+.hero p.sub{color:var(--text2);font-size:16px;max-width:760px;margin:0 auto}
+.hero .meta{margin-top:18px;display:flex;gap:10px;flex-wrap:wrap;justify-content:center}
+.hero .meta span{font-size:12px;color:var(--text2);background:var(--bg3);border:1px solid var(--border);border-radius:7px;padding:5px 11px}
+
+/* toc */
+.toc{position:sticky;top:90px;align-self:start;font-size:13.5px;border-left:1px solid var(--border);padding-left:16px;max-height:calc(100vh - 110px);overflow:auto}
+.toc div{color:var(--text3);font-size:11px;letter-spacing:1.5px;text-transform:uppercase;margin:0 0 10px}
+.toc a{display:block;color:var(--text2);text-decoration:none;padding:5px 0;border-left:2px solid transparent;margin-left:-18px;padding-left:16px;transition:.15s}
+.toc a:hover{color:var(--accent3);border-left-color:var(--accent)}
+
+/* content */
+main{padding:24px 0 80px;min-width:0}
+section{margin-bottom:46px;scroll-margin-top:84px}
+h2{font-size:24px;font-weight:700;margin-bottom:14px;padding-bottom:8px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px}
+h2 .n{font-size:14px;color:var(--accent3);background:var(--bg3);border:1px solid var(--border2);border-radius:7px;width:30px;height:30px;display:inline-flex;align-items:center;justify-content:center;flex:none}
+h3{font-size:17px;font-weight:650;margin:24px 0 10px;color:var(--accent3)}
+p{margin:10px 0;color:#d6daf2}
+em{color:var(--accent3);font-style:normal;font-weight:600}
+code{background:var(--bg3);border:1px solid var(--border);border-radius:5px;padding:1px 6px;font-size:13px;color:#c7b8ff;font-family:'SF Mono',Menlo,monospace}
+ul{margin:10px 0 10px 22px}li{margin:5px 0;color:#d6daf2}
+.lead{font-size:16px;color:var(--text2)}
+.card{background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:20px 22px;margin:16px 0}
+.callout{border-left:3px solid var(--accent);background:linear-gradient(90deg,rgba(124,58,237,0.10),transparent);border-radius:0 10px 10px 0;padding:12px 18px;margin:16px 0;color:#dfe2f7}
+.callout.ok{border-left-color:var(--green);background:linear-gradient(90deg,rgba(34,197,94,0.10),transparent)}
+.callout.warn{border-left-color:var(--yellow);background:linear-gradient(90deg,rgba(234,179,8,0.10),transparent)}
+
+/* figure / video */
+figure{margin:18px 0;background:var(--bg2);border:1px solid var(--border);border-radius:14px;overflow:hidden}
+figure img,figure video{width:100%;display:block;background:#000}
+figcaption{padding:11px 16px;font-size:13px;color:var(--text2);border-top:1px solid var(--border)}
+figcaption b{color:var(--accent3)}
+.vgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px}
+
+/* table */
+table{width:100%;border-collapse:collapse;margin:16px 0;font-size:13.5px}
+th,td{padding:9px 12px;text-align:left;border-bottom:1px solid var(--border)}
+th{color:var(--accent3);font-weight:600;background:var(--bg3)}
+td{color:#d6daf2}
+tr:hover td{background:rgba(124,58,237,0.05)}
+.tag{display:inline-block;font-size:11px;padding:2px 8px;border-radius:6px;font-weight:600}
+.tag.g{background:rgba(34,197,94,.16);color:#5ee08a}
+.tag.r{background:rgba(239,68,68,.16);color:#ff8a8a}
+.tag.y{background:rgba(234,179,8,.16);color:#f3d05a}
+.tag.b{background:rgba(129,140,248,.16);color:#aab4ff}
+
+/* stat strip */
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px;margin:18px 0}
+.stat{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:16px;text-align:center}
+.stat .v{font-size:26px;font-weight:800;color:var(--accent3)}
+.stat .l{font-size:12px;color:var(--text2);margin-top:4px}
+
+footer{position:relative;z-index:1;border-top:1px solid var(--border);padding:26px 24px;text-align:center;color:var(--text3);font-size:13px}
+.pipe{font-family:'SF Mono',Menlo,monospace;font-size:12.5px;background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:14px 16px;color:#b9aef5;overflow-x:auto;white-space:pre;margin:14px 0}
+/* pipeline flow */
+.flow{display:flex;flex-wrap:wrap;align-items:stretch;gap:8px;margin:18px 0}
+.flow .node{flex:1;min-width:120px;background:var(--panel);border:1px solid var(--border2);border-radius:11px;padding:12px 10px;text-align:center;position:relative}
+.flow .node .ix{font-size:11px;color:var(--accent3);font-weight:700;letter-spacing:1px}
+.flow .node .t{font-size:13px;font-weight:650;margin:5px 0 3px;color:#eef0ff}
+.flow .node .d{font-size:11px;color:var(--text2);line-height:1.45}
+.flow .arrow{align-self:center;color:var(--accent);font-size:18px;flex:none}
+@media(max-width:680px){.flow .arrow{transform:rotate(90deg)}.flow{flex-direction:column}.flow .node{min-width:0}}
+/* step block */
+.step{display:grid;grid-template-columns:46px 1fr;gap:16px;margin:18px 0;align-items:start}
+.step .sn{width:42px;height:42px;border-radius:11px;background:linear-gradient(135deg,var(--accent),var(--accent2));display:flex;align-items:center;justify-content:center;font-weight:800;font-size:18px;color:#fff;flex:none;box-shadow:0 0 16px var(--glow)}
+.step .body{min-width:0}
+.step h4{font-size:16px;font-weight:680;margin:2px 0 6px;color:#eef0ff}
+.step .why{font-size:13.5px;color:var(--text2);background:rgba(124,58,237,0.07);border-left:2px solid var(--accent);border-radius:0 8px 8px 0;padding:7px 12px;margin:8px 0}
+.step .how{font-size:13.5px}
+.step .how b{color:var(--accent3)}
+kbd{background:var(--bg3);border:1px solid var(--border2);border-bottom-width:2px;border-radius:5px;padding:1px 6px;font-size:12px;color:#c7b8ff;font-family:'SF Mono',Menlo,monospace}
+</style>
+</head>
+<body>
+
+<header><div class="hd">
+  <div class="brand"><b>CRAVE</b> · 技术报告</div>
+  <a href="/">← deepdive_kai0 Showcase</a>
+</div></header>
+
+<div class="hero">
+  <span class="kicker">Cross-episode Recurrence as Value Estimation</span>
+  <h1>零训练跨 episode 复现度 → milestone → 稠密 value<br>kai0_base 真机长 episode 可解释性分析</h1>
+  <p class="sub">在真实 kai0 数据(kai0_base + kai0_dagger)上、以 30Hz 纯 kai 挖矿,对最长 episode <b>ep2302</b>(2960 帧)做端到端可解释性剖析,并与监督式 KAI0-AE 对照。</p>
+  <div class="meta">
+    <span>挖矿:253 纯 kai demo / 245k 帧 (30Hz)</span>
+    <span>45 milestone (covE+稀疏·Otsu)</span>
+    <span>vs 监督 KAI0-AE:pos 同 46% / corr 0.877</span>
+    <span>零训练 · frozen DINOv2-small</span>
+  </div>
+</div>
+
+<div class="wrap">
+<nav class="toc">
+  <div>目录</div>
+  <a href="#abstract">摘要</a>
+  <a href="#method">1 · 方法与实现步骤</a>
+  <a href="#setup">2 · 实验设置(纯 kai / 30Hz)</a>
+  <a href="#selection">3 · milestone 选择方法</a>
+  <a href="#vocab">4 · 典型簇词表</a>
+  <a href="#corresp">5 · 簇-帧对应</a>
+  <a href="#segments">6 · 三段拆分</a>
+  <a href="#compare">7 · CRAVE vs KAI0-AE</a>
+  <a href="#videos">8 · 对齐视频</a>
+  <a href="#positioning">9 · 定位与泛化</a>
+  <a href="#conclusion">10 · 结论</a>
+  <a href="#docs">附:源文档</a>
+</nav>
+
+<main>
+
+<section id="abstract">
+<h2><span class="n">§</span>摘要</h2>
+<p class="lead">CRAVE(Cross-episode Recurrence as Value Estimation)是一套<em>全程零训练</em>的稠密 value/进度估计方法:把同任务多条 demo 里<em>反复出现的状态</em>视为任务必经 milestone,用 frozen DINOv2-small 特征 + KMeans + Viterbi-DP 把"跨 episode 统计重复性"读出为单调 progress value——无需任何梯度更新或人工 stage 标注。</p>
+<p>本报告在<em>真实 kai0 数据</em>上验证:从 <code>kai0_base</code> + <code>kai0_dagger</code> 抽 253 条 demo、按 30Hz 逐帧提特征做<em>纯 kai 挖矿</em>,对最长 episode ep2302 做四层可解释性剖析(典型簇词表 → 簇-帧对应 → 三段拆分 → 与监督 KAI0-AE 对齐对比)。核心结论:<em>零训练 CRAVE 在 in-distribution kai0_base 上 ≈ 监督 KAI0-AE(pos 同为 46%、value 形状 corr 0.877),且显著更平滑、可解释。</em></p>
+<div class="stats">
+  <div class="stat"><div class="v">253</div><div class="l">纯 kai demo(173 base + 80 dagger)</div></div>
+  <div class="stat"><div class="v">45</div><div class="l">milestone(自适应选出)</div></div>
+  <div class="stat"><div class="v">0.877</div><div class="l">value 形状 corr(vs 监督 AE)</div></div>
+  <div class="stat"><div class="v">0</div><div class="l">训练 / 人工标注</div></div>
+</div>
+</section>
+
+<section id="method">
+<h2><span class="n">1</span>方法与实现步骤(从零讲清楚)</h2>
+
+<p class="lead">一句话直觉:<em>同一个任务,人/机器人做很多遍,中间会反复经过一些"必经状态"(比如"对折好左半边")。把这些"很多条录像里都出现的状态"找出来当作里程碑(milestone),按它们在任务里的先后排好;再看一段新录像每一帧"最像哪个里程碑",就知道它做到几成了。整个过程不训练任何模型。</em></p>
+
+<p>下面是从<b>原始叠衣录像</b>到<b>每帧进度 value</b> 的完整 7 步流水线。每步给出:做什么 / 为什么 / 怎么实现(对应代码)。</p>
+
+<div class="flow">
+  <div class="node"><div class="ix">输入</div><div class="t">多条 demo</div><div class="d">叠衣录像 + 机器人关节</div></div>
+  <div class="arrow">→</div>
+  <div class="node"><div class="ix">STEP 1</div><div class="t">逐帧提特征</div><div class="d">frozen DINOv2 三路</div></div>
+  <div class="arrow">→</div>
+  <div class="node"><div class="ix">STEP 2-3</div><div class="t">聚类找复现态</div><div class="d">KMeans + 覆盖率/进度</div></div>
+  <div class="arrow">→</div>
+  <div class="node"><div class="ix">STEP 4-5</div><div class="t">选 milestone</div><div class="d">+ 钉进度值</div></div>
+  <div class="arrow">→</div>
+  <div class="node"><div class="ix">STEP 6-7</div><div class="t">Viterbi-DP 读 value</div><div class="d">单调进度 + 三档</div></div>
+</div>
+
+<div class="step"><div class="sn">1</div><div class="body">
+  <h4>逐帧提特征(三路,frozen DINOv2-small,<em>零训练</em>)</h4>
+  <div class="how">对每条 demo 的每一帧顶视相机图,裁中心 224×224,过一个<b>预训练好、不再训练</b>的 DINOv2-small 视觉模型,得到一组 patch 向量。由此拼出每帧的 <b>796 维嵌入</b>:</div>
+  <ul>
+    <li><b>raw 路(384)</b>:所有 patch 向量取均值 + L2 归一 → "整幅画面长什么样";</li>
+    <li><b>armmask 路(384)</b>:先把<em>机械臂</em>的 patch 剔掉(臂原型余弦相似 &gt;0.6、或橙色线缆 HSV 命中),只留布料/桌面 patch 再取均值 → "去掉臂噪声后的布料状态";</li>
+    <li><b>proprio 路(28)</b>:机器人 14 维关节 <kbd>state</kbd> ⊕ 隔 <kbd>dt</kbd> 帧的变化量 <kbd>Δstate</kbd>,做 z-score 归一 → "机械臂构型"。</li>
+  </ul>
+  <div class="why">为什么三路:光看整幅画面(raw)会被机械臂位置带偏;armmask 专注布料;proprio 补充臂构型。三者互补,且全 frozen——<b>不训练任何参数</b>。</div>
+  <div class="how">代码:<code>crave_extract_kai_30hz.py</code>(批量提特征,双卡分片) / <code>crave_value.py</code> 的 <code>FeatureSpace.emb()</code>。产物 = 每条 ep 一个 <code>npz</code>(raw/armmask/state)。</div>
+</div></div>
+
+<div class="step"><div class="sn">2</div><div class="body">
+  <h4>跨 episode 聚类,找"反复出现的状态"</h4>
+  <div class="how">把<b>所有 demo、所有帧</b>的 796 维嵌入堆在一起,用 <b>KMeans 聚成 96 个簇</b>。</div>
+  <div class="why">直觉:同一个叠衣中间态(如"摊平""对折左边""叠好")在很多条 demo 里都会出现,这些帧的嵌入彼此相近,自然被分到同一个簇。所以——<b>一个簇 ≈ 一个跨 demo 反复出现的状态</b>。这一步就把"任务结构"无监督地浮现出来了。</div>
+</div></div>
+
+<div class="step"><div class="sn">3</div><div class="body">
+  <h4>给每个簇算两个属性:进度位置 + 覆盖率</h4>
+  <ul>
+    <li><b>进度位置 <kbd>tpos</kbd></b> = 簇内帧的平均归一化时间(0=任务开始,1=结束)→ 这个状态大概在任务的哪个阶段;</li>
+    <li><b>覆盖率 <kbd>covE</kbd></b> = 含此簇的 demo 条数 ÷ 总条数 → 这个状态有多"普遍"(多少条录像都经过它)。</li>
+  </ul>
+  <div class="why">覆盖率是 CRAVE 的核心量:<b>真正的里程碑应该是大多数 demo 都经过的状态</b>;只在个别 demo 出现的(覆盖率低)多半是噪声或特异姿态,不该当里程碑。</div>
+</div></div>
+
+<div class="step"><div class="sn">4</div><div class="body">
+  <h4>从 96 簇里选出 milestone(真正的"任务必经点")</h4>
+  <div class="how">不是 96 个簇都当里程碑。按 <code>eff = covE + 稀疏补偿</code> 排序,用 <b>Otsu 自动定阈值</b>,留下 <code>eff ≥ τ</code> 的(本例 45 个)。详细规则与图见 <a href="#selection" style="color:var(--accent3)">§3</a>。</div>
+  <div class="why">只留"覆盖率够高(很多 demo 都经过)+ 进度上有代表性"的簇;低覆盖的早期特异态被剔除。这一步决定了里程碑的<b>质量</b>。</div>
+</div></div>
+
+<div class="step"><div class="sn">5</div><div class="body">
+  <h4>把每个 milestone 钉到一个进度数值</h4>
+  <div class="how">每个里程碑的进度值 <kbd>Pord</kbd> = 它在各条 demo 里"<b>首次出现</b>"的中位时间。于是 45 个里程碑沿进度 0→1 排成一串,每个还配一张<b>原型帧</b>(挖矿集里离簇心最近的真实相机帧)。</div>
+  <div class="why">原型帧 = 这个里程碑"长什么样"的代表照片。把它们按进度排开,就是 CRAVE 的"任务结构词表"(见 <a href="#vocab" style="color:var(--accent3)">§4</a>):从摊开的布 → 逐步对折 → 叠好。</div>
+</div></div>
+
+<div class="step"><div class="sn">6</div><div class="body">
+  <h4>对一段新录像算每帧 value(Viterbi-DP 读出)</h4>
+  <div class="how">对目标 episode 每一帧,算它到 45 个里程碑中心的距离 → 它最像哪个里程碑,那个里程碑的进度值就是这帧的 value。</div>
+  <div class="why">但"逐帧取最近"会抖(噪声让它一会儿跳前一会儿跳后)。所以用 <b>Viterbi 动态规划</b>:在"<b>进度只能平滑前进、尽量不倒退</b>"的约束下(转移惩罚 + 起/止锚点),解出一条最优的里程碑序列,再中值滤波 → 得到<b>平滑、单调</b>的进度曲线 <code>value[t]∈[0,1]</code> = 任务完成了百分之几。<b>全程零训练、零标注。</b></div>
+  <div class="how">代码:<code>crave_value.py</code> 的 <code>DiscreteValue.value()</code> / 本报告用 <code>crave_interp_clusters_ep808.py</code>。频率相关窗参随帧率标定(30Hz:<kbd>dt=10 lam=80 medw=45</kbd>)。</div>
+</div></div>
+
+<div class="step"><div class="sn">7</div><div class="body">
+  <h4>从 value 派生 advantage / 三档</h4>
+  <div class="how"><code>advantage[t] = clip(value[t+50] − value[t], −1, 1)</code>(未来约 1.7s 的进度增量),再离散成三档:<span class="tag g">pos 推进</span> / <span class="tag y">normal 保持</span> / <span class="tag r">neg 退步</span>。</div>
+  <div class="why">这就是给下游 AWBC 打标签、或做可解释分析(本报告 §5-7)用的信号:value 在涨=正样本,平=中性,跌=退步。</div>
+</div></div>
+
+<div class="callout">既往验证:demo 域干净 0→1、撞色衣物兜底、跨天 16/16、rollout 退步+恢复、kai0 GT MAE 0.105;<em>跨数据集强泛化</em>(配方逐字不改):新本体 XVLA corr 0.956 / 真实 ALOHA coffee corr 0.988。</div>
+</section>
+
+<section id="setup">
+<h2><span class="n">2</span>实验设置:纯 kai · 30Hz 挖矿</h2>
+<p>为保证"只用 kai 数据",挖矿集逐值核验自 <code>kai0_base</code> / <code>kai0_dagger</code>(state 与原数据集逐值一致,0 个非 kai 混入)。特征按 30Hz(逐帧 stride=1)提取,窗参随频率标定(proprio Δ 帧距 dt=10、DP 惩罚 lam=80、中值窗 45)。</p>
+<table>
+<tr><th>项</th><th>值</th></tr>
+<tr><td>挖矿集</td><td><b>253 ep</b> = 173 kai0_base + 80 kai0_dagger(纯 kai,逐值核验)</td></tr>
+<tr><td>总帧</td><td>245,295 帧(30Hz ≈ 136 分钟 demo)</td></tr>
+<tr><td>目标 episode</td><td>ep2302(kai0_base 最长,2960 帧 ≈ 99s)</td></tr>
+<tr><td>读出频率</td><td>30Hz 逐帧(比 3Hz stride-10 更"跟过程"、更平滑)</td></tr>
+<tr><td>KAI0-AE 对照</td><td><code>advantage_q5</code> 的 <code>absolute_value</code>(kai0_base 经 AdvantageEstimator 标注)</td></tr>
+</table>
+<div class="callout warn"><b>为什么 30Hz + 扩样:</b>83→253 条、加入 kai0_dagger(纠错/回退数据)→ milestone 词表更丰富,ep2302 中段细微往复能匹配到更多档;30Hz 大窗读出又保持平滑。两者结合让 value 既干净又跟过程。</div>
+</section>
+
+<section id="selection">
+<h2><span class="n">3</span>milestone 选择方法(可解释、可复现)</h2>
+<p>KMeans-96 产 96 个候选簇,从中选出 milestone。选择法经多轮收敛到<em>"纯覆盖率 + 稀疏补偿 + Otsu 自适应阈值,不强求进度均匀"</em>:</p>
+<ul>
+  <li><em>选择依据 = covE</em>:每簇的<em>纯 episode 覆盖率</em>(含此态的 demo 比例 = 真复现度)。不用带 start-bonus 的 cov_n 当选择依据,以免任务起点态被虚高;start-bonus 只保留给 value 的早期锚定。</li>
+  <li><em>稀疏补偿</em>:<code>eff = covE + 0.1·稀疏度</code>(进度邻域 ±0.05 内簇越少→加分),让进度孤立的真复现态不被漏掉,但<em>不硬保底</em>。</li>
+  <li><em>自适应阈值 Otsu</em>:对 eff 做最大类间方差,自动找高/低覆盖分界(本数据 τ=0.52),无需手设分位;留 <code>eff ≥ τ</code> 的全部簇(不去重、不强求均匀),最大化细节。</li>
+</ul>
+<p>结果:<em>45 milestone</em>,最低入选覆盖率 45%(早期低真覆盖的 KMeans 0 等已剔除)。</p>
+<figure>
+  <img src="assets/all_clusters_coverage.png" alt="96 簇覆盖率与选择">
+  <figcaption><b>图 3.1</b> 全部 96 个 KMeans 簇覆盖率(按进度排序)。<b>蓝=选为 milestone(45)/灰=未选</b>;<b>灰柱</b>=纯覆盖率 covE,<b>黑三角</b>=eff(covE+稀疏)=选择依据,<b>红线</b>=Otsu 自适应阈值 τ=52%,灰点=cov_n(含 start-bonus,仅参考·不用于选择)。</figcaption>
+</figure>
+<figure>
+  <img src="assets/cluster_stats.png" alt="每 milestone 覆盖率">
+  <figcaption><b>图 3.2</b> 选出的 45 个 milestone 的跨 episode 覆盖率(最近归属口径)——多在 80–100%,印证它们是真·跨 demo 复现的任务必经状态;进度覆盖 0→0.99,数据厚(每档数千帧)。</figcaption>
+</figure>
+</section>
+
+<section id="vocab">
+<h2><span class="n">4</span>典型簇词表(milestone vocabulary)</h2>
+<p>每个 milestone 取挖矿集里离簇心最近的<em>真实相机帧</em>作"原型"——这是 CRAVE 的任务结构词表:从摊开的布(进度≈0)→ 逐步对折 → 叠好(进度≈1)。每帧 value = 当前画面最匹配的典型簇的挖掘进度。<em>监督 KAI0-AE 没有这一层</em>(只吐标量,无可检视结构)。</p>
+<figure>
+  <img src="assets/clusters_gallery.png" alt="典型簇词表">
+  <figcaption><b>图 4.1</b> 45 个 milestone 典型簇原型(按进度排序),每个标注来源(<b>kai0_base / kai0_dagger</b>)——词表由两套 kai 数据共同构成。</figcaption>
+</figure>
+</section>
+
+<section id="corresp">
+<h2><span class="n">5</span>簇-帧对应:ep2302 经过哪些特征簇</h2>
+<p>把 ep2302 实际经过的 milestone 簇序列抽出,簇跳变处对应到原视频帧,并按簇归类——<em>同一簇可对应多段帧</em>(折叠往复中状态多次回到同一 milestone)。</p>
+<figure>
+  <img src="assets/cluster_timeline.png" alt="簇-帧时间线">
+  <figcaption><b>图 5.1</b> ep2302 按时间经过的 milestone 簇序列(40 段)。上排=ep2302 该段原视频帧,下排=匹配的典型簇原型;<b>簇号变化处=簇跳变</b>。共访问 19 个不同簇。</figcaption>
+</figure>
+<div class="callout">例:某早期典型簇被 ep2302 在<em>多个时间命中</em>(布料折叠往复中多次回到该状态);末段各 milestone 只命中一次(单调收尾,不回头)。完整"簇→帧段"归类表见 <a href="assets/cluster_frames.md" style="color:var(--accent3)">cluster_frames.md</a>。</div>
+</section>
+
+<section id="segments">
+<h2><span class="n">6</span>三段拆分:为什么 value 这样动</h2>
+<p>按三档(pos 上升 / normal 平台 / neg 退步)拆分。每段:上排=ep2302 该段真实相机帧,下排=各帧 value 对应的典型簇原型——<em>value 的变化 = 匹配簇进度的变化</em>。</p>
+<figure><img src="assets/seg_pos.png" alt="上升段"><figcaption><b>图 6.1 · 上升 POSITIVE</b>(帧 2648–2942):推进到完成,匹配簇进度变大 → value 升。</figcaption></figure>
+<figure><img src="assets/seg_normal.png" alt="平台段"><figcaption><b>图 6.2 · 平台 NORMAL</b>(帧 984–1246):保持/微调同一子目标,匹配簇不变 → Δv≈0。</figcaption></figure>
+<figure><img src="assets/seg_neg.png" alt="退步段"><figcaption><b>图 6.3 · 退步 NEGATIVE</b>(帧 1552–1637):状态短暂回退,匹配簇进度变小 → value 降(稀少局部)。</figcaption></figure>
+</section>
+
+<section id="compare">
+<h2><span class="n">7</span>CRAVE vs KAI0-AE 对比</h2>
+<p>同一 ep2302、全程只用 kai,把<em>零训练 CRAVE(最终 30Hz·253 kai·45 档)</em>与<em>监督 KAI0-AE</em> 直接对照。</p>
+<table>
+<tr><th>模型</th><th>训练 / 标注</th><th>neg</th><th>normal</th><th>pos</th></tr>
+<tr><td><b>CRAVE</b>(零训练)</td><td>无 · 30Hz·253 kai 挖矿</td><td><span class="tag g">13%</span></td><td>41%</td><td><span class="tag b">46%</span></td></tr>
+<tr><td><b>KAI0-AE</b>(监督)</td><td>pi05+value_head,周级标注</td><td><span class="tag r">20%</span></td><td>35%</td><td><span class="tag b">46%</span></td></tr>
+</table>
+<figure>
+  <img src="assets/compare_3way.png" alt="CRAVE vs KAI0-AE">
+  <figcaption><b>图 7.1</b> ep2302 value 曲线 + 三档分类条:<b>红=零训练 CRAVE</b> / <b>紫=监督 KAI0-AE</b>。pos 同为 46%、形状 corr <b>0.877</b>(主干一致,末段都收敛到 1.0);但<em>CRAVE 曲线平滑、分类条干净块状,监督 AE 逐帧剧烈抖动、分类条满屏红绿噪声</em>。</figcaption>
+</figure>
+<div class="callout ok"><b>核心结论:</b>有足够多样的纯 kai 挖矿后,<em>零训练 CRAVE 在 in-distribution kai0_base 上 ≈ 监督 KAI0-AE</em>(pos 46% 一致、整体 corr 0.877),且 value 更平滑、可解释、可定位——而监督 AE 是逐帧噪声标量。</div>
+</section>
+
+<section id="videos">
+<h2><span class="n">8</span>对齐视频(相机 | CRAVE & KAI0-AE | 典型簇原型)</h2>
+<p>每帧三栏:相机帧(带 CRAVE/KAI0-AE 当前判档)| 全程 value+分类条(游标)| 当前 value 对应的典型簇原型。</p>
+<h3>连续完整版(一镜到底,无停顿)</h3>
+<figure>
+  <video controls preload="metadata" src="assets/crave_kai0ae_FULL_ep2302.mp4"></video>
+  <figcaption><b>视频 8.1 · FULL</b>(99s):正常速度逐帧走完整个 ep2302,无标题卡/无定格/无慢放。</figcaption>
+</figure>
+<h3>按类 / 混合(慢放 + 簇切换定格 + 标题卡)</h3>
+<div class="vgrid">
+  <figure><video controls preload="none" src="assets/crave_kai0ae_POS_all_ep2302.mp4"></video><figcaption><b>POS</b> 全部上升段(10 段)</figcaption></figure>
+  <figure><video controls preload="none" src="assets/crave_kai0ae_NORMAL_all_ep2302.mp4"></video><figcaption><b>NORMAL</b> 全部平台段(13 段)</figcaption></figure>
+  <figure><video controls preload="none" src="assets/crave_kai0ae_NEG_all_ep2302.mp4"></video><figcaption><b>NEG</b> 全部退步段(6 段)</figcaption></figure>
+  <figure><video controls preload="none" src="assets/crave_kai0ae_MIXED_all_ep2302.mp4"></video><figcaption><b>MIXED</b> 全程混合(29 段,时间序)</figcaption></figure>
+</div>
+</section>
+
+<section id="positioning">
+<h2><span class="n">9</span>定位与泛化</h2>
+<p>CRAVE 不在"谁的标量 value 更准"上竞争(那是 RECAP/VIP 的主场),它独占 <em>"零标签拿到可解释任务结构 + 把结构变成 RL 冷启与 action 级信号"</em>:</p>
+<table>
+<tr><th>子领域</th><th>SOTA 代表</th><th>它们给什么</th><th>CRAVE 差异化</th></tr>
+<tr><td>经验型 RL value</td><td>RECAP / π*0.6</td><td>真回报、能超示教</td><td>零训练零标签、可解释结构、可当其冷启 V</td></tr>
+<tr><td>视频 progress</td><td>VIP · LIV · GVL</td><td>连续标量 progress</td><td><b>离散 milestone 结构 + 技能切分</b>(标量给不了)</td></tr>
+<tr><td>监督进度回归</td><td>KAI0-AE</td><td>scalar(需周级标注)</td><td>零标注、in-dist 打平、更平滑可解释</td></tr>
+</table>
+<p><em>跨数据集强泛化</em>(配方逐字不改):新本体 XVLA soft_fold corr <b>0.956</b>、真实 ALOHA coffee corr <b>0.988</b>。本报告进一步在真机 kai0_base 上验证 ≈ 监督 AE。</p>
+</section>
+
+<section id="conclusion">
+<h2><span class="n">10</span>结论</h2>
+<ul>
+  <li><em>零训练可达监督水平</em>:足够多样的纯 kai 挖矿后,CRAVE 在 in-dist kai0_base ep2302 上与监督 KAI0-AE pos 同为 46%、corr 0.877,且更平滑。</li>
+  <li><em>全程可解释</em>:每个 value 都能指向一张典型簇原型("像它,故是这个值");簇-帧对应 + 三段拆分给出"为什么升/为什么是这个值"的视觉判据。</li>
+  <li><em>选择法自适应</em>:covE + 稀疏补偿 + Otsu 阈值,数量随数据结构自定(45),无需手调、无硬保底;低真覆盖的早期簇被自动剔除。</li>
+  <li><em>工具通用</em>:挖矿/可解释/选择全部参数化(<code>INTERP_SELECT / TAU_Q / SPARSE_BETA / DENS_DELTA / FC / DS / AW / DT / LAM / MEDW / STRIDE</code>),对任意 episode / 数据集 / 频率即插即用。</li>
+</ul>
+</section>
+
+<section id="docs">
+<h2><span class="n">附</span>源文档(docs/ 原文)</h2>
+<p>本报告综合自下列工作集文档,点击经 showcase 后端读取原始 markdown:</p>
+<ul>
+  <li><a href="/api/doc/training/future_plans/plans/cross_episode_recurrence_value/README.md" style="color:var(--accent3)">工作集导航 README</a></li>
+  <li><a href="/api/doc/training/future_plans/plans/cross_episode_recurrence_value/cross_episode_recurrence_value_METHOD.md" style="color:var(--accent3)">方法 V2.4(9 步配方 + 四场景验证)</a></li>
+  <li><a href="/api/doc/training/future_plans/plans/cross_episode_recurrence_value/cross_episode_recurrence_value_GENERALIZATION.md" style="color:var(--accent3)">跨数据集泛化实证</a></li>
+  <li><a href="/api/doc/training/future_plans/plans/cross_episode_recurrence_value/value_advantage_methods_comparison.md" style="color:var(--accent3)">方法论证对比(kai0-AE / RECAP / CRAVE)</a></li>
+  <li><a href="/api/doc/training/future_plans/plans/cross_episode_recurrence_value/cross_episode_recurrence_value_CONTINUOUS.md" style="color:var(--accent3)">连续 value 形态(端到端 TCC + DP)</a></li>
+  <li><a href="/api/doc/training/future_plans/plans/cross_episode_recurrence_value/CRAVE_positioning_and_roadmap.md" style="color:var(--accent3)">定位 / 场景 / roadmap</a></li>
+  <li><a href="/api/doc/training/future_plans/plans/cross_episode_recurrence_value/frequency_window_params.md" style="color:var(--accent3)">频率窗参数(3Hz/30Hz 标定)</a></li>
+  <li><a href="/api/doc/training/future_plans/plans/cross_episode_recurrence_value/awbc_milestone_value_AB_plan.md" style="color:var(--accent3)">AWBC 落地 A/B plan</a></li>
+</ul>
+<h3>代码与复现(三步,可照着跑)</h3>
+<table>
+<tr><th>步骤</th><th>脚本</th><th>做什么</th></tr>
+<tr><td>① 提特征</td><td><code>crave_extract_kai_30hz.py</code></td><td>从 kai0_base/kai0_dagger 抽 demo,30Hz 逐帧提 raw/armmask/state(双卡分片);产 <code>temp/crave_30hz_kaimix/</code></td></tr>
+<tr><td>② 挖矿+可解释</td><td><code>crave_interp_clusters_ep808.py</code></td><td>KMeans→选 milestone→Viterbi-DP 算 value→出典型簇/簇-帧/三段/覆盖率图</td></tr>
+<tr><td>③ 渲染视频</td><td><code>crave_interp_video_ep808.py</code></td><td>相机 + CRAVE&KAI0-AE + 典型簇原型 对齐视频(分类版/混合/连续版)</td></tr>
+<tr><td>核心库</td><td><code>crave_value.py</code></td><td><code>FeatureSpace</code>(三路嵌入)+ <code>DiscreteValue</code>(挖矿+DP读出),高内聚低耦合</td></tr>
+</table>
+<div class="pipe"># ① 提特征(双卡)
+python crave_extract_kai_30hz.py --prep
+CUDA_VISIBLE_DEVICES=0 python crave_extract_kai_30hz.py --shard 0 2
+CUDA_VISIBLE_DEVICES=1 python crave_extract_kai_30hz.py --shard 1 2
+
+# ② 挖矿 + 可解释(一行,参数化:换 EP / 数据集 / 频率 即插即用)
+INTERP_EP=2302 INTERP_TAG=_30hz_kaimix INTERP_CACHE=triple \
+  INTERP_FC=temp/crave_30hz_kaimix/feat_cache INTERP_DS=kai0/data/Task_A/kai0_base \
+  INTERP_AW=kai0/data/Task_A/self_built/advantage_q5 \
+  INTERP_SOURCES=temp/crave_30hz_kaimix/sources.json \
+  INTERP_DT=10 INTERP_LAM=80 INTERP_MEDW=45 INTERP_STRIDE=1 \
+  python train_scripts/kai/data/crave_interp_clusters_ep808.py
+
+# ③ 渲染视频(同样的 INTERP_* 环境变量)
+INTERP_EP=2302 INTERP_TAG=_30hz_kaimix INTERP_DS=kai0/data/Task_A/kai0_base \
+  python train_scripts/kai/data/crave_interp_video_ep808.py</div>
+<p style="font-size:13px;color:var(--text2)">关键开关:<code>INTERP_SELECT</code>(coverage/balanced/adaptive 选择法)、<code>INTERP_TAU_Q</code>(手设阈值分位,缺省走 Otsu)、<code>INTERP_SPARSE_BETA</code>(稀疏补偿强度)、<code>INTERP_STRIDE</code>(1=30Hz / 10=3Hz)、<code>INTERP_AW=none</code>(无监督对照时仅 CRAVE)。</p>
+</section>
+
+</main>
+</div>
+
+<footer>
+  deepdive_kai0 · CRAVE 可解释性技术报告 · ep2302(kai0_base)· 零训练跨 episode 复现度 value<br>
+  源数据 temp/crave_interp_ep2302_30hz_kaimix · 方法文档 docs/training/future_plans/plans/cross_episode_recurrence_value
+</footer>
+
+<script>
+// scrollspy: highlight TOC
+const links=[...document.querySelectorAll('.toc a')];
+const secs=links.map(a=>document.querySelector(a.getAttribute('href'))).filter(Boolean);
+const obs=new IntersectionObserver(es=>{es.forEach(e=>{if(e.isIntersecting){links.forEach(l=>l.style.color='');const a=links.find(l=>l.getAttribute('href')==='#'+e.target.id);if(a){a.style.color='var(--accent3)';a.style.borderLeftColor='var(--accent)';}}})},{rootMargin:'-20% 0px -70% 0px'});
+secs.forEach(s=>obs.observe(s));
+</script>
+</body>
+</html>

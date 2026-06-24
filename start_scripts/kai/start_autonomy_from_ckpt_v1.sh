@@ -3,7 +3,9 @@
 # norm_stats, 然后启动 V1 stack (SHM transport, 20Hz, A.2 流水线).
 #
 # 使用:
-#   ./start_scripts/kai/start_autonomy_from_ckpt_v1.sh <ckpt_dir> [其他 ROS args...]
+#   ./start_scripts/kai/start_autonomy_from_ckpt_v1.sh <ckpt_dir> [--server-gpu N] [--execute] [其他 ROS args...]
+#   --server-gpu N : V1 推理 server GPU (= KAI0_SERVE_GPU, 默认 0); 与 gwp 脚本同形式
+#   --node-gpu N   : autonomy 节点 GPU (= KAI0_GPU_ID)
 #
 # 要求:
 #   <ckpt_dir>/train_config.json 存在 ({"base_config_name": "...", "override_asset_id": "..."})
@@ -17,8 +19,20 @@
 
 set -euo pipefail
 
-CKPT_DIR="${1:?Usage: $0 <ckpt_dir> [extra autonomy_v1 args...]}"
+CKPT_DIR="${1:?Usage: $0 <ckpt_dir> [--server-gpu N] [--node-gpu N] [--execute] [extra args...]}"
 shift || true
+
+# 统一参数形式 (与 gwp 脚本一致): --server-gpu N = 推理 server GPU (KAI0_SERVE_GPU);
+# --node-gpu N = autonomy 节点 GPU (KAI0_GPU_ID)。其余 args 透传给 autonomy_v1。
+PASS=()
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --server-gpu) export KAI0_SERVE_GPU="$2"; shift 2 ;;
+    --node-gpu)   export KAI0_GPU_ID="$2"; shift 2 ;;
+    *)            PASS+=("$1"); shift ;;
+  esac
+done
+set -- "${PASS[@]+"${PASS[@]}"}"
 
 if [ ! -d "$CKPT_DIR" ]; then
   echo "[FAIL] ckpt_dir not found: $CKPT_DIR" >&2
@@ -94,6 +108,13 @@ if [ ! -f "$V1_PKL" ]; then
   echo "           --out $CKPT_DIR/v1_p200.pkl" >&2
   exit 1
 fi
+
+# Deploy-time gripper frame remap (old 100mm-range ckpt → real 0–70mm robot).
+# 默认开(本机已官方 0–70mm 标定)。部署新 frame ckpt 时设 =0 关。serve_policy_v1.py 读取。
+# 见 docs/deployment/data_collection/gripper_calibration.md
+export KAI0_GRIPPER_DEPLOY_REMAP="${KAI0_GRIPPER_DEPLOY_REMAP:-1}"
+export KAI0_GRIPPER_REAL_RANGE="${KAI0_GRIPPER_REAL_RANGE:-0.0,0.07}"
+[ "$KAI0_GRIPPER_DEPLOY_REMAP" = "1" ] && echo "[gripper-remap] ON: 夹爪 norm_stats [q01,q99]→真机[$KAI0_GRIPPER_REAL_RANGE]m (dims 6,13)"
 
 echo "============================================================"
 echo "  start_autonomy_from_ckpt_v1.sh"

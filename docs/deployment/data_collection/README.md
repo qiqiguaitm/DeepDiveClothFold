@@ -7,6 +7,7 @@
 | 文件 | 用途 |
 |---|---|
 | [`teleoperation_guide.md`](teleoperation_guide.md) | 遥操作指南 — 双臂 Piper teleop 录数据的完整流程 |
+| [`gripper_calibration.md`](gripper_calibration.md) | 夹爪标定 — 4 只夹爪配成官方 0–70mm 规范 (max_range=70 + 机械全闭设零), 主从 1:1 |
 | [`dagger_collection_guide.md`](dagger_collection_guide.md) | DAgger 数据采集 — as-built SOP + 架构 + 规划 (策略跑 + 接管补示范 + 双 dataset) |
 | [`data_manager_plan.md`](data_manager_plan.md) | 双臂 VLA 数据采集 UI 设计计划 |
 | [`replay_and_stacks_usage.md`](replay_and_stacks_usage.md) | Replay 与三栈 (录制/replay/分析) 使用指南 |
@@ -16,6 +17,7 @@
 | 你想做什么 | 去 |
 |---|---|
 | 上手 teleop 录数据 (从零) | teleoperation_guide.md |
+| 夹爪闭不到底 / 换夹爪 / 首次标定 | gripper_calibration.md |
 | 跑 DAgger 采集 (策略部署 + 失败接管补示范) | dagger_collection_guide.md |
 | 看 data_manager UI 是怎么设计 (新功能开发) | data_manager_plan.md |
 | 看一次录好的数据 / replay 检查 / 分析 stack | replay_and_stacks_usage.md |

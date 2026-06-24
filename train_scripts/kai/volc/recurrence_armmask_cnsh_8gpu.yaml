@@ -1,0 +1,48 @@
+# 臂掩膜版特征重提 (§5.7 缓解a) — robot-task 8×A100
+# smooth800 806ep + kai0_advantage 3055ep, DINOv2 patch 掩膜均值, 8 GPU 分片
+# Submit: source ~/.volc_creds && kai0/.venv/bin/python train_scripts/kai/volc/submit_yaml.py train_scripts/kai/volc/recurrence_armmask_cnsh_8gpu.yaml
+TaskName: "recurrence-armmask-cnsh-8gpu"
+Description: "armmask feats: DINOv2 patch-mask (arm proto+orange), smooth800+kai0, 8xA100"
+Tags: []
+ImageUrl: "visincept-cn-shanghai.cr.volces.com/grasp/h2r:1.0"
+ResourceQueueName: "robot-task"
+Framework: "PyTorch"
+TaskRoleSpecs:
+  - RoleName: "worker"
+    RoleReplicas: 1
+    Flavor: "ml.hpcpni2.28xlarge"
+ActiveDeadlineSeconds: 14400
+EnableTensorBoard: false
+Storages:
+  - Type: "Vepfs"
+    VepfsId: "vepfs-cnsh075262e1f815"
+    SubPath: ""
+    MountPath: "/vePFS"
+CacheType: "Cloudfs"
+Envs:
+  - Name: HF_HUB_OFFLINE
+    Value: "1"
+  - Name: TRANSFORMERS_OFFLINE
+    Value: "1"
+  - Name: HF_HUB_CACHE
+    Value: "/vePFS/tim/workspce/hf_cache/hub_default"
+Entrypoint: |
+  set -uo pipefail
+  REPO=/vePFS/tim/workspace/deepdive_kai0
+  exec >> "$REPO/logs/recurrence_armmask_$(date -u +%H%M%S).log" 2>&1
+  echo "=== armmask extract start $(date) ==="
+  cd "$REPO"; PY=xvla/X-VLA-env/.venv/bin/python
+  ext() {  # dataset out
+    for g in 0 1 2 3 4 5 6 7; do
+      CUDA_VISIBLE_DEVICES=$g $PY -u train_scripts/kai/data/extract_masked_features.py \
+        --dataset "$1" --out "$2" --shard $g 8 > "$REPO/logs/armmask_$(basename $2)_g$g.log" 2>&1 &
+    done; wait
+    echo "[done] $1 -> $(ls $2/feat_cache | wc -l) eps"
+  }
+  ext kai0/data/Task_A/self_built/A_new_smooth_800/base temp/tcc_smooth800_armmask
+  ext kai0/data/Task_A/kai0_advantage                   temp/tcc_kai0_armmask
+  echo "=== ARMMASK DONE $(date) ==="
+RetryOptions:
+    EnableRetry: false
+    MaxRetryTimes: 0
+AccessType: "Public"

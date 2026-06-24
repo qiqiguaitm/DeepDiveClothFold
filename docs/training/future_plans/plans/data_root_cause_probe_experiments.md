@@ -198,6 +198,7 @@ kai0/.venv/bin/python kai0/scripts/compute_norm_stats.py pi05_flatten_fold_A_052
 
 ## §2 vis_base v3 — 全量裁投放数据集 (2026-06-02) ⭐ 已就绪
 
+> ⚠️ **2026-06-16 更新**: `v3` 现在 = **前端投放裁 + 尾部 tail-cap**(末端"完成后静止尾巴"截断到 15 帧,Step 3 就地并入 v3)。本节及下方帧数为 **pre-tailcap**(尾裁删 ~1.6%);v3 语义详见 [`idle_data_trimming_experiments.md`](idle_data_trimming_experiments.md) Step 3。
 > H1 (投放静止段致走停) 初步成立 (真机 no-release 改善 + 文献机理, 见 [`../../history/experiments/data_root_cause_probe_results.md`](../../history/experiments/data_root_cause_probe_results.md) §4) → **把裁投放从 2 天 PoC 推广到全部 vis_base**, 三机就绪。
 
 ### §2.1 产物

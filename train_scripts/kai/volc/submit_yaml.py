@@ -74,13 +74,25 @@ def build_storages(storage_list):
 def build_role_specs(role_list, zone_id):
     out = []
     for r in role_list or []:
+        # Two resource modes: fixed flavor (InstanceTypeId) OR custom (FlexibleResourceClaim:
+        # Cpu/GpuCount/GpuType/MemoryGiB) — the latter lets you dial CPU below the flavor's bundle
+        # (e.g. 108 vCPU instead of hpcpni2.28xlarge's 112) to fit a fragmented node's free quota.
+        if r.get("FlexibleResourceClaim"):
+            fc = r["FlexibleResourceClaim"]
+            claim = {}
+            if "Cpu" in fc: claim["Cpu"] = float(fc["Cpu"])
+            if "GpuCount" in fc: claim["GpuCount"] = float(fc["GpuCount"])
+            if "GpuType" in fc: claim["GpuType"] = fc["GpuType"]
+            if "MemoryGiB" in fc: claim["MemoryGiB"] = float(fc["MemoryGiB"])
+            if "Family" in fc: claim["Family"] = fc["Family"]
+            if "RdmaEniCount" in fc: claim["RdmaEniCount"] = int(fc["RdmaEniCount"])
+            resource = {"Type": "Flexible", "FlexibleResourceClaim": claim, "ZoneId": zone_id}
+        else:
+            resource = {"Type": "Preset", "InstanceTypeId": r["Flavor"], "ZoneId": zone_id}
         out.append({
             "Name": r["RoleName"],
             "Replicas": int(r["RoleReplicas"]),
-            "Resource": {
-                "InstanceTypeId": r["Flavor"],
-                "ZoneId": zone_id,
-            },
+            "Resource": resource,
         })
     return out
 
@@ -130,6 +142,10 @@ def main():
             "ResourceQueueId": queue_id,
             "MaxRuntimeSeconds": int(cfg.get("ActiveDeadlineSeconds", 86400)),
             "Roles": build_role_specs(cfg.get("TaskRoleSpecs"), zone_id),
+            # 闲时任务 (preemptible): borrow other queues' idle resources, can be preempted anytime
+            # (training resumes from latest ckpt). Set Preemptible: true (+ optional Priority) in yaml.
+            **({"Preemptible": True} if cfg.get("Preemptible") else {}),
+            **({"Priority": int(cfg["Priority"])} if cfg.get("Priority") is not None else {}),
         },
         "RuntimeConfig": {
             "Framework": cfg.get("Framework", "Custom"),

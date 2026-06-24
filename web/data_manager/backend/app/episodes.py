@@ -72,10 +72,16 @@ def delete_episode(task_id: str, subset: str, episode_id: int) -> None:
         v = _subset_join(task_id, subset, "videos", "chunk-000", cam, f"episode_{episode_id:06d}.mp4")
         if v.exists():
             v.unlink()
-        # depth zarr 是目录, 用 rmtree
+        # depth: FFV1 .mkv (新), 单文件 .zarr.zip, 旧格式 .zarr 目录, 全清
         d = _subset_join(task_id, subset, "videos", "chunk-000", f"{cam}_depth", f"episode_{episode_id:06d}.zarr")
         if d.exists():
             shutil.rmtree(d, ignore_errors=True)
+        dz = d.with_name(d.name + ".zip")
+        if dz.exists():
+            dz.unlink()
+        dmkv = d.with_name(d.name.removesuffix(".zarr") + ".mkv")
+        if dmkv.exists():
+            dmkv.unlink()
     # 同步从 meta 中删除该条
     meta_fp = _subset_join(task_id, subset, "meta", "episodes.jsonl")
     if meta_fp.exists():

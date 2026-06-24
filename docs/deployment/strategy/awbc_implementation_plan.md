@@ -2,6 +2,8 @@
 
 > **目的**: 把当前 deepdive_kai0 简化版的 "全 dagger 标 positive" 升级为完整 RECAP 4-step pipeline — 用 advantage estimator 给每帧打 ground-truth advantage 值, 再做 advantage-weighted behavior cloning.
 > **现状 (2026-06-06)**: 🟢 **启动传统路线** — smooth800 SFT 已 plateau (MAE@1=0.0089) + dagger 已积累 6 个日期, 触发条件达成. **复用已训好的 advantage estimator (跳过 Stage 0-1), 在 smooth800+全dagger 上做一次 AWBC**. 见下方 [⭐ 当前执行计划](#-当前执行计划-2026-06-06--传统路线-复用估计器--smooth800全dagger). ViVa 路线 (5B 视频生成 value, 算力昂贵) **暂缓**, 见 [`../../training/future_plans/plans/awbc_viva_value_comparison_plan.md`](../../training/future_plans/plans/awbc_viva_value_comparison_plan.md).
+> **下一步 (2026-06-12)**: 🔜 **用 vis 的 Task_A 数据集重新构建打标、完整走一遍 AWBC 流程**(Step 0→4: stage_progress_gt 标注 → 训 estimator → eval 打 advantage → discretize → AWBC 训练)。具体执行 plan: [`../../training/future_plans/plans/awbc_vis_task_a_full_pipeline_plan.md`](../../training/future_plans/plans/awbc_vis_task_a_full_pipeline_plan.md)(📝 待确认决策)。本文档为活跃总纲。
+> **🗄️ 历史归档 (2026-06-12)**: 已跑完/废弃的 AWBC 实验迁入 history —— [awbc_pi07style_experiment](../../training/history/experiments/awbc_pi07style_experiment.md)(⛔FAILED)、[awbc_v2_training_plan](../../training/history/experiments/awbc_v2_training_plan.md)、[gf2_advantage_awbc_plan](../../training/history/experiments/gf2_advantage_awbc_plan.md)、[gf0_awbc_baseline_v2_results](../../training/history/experiments/gf0_awbc_baseline_v2_results.md)。索引见 [history/README §AWBC](../../training/history/README.md)。
 > **关键依赖**: 需要 dagger 段 (≈ Form C 的 inference/纠错信号) 给 estimator 区分高/低 advantage — 本次靠**加 dagger** 解决 (smooth_800 纯 demo-only 是 ViVa 计划里的天花板).
 > **上游参考**:
 > - 论文: [RECAP (Physical Intelligence 2025-11, arXiv 2511.14759)](https://arxiv.org/abs/2511.14759)

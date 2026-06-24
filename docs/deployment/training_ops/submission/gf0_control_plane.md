@@ -4,7 +4,7 @@
 >
 > **同 submission 子目录**:
 > - `volc_ml_platform.md` — Volc Platform 基础 YAML/SDK
-> - `uc_cluster_jobs.md` — uc01-03 直连 + 3-host HSDP
+> - [`../../../backup/uc_cluster_jobs.md`](../../../backup/uc_cluster_jobs.md) — uc01-03 (已停用)
 >
 > **上级**: `../overview.md` / `../ssh_and_credentials.md` (gf0 SSH 设置)
 

@@ -10,6 +10,7 @@ whether the backend runs from a checkout or an installed venv.
 from __future__ import annotations
 
 import os
+import re
 import signal
 import subprocess
 import threading
@@ -408,8 +409,26 @@ def list_checkpoints(root: str = "/data1/DATA_IMP/checkpoints") -> list[dict]:
     return out
 
 
+_VER_RE = re.compile(r"^v\d+$")
+
+
+def _count_under_date(date_dir) -> int:
+    """Parquet episodes under <date_dir>/data/chunk-*/."""
+    n = 0
+    data_dir = date_dir / "data"
+    if data_dir.is_dir():
+        for chunk in data_dir.iterdir():
+            if chunk.is_dir():
+                n += len(list(chunk.glob("episode_*.parquet")))
+    return n
+
+
 def count_episodes(task: str) -> dict:
-    """Count parquet files under <DATA_ROOT>/<task>/{inference,dagger}/<date>-v2/data/.
+    """Count parquet episodes under {inference,dagger}, BOTH layouts:
+      - nested (current):  <task>/<subset>/<vN>/<date>/data/chunk-*/
+      - legacy flat:       <task>/<subset>/<date>/data/chunk-*/
+    Drives the web UI's live episode counters (which trigger the history
+    auto-refresh), so it MUST see the nested layout or the count goes stale.
 
     Uses parquet count rather than episodes.jsonl line count so a still-running
     session (writer mid-finalize) doesn't get partially counted.
@@ -423,14 +442,15 @@ def count_episodes(task: str) -> dict:
         if not subset_root.is_dir():
             continue
         total = 0
-        for date_dir in subset_root.iterdir():
-            if not date_dir.is_dir():
+        for child in subset_root.iterdir():
+            if not child.is_dir():
                 continue
-            data_dir = date_dir / "data"
-            if not data_dir.is_dir():
-                continue
-            for chunk in data_dir.iterdir():
-                if chunk.is_dir():
-                    total += len(list(chunk.glob("episode_*.parquet")))
+            if _VER_RE.match(child.name):
+                # version dir → its children are the date dirs
+                for dd in child.iterdir():
+                    if dd.is_dir():
+                        total += _count_under_date(dd)
+            else:
+                total += _count_under_date(child)  # legacy flat date dir
         counts[subset] = total
     return counts

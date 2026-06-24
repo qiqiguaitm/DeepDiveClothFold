@@ -454,11 +454,13 @@ def train_loop(config: _config.TrainConfig):
         logging.info(f"Loading weights from: {config.pytorch_weight_path}")
 
         model_path = os.path.join(config.pytorch_weight_path, "model.safetensors")
-        # Set strict=False when training advantage estimator, 
+        # strict=False for advantage estimator; ALSO for LeWM variant (model has extra
+        # lewm_encoder params absent from any base ckpt — compactor loaded from LeWM ckpt, proj random).
+        _lewm = getattr(config.model, "vision_encoder", "siglip") == "lewm"
         safetensors.torch.load_model(
-            (model.module if isinstance(model, torch.nn.parallel.DistributedDataParallel) else model), 
-            model_path, 
-            strict=(not config.advantage_estimator),
+            (model.module if isinstance(model, torch.nn.parallel.DistributedDataParallel) else model),
+            model_path,
+            strict=(not config.advantage_estimator and not _lewm),
         )
         logging.info(f"Loaded PyTorch weights from {config.pytorch_weight_path}")
 

@@ -4,6 +4,15 @@
 
 参考 `GraspForge/web_demo` 的紫色主题与 tab 化布局，内容固定从本地 `docs/deployment/` 和 `web/showcase/content/` 读取。
 
+## 技术报告（reports/）
+
+`web/showcase/reports/<name>/` 下放自包含 HTML 报告(含图/视频 `assets/`)，由 server.py 以 `/reports/<name>/` 静态挂载(`html=True` 自动返回 index.html)。
+
+- **`reports/crave_interp/`** —— **CRAVE 可解释性技术报告**(kai0_base ep2302):综合 `temp/crave_interp_ep2302_30hz_kaimix/` 的可解释性分析 + `docs/.../cross_episode_recurrence_value/` 方法文档。含典型簇词表、簇-帧对应、三段拆分、CRAVE vs 监督 KAI0-AE 对比图与 5 条对齐视频、milestone 选择法(covE+稀疏·Otsu)、定位与泛化。
+  - 访问:`/reports/crave_interp/`(主页 header 有 "★ CRAVE 可解释性报告" 入口);
+  - 源文档经后端 `/api/doc/...` 读取原始 markdown。
+
+
 > **定位**：先在内网 (`sim01:8765`) 跑起来给协作者看；后续可整体迁移到公网。代码里不含任何 IP / 主机名 / 密钥。
 
 ---

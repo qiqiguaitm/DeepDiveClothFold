@@ -53,3 +53,16 @@ templates:
   prompt: Pick and place on blue
   enabled: true
   note: Task P and place on blue
+- id: task_av1_base
+  task_id: Task_AV1
+  subset: base
+  prompt: Flatten and fold the cloth. Vertical Fold v1.
+  enabled: true
+  note: Task A base demo — prompt must match training config pi05_flatten_fold_normal
+    v1
+- id: task_ah1_base
+  task_id: Task_AH1
+  subset: base
+  prompt: Flatten and fold the cloth. Horizontally Fold v1.
+  enabled: true
+  note: Task A base demo — prompt must match training config pi05_flatten_fold_normal

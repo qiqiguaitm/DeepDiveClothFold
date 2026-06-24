@@ -40,6 +40,11 @@ app = FastAPI(
 # ── Static & templates ──
 app.mount("/static", StaticFiles(directory=str(_web_dir / "static")), name="static")
 
+# ── Standalone reports (self-contained HTML + figures/videos); /reports/<name>/ serves index.html ──
+_reports_dir = _web_dir / "reports"
+if _reports_dir.is_dir():
+    app.mount("/reports", StaticFiles(directory=str(_reports_dir), html=True), name="reports")
+
 
 @app.get("/", response_class=HTMLResponse)
 async def index():

@@ -97,6 +97,19 @@ class PI0Pytorch(nn.Module):
             precision=config.dtype,
         )
 
+        # ===== LeWM 视觉前端旁路 (vision_encoder="lewm"; 默认 "siglip" 时此分支不触发) =====
+        self.vision_encoder = getattr(config, "vision_encoder", "siglip")
+        if self.vision_encoder == "lewm":
+            from openpi.models_pytorch.lewm_vision_encoder import LeWMVisionEncoder, DINOV3_VITL16_DIR_DEFAULT
+            self.lewm_encoder = LeWMVisionEncoder(
+                gemma_width=paligemma_config.width,
+                freeze_compactor=getattr(config, "lewm_freeze_compactor", False),
+                dinov3_dir=getattr(config, "lewm_dinov3_dir", None) or DINOV3_VITL16_DIR_DEFAULT,
+            )
+            if getattr(config, "lewm_ckpt_path", None):
+                miss, unexp = self.lewm_encoder.load_compactor_ckpt(config.lewm_ckpt_path)
+                logging.info(f"[lewm] compactor strict-loaded (missing={list(miss)}, unexpected={list(unexp)})")
+
         self.action_in_proj = nn.Linear(32, action_expert_config.width)
         self.action_out_proj = nn.Linear(action_expert_config.width, 32)
 
@@ -160,7 +173,9 @@ class PI0Pytorch(nn.Module):
 
     def _preprocess_observation(self, observation, *, train=True):
         """Helper method to preprocess observation."""
-        observation = _preprocessing.preprocess_observation_pytorch(observation, train=train)
+        # LeWM: skip the 224 resize (ResizeImagesPerView already set per-view sizes); standard path 224.
+        _res = None if getattr(self, "vision_encoder", "siglip") == "lewm" else _preprocessing.IMAGE_RESOLUTION
+        observation = _preprocessing.preprocess_observation_pytorch(observation, train=train, image_resolution=_res)
         return (
             list(observation.images.values()),
             list(observation.image_masks.values()),
@@ -194,20 +209,30 @@ class PI0Pytorch(nn.Module):
         att_masks = []
 
         # Process images
-        for img, img_mask in zip(images, img_masks, strict=True):
-
-            def image_embed_func(img):
-                return self.paligemma_with_expert.embed_image(img)
-
-            img_emb = self._apply_checkpoint(image_embed_func, img)
-
+        if getattr(self, "vision_encoder", "siglip") == "lewm":
+            # LeWM 旁路: 3 view 一起进 encoder → 15 object-centric token (1 CLS+4 obj ×3 view),
+            # 替代 per-cam SigLIP 256×3=768。images=[top,left,right] 已是 per-view 分辨率。
+            img_emb = self._apply_checkpoint(lambda x: self.lewm_encoder(x), list(images))
             bsize, num_img_embs = img_emb.shape[:2]
-
             embs.append(img_emb)
-            pad_masks.append(img_mask[:, None].expand(bsize, num_img_embs))
-
-            # Create attention masks so that image tokens attend to each other
+            # 任一相机有效即整组有效 (3 cam 同步采集); 用首个相机的 mask 扩到 15 token
+            pad_masks.append(img_masks[0][:, None].expand(bsize, num_img_embs))
             att_masks += [0] * num_img_embs
+        else:
+            for img, img_mask in zip(images, img_masks, strict=True):
+
+                def image_embed_func(img):
+                    return self.paligemma_with_expert.embed_image(img)
+
+                img_emb = self._apply_checkpoint(image_embed_func, img)
+
+                bsize, num_img_embs = img_emb.shape[:2]
+
+                embs.append(img_emb)
+                pad_masks.append(img_mask[:, None].expand(bsize, num_img_embs))
+
+                # Create attention masks so that image tokens attend to each other
+                att_masks += [0] * num_img_embs
 
         # Process language tokens
         def lang_embed_func(lang_tokens):

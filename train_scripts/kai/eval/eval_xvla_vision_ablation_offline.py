@@ -30,6 +30,34 @@ import torch
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "..", "kai0", "scripts"))
 import serve_policy_xvla as S  # noqa: E402
 
+# E1 (use_proprio=False ckpts): lerobot EE6DActionSpace.preprocess indexes proprio gripper
+# channels → IndexError when proprio dim=0. Guard the empty case (no-op for proprio>0).
+from lerobot.policies.xvla import action_hub as _ah  # noqa: E402
+_orig_ee6d_pre = _ah.EE6DActionSpace.preprocess
+def _ee6d_pre_safe(self, proprio, action, mode="train"):
+    if proprio.shape[-1] == 0:
+        am = action.clone(); am[..., self.gripper_idx] = 0.0
+        return proprio, am
+    return _orig_ee6d_pre(self, proprio, action, mode)
+_ah.EE6DActionSpace.preprocess = _ee6d_pre_safe
+
+
+def _load_policy_noproprio(ckpt, base_cfg, device, dtype):
+    """Build XVLAPolicy with use_proprio=False (proprio_dim=0) so an E1 ckpt (sliced
+    action_encoder.fc) loads with matching shapes; serve _load_policy assumes proprio."""
+    from lerobot.configs.policies import PreTrainedConfig
+    from lerobot.policies.xvla.modeling_xvla import XVLAPolicy
+    config = PreTrainedConfig.from_pretrained(str(base_cfg))
+    config.device = str(device); config.pretrained_path = str(base_cfg)
+    config.dtype = "bfloat16" if dtype == torch.bfloat16 else "float32"
+    config.use_proprio = False
+    policy = XVLAPolicy(config)
+    raw = torch.load(ckpt / "state_dict.pt", map_location="cpu", weights_only=True)
+    res = policy.load_state_dict(raw["model_state"], strict=False)
+    print(f"[no-proprio] use_proprio=False load: missing={len(res.missing_keys)} unexpected={len(res.unexpected_keys)}")
+    return policy.to(device, dtype=dtype).eval()
+
+
 CAMS = ("top_head", "hand_right", "hand_left")
 
 
@@ -63,6 +91,11 @@ def main():
     ap.add_argument("--n", type=int, default=12, help="frames to sample")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--device", default="cuda")
+    ap.add_argument("--no-proprio", action="store_true",
+                    help="ckpt trained with use_proprio=False (E1) — build proprio_dim=0 model")
+    ap.add_argument("--imagenet-norm", choices=["auto", "true", "false"], default="auto",
+                    help="override sidecar image_norm (E1 ckpt has no sidecar; p0 lineage => true)")
+    ap.add_argument("--prompt", default=None, help="override deploy prompt")
     args = ap.parse_args()
 
     from pathlib import Path
@@ -70,15 +103,19 @@ def main():
     device = torch.device(args.device)
     ckpt = Path(args.ckpt)
     sidecar = S._load_sidecar(ckpt)
-    imagenet_norm = str(sidecar.get("image_norm", "")).lower() == "imagenet"
+    if args.imagenet_norm == "auto":
+        imagenet_norm = str(sidecar.get("image_norm", "")).lower() == "imagenet"
+    else:
+        imagenet_norm = args.imagenet_norm == "true"
     TL, TR = S._load_calibration(S._DEFAULT_CALIBRATION)
-    policy = S._load_policy(ckpt, S._DEFAULT_BASE_CFG, device, dtype)
+    policy = (_load_policy_noproprio(ckpt, S._DEFAULT_BASE_CFG, device, dtype)
+              if args.no_proprio else S._load_policy(ckpt, S._DEFAULT_BASE_CFG, device, dtype))
     from transformers import AutoTokenizer
-    tok = AutoTokenizer.from_pretrained("facebook/bart-large")
+    tok = AutoTokenizer.from_pretrained(os.environ.get("XVLA_BART_TOK", "facebook/bart-large"))
     # proprio_feedback=False → no cross-call state carryover; seed fixed → deterministic.
     srv = S.XVLAServerPolicy(
         policy=policy, device=device, dtype=dtype, tokenizer=tok,
-        default_prompt=sidecar.get("deploy_prompt", "Flatten and fold the cloth."),
+        default_prompt=args.prompt or sidecar.get("deploy_prompt", "Flatten and fold the cloth."),
         default_domain_id=int(sidecar.get("deploy_domain_id", 20)),
         T_world_baseL=TL, T_world_baseR=TR, g_open=0.08, g_close=0.0,
         binarize=False, seed=args.seed, proprio_feedback=False, imagenet_norm=imagenet_norm)

@@ -76,6 +76,7 @@ class DaggerRosBridge:
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._state: Optional[str] = None
+        self._rollout_paused: Optional[bool] = None
         self._recording: Optional[bool] = None
         self._button_left: bool = False
         self._button_right: bool = False
@@ -119,6 +120,7 @@ class DaggerRosBridge:
             depth=1,
         )
         self._node.create_subscription(String, "/dagger/state", self._on_state, latched)
+        self._node.create_subscription(Bool, "/dagger/rollout_paused", self._on_rollout_paused, latched)
         self._node.create_subscription(Bool, "/dagger/recording", self._on_recording, latched)
         self._node.create_subscription(Bool, "/master_button_left",
                                        lambda m: self._on_button("L", m), latched)
@@ -149,6 +151,7 @@ class DaggerRosBridge:
 
         self._pub_takeover = self._node.create_publisher(Bool, "/dagger/takeover", 1)
         self._pub_pedal = self._node.create_publisher(Empty, "/dagger/pedal_toggled", 5)
+        self._pub_rollout_next = self._node.create_publisher(Empty, "/dagger/rollout_next", 1)
         self._pub_execute = self._node.create_publisher(Bool, "/policy/execute", 1)
         self._pub_record_cmd = self._node.create_publisher(String, "/dagger/record_cmd", 5)
 
@@ -179,6 +182,10 @@ class DaggerRosBridge:
     def _on_state(self, msg) -> None:
         with self._lock:
             self._state = msg.data
+
+    def _on_rollout_paused(self, msg) -> None:
+        with self._lock:
+            self._rollout_paused = bool(msg.data)
 
     def _on_recording(self, msg) -> None:
         with self._lock:
@@ -284,6 +291,7 @@ class DaggerRosBridge:
             return {
                 "ros_alive": _ROS_OK and self._running,
                 "state": self._state,
+                "rollout_paused": self._rollout_paused,
                 "recording": self._recording,
                 "button_left": self._button_left,
                 "button_right": self._button_right,
@@ -309,6 +317,13 @@ class DaggerRosBridge:
         if not self._running or self._node is None:
             return False
         self._pub_execute.publish(Bool(data=bool(enable)))
+        return True
+
+    def publish_rollout_next(self) -> bool:
+        """Single-button per-fold boundary toggle (end fold ↔ start next fold)."""
+        if not self._running or self._node is None:
+            return False
+        self._pub_rollout_next.publish(Empty())
         return True
 
     def publish_record_cmd(self, cmd: str) -> bool:

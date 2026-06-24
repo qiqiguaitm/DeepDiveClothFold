@@ -47,7 +47,7 @@
 
 ### 3.2 数据 (沿用已验证的健康路径)
 - kai+vis **物理预合并单源** (绕开 broken datasets_yaml, 见 corrected Plan A) + per-source/合并 norm。
-- vis 感知监督预算: vis_base/v3 **1940 ep / 2.53M frame** (D405)。
+- vis 感知监督预算: vis_base/v3 **1940 ep / 2.53M frame** (D405; ⚠️帧数为 pre-tailcap, v3 现含尾裁 Step 3 删~1.6%)。
 
 ### 3.3 方法 (三个可叠加组件 + 创新点)
 1. **P1 外观+几何增强** (主): 对图像加 **contrast/sharpness/brightness jitter** (量级对齐 P3 实测的 2× 差) + color jitter + RandomResizedCrop(scale 0.5-1.0 覆盖 8% FOV 差) → 逼视觉编码器 camera-robust。⭐ **关键是 appearance 增强, 实测证明比 FOV 重要。**

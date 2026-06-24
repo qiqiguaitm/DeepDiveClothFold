@@ -595,6 +595,14 @@ class LerobotAgilexDataConfig(DataConfigFactory):
                 inputs=[_transforms.RepackTransform(new_structure)]
             )
 
+        # Advantage estimator: keep the per-frame 'progress' target through repack, else RepackTransform
+        # drops it (only keeps structure keys) → AgilexInputs can't pass it → obs.progress=None → forward crash.
+        if isinstance(model_config, pi0_config.AdvantageEstimatorConfig):
+            base_repack = repack_transforms.inputs[0]
+            adv_structure = dict(base_repack.structure)
+            adv_structure["progress"] = "progress"
+            repack_transforms = _transforms.Group(inputs=[_transforms.RepackTransform(adv_structure)])
+
         # Create data transforms for inputs and outputs
         data_transforms = _transforms.Group(
             inputs=[
@@ -1026,6 +1034,53 @@ _CONFIGS = [
         num_train_steps=100_000,
     ),
 
+    # Vis-native AWBC pipeline S2 (plan: awbc_vis_task_a_full_pipeline_plan.md) — retrain AE on
+    # the freshly stage-labeled vis set (vis_awbc_merged_stage = 1699ep, stage_progress_gt∈{0.25,0.75}).
+    # model MUST be AdvantageEstimatorConfig (train_pytorch asserts it); loss_value=1/loss_action=0
+    # (only regress stage-progress diff). Init pi05_base (strict=False, value head new). PyTorch torchrun.
+    TrainConfig(
+        name="ADVANTAGE_TORCH_VIS_AWBC",
+        model=pi0_config.AdvantageEstimatorConfig(
+            pi05=True, action_dim=32, action_horizon=50, max_token_len=200,
+            loss_action_weight=0.0, loss_value_weight=1.0,
+        ),
+        data=LerobotAgilexDataConfig(
+            # _interp: stage_progress_gt 段内连续插值 0→1 (旧 vis_awbc_merged_stage 是平阶跃 0.25/0.75 →
+            # AE 回归目标 94% 零 → 100k 训出 dead value, 见 memory ae-stage-label-collapse). 段内连续后 Δ50 零=0.1%.
+            repo_id="/vePFS/tim/workspace/deepdive_kai0/kai0/data/Task_A/self_built/vis_awbc_merged_stage_interp",
+            default_prompt="Flatten and fold the cloth.",
+        ),
+        pytorch_weight_path="/vePFS/tim/workspace/openpi_cache/modelscope_cache/lerobot/pi05_base",
+        advantage_estimator=True,
+        num_train_steps=100_000,
+        save_interval=10_000,
+        batch_size=144,
+        num_workers=24,  # pyav 3-cam 逐帧解码 → 默认 2 worker 喂不动 8×A100 (3s↔10s 锯齿/半空转); 拉满消除 stall
+    ),
+
+    # ===== 诊断: vis AE multi-task (action+value) — 判定 vis value 弱是"配置"还是"vis感知地板" =====
+    # 唯一变量 vs ADVANTAGE_TORCH_VIS_AWBC: loss_action_weight 0.0→1.0 (加回 action flow-matching 辅助任务).
+    # 假设: value-only 把 backbone 视觉特征饿瘦 → vis value 卡在 loss 0.073 (≈常数基线). 加 action 辅助应压低.
+    # 30k 短诊断: loss<<0.073 + value corr↑ → 可修(做满100k); 仍卡 → vis 感知是地板 (退两端置信区离散).
+    # 对照锚: KAI0 AE (多任务) value-vs-GT corr=0.93 / loss=0.002; 现 vis (value-only) corr=0.67 / loss=0.073.
+    TrainConfig(
+        name="ADVANTAGE_TORCH_VIS_AWBC_MT",
+        model=pi0_config.AdvantageEstimatorConfig(
+            pi05=True, action_dim=32, action_horizon=50, max_token_len=200,
+            loss_action_weight=1.0, loss_value_weight=1.0,   # ⭐ 唯一变量: action loss 开
+        ),
+        data=LerobotAgilexDataConfig(
+            repo_id="/vePFS/tim/workspace/deepdive_kai0/kai0/data/Task_A/self_built/vis_awbc_merged_stage_interp",
+            default_prompt="Flatten and fold the cloth.",
+        ),
+        pytorch_weight_path="/vePFS/tim/workspace/openpi_cache/modelscope_cache/lerobot/pi05_base",
+        advantage_estimator=True,
+        num_train_steps=30_000,
+        save_interval=10_000,
+        batch_size=144,
+        num_workers=24,
+    ),
+
     # ===== Cross-embodiment: per-DS-norm + Action-Head conditioning (2026-06-05) =====
     # Single PRE-MERGED kai+vis dataset `kai_vis_merged` (kai0_base+kai0_dagger=domain0 6512ep,
     # A_smooth800_dagger_full=domain1/vis 1033ep) → healthy single-source path (NOT datasets_yaml).
@@ -1054,6 +1109,71 @@ _CONFIGS = [
         batch_size=128,
         fsdp_devices=16,
         inline_eval_val_root="/vePFS/tim/workspace/deepdive_kai0/kai0/data/Task_A/self_built/vis_v2_merged_val",
+        inline_eval_n_frames=200,
+        inline_eval_every=4,
+        inline_eval_dataset_id=1,
+    ),
+
+    # Task_A (横向折) + Task_AV1 (竖向折 Vertical Fold v1) 混合 1:1 过采样 co-train (plan:
+    # pi05_task_a_av1_mixed_1to1_plan.md). clone of pi05_kaivis_perdsnorm_cond, cnbj 路径.
+    # domain0=A_smooth800_dagger_full (1.455M帧) / domain1=AV1 304ep snapshot (0.447M帧) → frame-1:1
+    # weight (1.0, 3.256). per-domain prompt (prompt_from_task: domain0 横向 / domain1 竖向), per-domain
+    # norm + domain token. warm-start mixed_1_clean. ⚠️ JAX-only (weighted sampler). BJ Robot-North-H20.
+    TrainConfig(
+        name="pi05_task_a_av1_mixed_1to1",
+        model=pi0_config.Pi0Config(pi05=True, action_head_cond_num_domains=2),
+        data=KaiVisMergedDataConfig(
+            repo_id="/vePFS-North-E/vis_robot/workspace/deepdive_kai0/kai0/data/Task_A/self_built/a_av1_merged",
+            default_prompt=None,
+            base_config=DataConfig(prompt_from_task=True),  # 读 task_index→tasks.jsonl: domain0/1 各自 prompt
+            use_delta_joint_actions=False,
+            domain_weights=(1.0, 3.0115),  # FRAME-level 1:1 (norm-build 实数): Task_A 1,345,997 / AV1 446,955 = 3.0115
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader(
+            "/vePFS-North-E/vis_robot/shared_ckpt/Task_A/mixed_1_clean/params"
+        ),
+        lr_schedule=_optimizer.CosineDecaySchedule(warmup_steps=1_000, peak_lr=1.5e-5, decay_steps=50_000, decay_lr=1.5e-6),
+        ema_decay=0.9999,
+        num_train_steps=50_000,
+        keep_period=10_000,
+        save_interval=2_000,
+        num_workers=16,
+        batch_size=128,
+        fsdp_devices=8,
+        inline_eval_val_root="/vePFS-North-E/vis_robot/workspace/deepdive_kai0/kai0/data/Task_A/self_built/vis_v2_merged_val",
+        inline_eval_n_frames=200,
+        inline_eval_every=4,
+        inline_eval_dataset_id=0,  # vis_v2_merged_val = 横向折 = domain0 sanity (不退化); AV1 竖向 eval 走 offline/真机
+    ),
+
+    # from-PaliGemma 自训 (pi05_from_paligemma_base_training_plan.md 路径 B1, naive-from-base):
+    # 不 warm-start PI 的 pi05_base, 改从 PaliGemma VLM base 起 (action expert 随机初始化) → 双本体
+    # co-train. 单变量 vs pi05_kaivis_perdsnorm_cond = weight_loader (PaliGemmaLocalWeightLoader, 离线
+    # 本地 npz) + LR/warmup/steps (B1: peak 3e-5 / warmup 3k / 150k step, 随机 action expert 需更激进起步)
+    # + cnbj 8卡 (fsdp8) + 路径换 /vePFS-North-E. vis = A (A_smooth800_dagger_full).
+    # 数据 kai_vis_merged (7544ep / 7.12M frames; kai 5.778M / vis 1.346M → domain_weights vis=4.2925).
+    # 提交为 cnbj 闲时任务 + 自动 resume (yaml). 收敛判据 = val MAE 曲线 (非 train loss); ~150k 看是否在轨.
+    TrainConfig(
+        name="pi05_kaivis_from_paligemma",
+        model=pi0_config.Pi0Config(pi05=True, action_head_cond_num_domains=2),
+        data=KaiVisMergedDataConfig(
+            repo_id="/vePFS-North-E/vis_robot/workspace/deepdive_kai0/kai0/data/Task_A/self_built/kai_vis_merged",
+            default_prompt="Flatten and fold the cloth.",
+            use_delta_joint_actions=False,
+            domain_weights=(1.0, 4.2925),
+        ),
+        weight_loader=weight_loaders.PaliGemmaLocalWeightLoader(
+            npz_path="/vePFS-North-E/vis_robot/openpi_cache/paligemma_weights/pt_224.npz"
+        ),
+        lr_schedule=_optimizer.CosineDecaySchedule(warmup_steps=3_000, peak_lr=3e-5, decay_steps=150_000, decay_lr=3e-6),
+        ema_decay=0.9999,
+        num_train_steps=150_000,
+        keep_period=10_000,
+        save_interval=2_000,
+        num_workers=16,
+        batch_size=128,
+        fsdp_devices=8,
+        inline_eval_val_root="/vePFS-North-E/vis_robot/workspace/deepdive_kai0/kai0/data/Task_A/self_built/vis_v2_merged_val",
         inline_eval_n_frames=200,
         inline_eval_every=4,
         inline_eval_dataset_id=1,
@@ -1528,6 +1648,37 @@ _CONFIGS = [
         inline_eval_every=4,
     ),
 
+    # ===== LeWM 视觉前端变体 — SMOKE (pi05_from_paligemma_base_training_plan.md §9) =====
+    # 验证接线 (DINOv3-L/16 frozen + LeWM OctCompactor → 15 token → LLM → expert → flow loss →
+    # backward → loss↓). 30 步 / 小 batch, pi05_base init (验 WIRING; 正式 run 用 from-PaliGemma).
+    # vision_encoder="lewm" 触发旁路; 默认 siglip 的现有 config 全不受影响。cnbj North-E 路径。
+    TrainConfig(
+        name="pi05_lewm_smoke",
+        model=pi0_config.Pi0Config(
+            pi05=True,
+            vision_encoder="lewm",
+            lewm_ckpt_path="/vePFS-North-E/shared_data/shock/distill-wm/data/exps/lewm-kai0-3view-V1-aa27438-TS0617.0224/lewm-kai0-3view_epoch_10.pt",
+            lewm_dinov3_dir="/vePFS-North-E/shared_data/shock/.CACHE/hf_cache/hub/dinov3-vitl16-pretrain-lvd1689m",
+            lewm_freeze_compactor=False,
+        ),
+        data=LerobotAgilexDataConfig(
+            repo_id="/vePFS-North-E/vis_robot/workspace/deepdive_kai0/kai0/data/Task_A/self_built/vis_v2_full",
+            default_prompt="Flatten and fold the cloth.",
+            use_delta_joint_actions=False,
+        ),
+        pytorch_weight_path="/vePFS-North-E/vis_robot/openpi_cache/modelscope_cache/lerobot/pi05_base",
+        pytorch_training_precision="bfloat16",
+        lr_schedule=_optimizer.CosineDecaySchedule(
+            warmup_steps=5, peak_lr=1.5e-5, decay_steps=100, decay_lr=1.5e-6,
+        ),
+        ema_decay=0.9999,
+        num_train_steps=30,
+        save_interval=1000,   # >steps → 不存盘 (纯 smoke)
+        num_workers=4,
+        batch_size=16,
+        fsdp_devices=8,
+    ),
+
     # R2: PyTorch + delta action — cnsh paths (robot-task 16 A100, in parallel with R1).
     TrainConfig(
         name="pi05_pytorch_vis_v2_full_delta",
@@ -1820,6 +1971,122 @@ _CONFIGS = [
         inline_eval_every=4,
     ),
 
+    # Exp-C (dagger_validity_and_finetune_comparison.md §8) — v3 早期干净 base(≤5-10,985ep)+ dagger v3
+    # 全量(513ep)自然混(1498ep,单 norm,task_index=0,单 prompt 横向折). clone of dagger_full, cnsh 路径.
+    # 验"早期 v3 base + 全量 v3 dagger" vs smooth800 锚 / Exp-A. init mixed_1_clean, 50k.
+    TrainConfig(
+        name="pi05_flatten_fold_v3early_dagger",
+        model=pi0_config.Pi0Config(pi05=True),
+        data=LerobotAgilexDataConfig(
+            repo_id="/vePFS/tim/workspace/deepdive_kai0/kai0/data/Task_A/self_built/A_v3early_dagger",
+            default_prompt="Flatten and fold the cloth.",
+            use_delta_joint_actions=False,
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader(
+            "/vePFS/tim/shared_ckpt/Task_A/mixed_1_clean/params"
+        ),
+        lr_schedule=_optimizer.CosineDecaySchedule(
+            warmup_steps=1_000, peak_lr=1.5e-5, decay_steps=50_000, decay_lr=1.5e-6,
+        ),
+        ema_decay=0.9999,
+        num_train_steps=50_000,
+        keep_period=10_000,
+        save_interval=2_000,
+        num_workers=16,
+        batch_size=128,
+        fsdp_devices=8,
+        inline_eval_val_root="/vePFS/tim/workspace/deepdive_kai0/kai0/data/Task_A/self_built/vis_v2_merged_val",
+        inline_eval_n_frames=200,
+        inline_eval_every=4,
+    ),
+
+    # ===== Task_AV1 (Vertical Fold v1 新 SOP) 首次基线 (plan: future_plans/plans/pi05_task_av1_vertical_fold_v1_baseline.md) =====
+    # clone of pi05_flatten_fold_A_smooth800_dagger_full, cnsh 路径. 数据=Task_AV1_200 (200ep date-ordered),
+    # warm-start mixed_1_clean, prompt=B 规范 (train==deploy 一字不差), val=Task_AV1_200_val (45ep 留出). cnsh 8 A100, 50k.
+    TrainConfig(
+        name="pi05_task_av1_vfold_v1_200",
+        model=pi0_config.Pi0Config(pi05=True),
+        data=LerobotAgilexDataConfig(
+            repo_id="/vePFS/tim/workspace/deepdive_kai0/kai0/data/Task_AV1_200",
+            default_prompt="Flatten and fold the cloth. Vertical Fold v1.",
+            use_delta_joint_actions=False,
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader(
+            "/vePFS/tim/shared_ckpt/Task_A/mixed_1_clean/params"
+        ),
+        lr_schedule=_optimizer.CosineDecaySchedule(
+            warmup_steps=1_000, peak_lr=1.5e-5, decay_steps=50_000, decay_lr=1.5e-6,
+        ),
+        ema_decay=0.9999,
+        num_train_steps=50_000,
+        keep_period=10_000,
+        save_interval=2_000,
+        num_workers=16,
+        batch_size=128,
+        fsdp_devices=8,
+        inline_eval_val_root="/vePFS/tim/workspace/deepdive_kai0/kai0/data/Task_AV1_200_val",
+        inline_eval_n_frames=200,
+        inline_eval_every=4,
+    ),
+
+    # Horizontal Fold v1 基线 (pi05_fold_sop_paradigm_baselines.md §2.B) — 与 pi05_task_av1_vfold_v1_200
+    # 同配方 (单变量=折法 SOP)。数据 Task_AH1_170 (单日 200ep 切前 170; v3 前裁), val Task_AH1_val (末 30)。
+    # prompt 规范化 "Horizontally"→"Horizontal" 与 Vertical Fold v1 平行 (train==deploy 一字不差)。
+    TrainConfig(
+        name="pi05_task_ah1_hfold_v1_200",
+        model=pi0_config.Pi0Config(pi05=True),
+        data=LerobotAgilexDataConfig(
+            repo_id="/vePFS/tim/workspace/deepdive_kai0/kai0/data/Task_AH1_170",
+            default_prompt="Flatten and fold the cloth. Horizontal Fold v1.",
+            use_delta_joint_actions=False,
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader(
+            "/vePFS/tim/shared_ckpt/Task_A/mixed_1_clean/params"
+        ),
+        lr_schedule=_optimizer.CosineDecaySchedule(
+            warmup_steps=1_000, peak_lr=1.5e-5, decay_steps=50_000, decay_lr=1.5e-6,
+        ),
+        ema_decay=0.9999,
+        num_train_steps=50_000,
+        keep_period=10_000,
+        save_interval=2_000,
+        num_workers=16,
+        batch_size=128,
+        fsdp_devices=8,
+        inline_eval_val_root="/vePFS/tim/workspace/deepdive_kai0/kai0/data/Task_AH1_val",
+        inline_eval_n_frames=200,
+        inline_eval_every=4,
+    ),
+
+    # 夹爪 action 裁剪实验 (gripper_action_clip_experiment.md §4) — clone of
+    # pi05_flatten_fold_A_smooth800_dagger_full, 仅数据集换成 clip 版 (action[:,[6,13]] ≤5mm→0,
+    # state/arm 不动) + cnsh 路径 + 各自 norm_stats。单变量 = 夹爪 action 裁剪。cnsh 8卡 (Robot-GPU 开发机队列)。
+    TrainConfig(
+        name="pi05_smooth800_dagger_clip_all",
+        model=pi0_config.Pi0Config(pi05=True),
+        data=LerobotAgilexDataConfig(
+            repo_id="/vePFS/tim/workspace/deepdive_kai0/kai0/data/Task_A/self_built/A_smooth800_dagger_clip_all",
+            default_prompt="Flatten and fold the cloth.",
+            use_delta_joint_actions=False,
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader(
+            "/vePFS/tim/shared_ckpt/Task_A/mixed_1_clean/params"
+        ),
+        lr_schedule=_optimizer.CosineDecaySchedule(
+            warmup_steps=1_000, peak_lr=1.5e-5, decay_steps=50_000, decay_lr=1.5e-6,
+        ),
+        ema_decay=0.9999,
+        num_train_steps=50_000,
+        keep_period=10_000,
+        save_interval=2_000,
+        num_workers=16,
+        batch_size=128,
+        fsdp_devices=8,
+        inline_eval_val_root="/vePFS/tim/workspace/deepdive_kai0/kai0/data/Task_A/self_built/vis_v2_merged_val",
+        inline_eval_n_frames=200,
+        inline_eval_every=4,
+    ),
+
     # AWBC (RECAP traditional route): warm-start from smooth800 BC, fine-tune on A_smooth800_dagger_all
     # with per-frame advantage prompt ("...Advantage: positive/negative", ra>=0 split, 75.3% positive).
     # Same pi05 arch (advantage carried in the text prompt, NOT a domain token). Infer: always "positive".
@@ -1831,6 +2098,67 @@ _CONFIGS = [
             repo_id="/vePFS/tim/workspace/deepdive_kai0/kai0/data/Task_A/self_built/A_smooth800_dagger_all_awbc",
             default_prompt=None,
             base_config=DataConfig(prompt_from_task=True),  # per-frame task_index → tasks.jsonl advantage prompt
+            use_delta_joint_actions=False,
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader(
+            "/vePFS/tim/workspace/deepdive_kai0/kai0/checkpoints/task_a_new_smooth_800_step49999/params"
+        ),
+        lr_schedule=_optimizer.CosineDecaySchedule(
+            warmup_steps=1_000, peak_lr=1.5e-5, decay_steps=50_000, decay_lr=1.5e-6,
+        ),
+        ema_decay=0.9999,
+        num_train_steps=50_000,
+        keep_period=10_000,
+        save_interval=2_000,
+        num_workers=16,
+        batch_size=128,
+        fsdp_devices=8,
+        inline_eval_val_root="/vePFS/tim/workspace/deepdive_kai0/kai0/data/Task_A/self_built/vis_v2_merged_val",
+        inline_eval_n_frames=200,
+        inline_eval_every=4,
+    ),
+
+    # AWBC milestone-value A臂 (awbc_milestone_value_AB_plan.md §3): V2.4 零训练 value 直接当 advantage 源.
+    # clone of pi05_flatten_fold_awbc (C臂), 唯一变量 = 数据 (ds_A=dagger_all_mvA, V2.4-mv discretized
+    # quantile-matched 25.2%neg). 同 warm-start / config / eval → 单变量隔离 "value 来源".
+    TrainConfig(
+        name="pi05_awbc_mv_A",
+        model=pi0_config.Pi0Config(pi05=True),
+        data=LerobotAgilexDataConfig(
+            repo_id="/vePFS/tim/workspace/deepdive_kai0/kai0/data/Task_A/self_built/dagger_all_mvA",
+            default_prompt=None,
+            base_config=DataConfig(prompt_from_task=True),
+            use_delta_joint_actions=False,
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader(
+            "/vePFS/tim/workspace/deepdive_kai0/kai0/checkpoints/task_a_new_smooth_800_step49999/params"
+        ),
+        lr_schedule=_optimizer.CosineDecaySchedule(
+            warmup_steps=1_000, peak_lr=1.5e-5, decay_steps=50_000, decay_lr=1.5e-6,
+        ),
+        ema_decay=0.9999,
+        num_train_steps=50_000,
+        keep_period=10_000,
+        save_interval=2_000,
+        num_workers=16,
+        batch_size=128,
+        fsdp_devices=8,
+        inline_eval_val_root="/vePFS/tim/workspace/deepdive_kai0/kai0/data/Task_A/self_built/vis_v2_merged_val",
+        inline_eval_n_frames=200,
+        inline_eval_every=4,
+    ),
+
+    # AWBC milestone-value A臂 · 三档 (pos/normal/neg) — CRAVE 天然形态. 论据: 二值对 CRAVE 坏
+    # (38.8% advantage 恰为 0, 无法 quantile-match 25% neg); 三档 = neg5.1%/normal48.9%/pos46.1%,
+    # 对齐 CRAVE 的 exact-zero=normal 结构. 数据集 dagger_all_mvA_3lvl 由 dagger_all_mvA 非破坏性派生
+    # (task_index 重写为 ti3=where(adv<-0.02,0(neg), where(adv>0.02,2(pos),1(normal)))). 其余逐字段同 mv_A.
+    TrainConfig(
+        name="pi05_awbc_mv_A_3lvl",
+        model=pi0_config.Pi0Config(pi05=True),
+        data=LerobotAgilexDataConfig(
+            repo_id="/vePFS/tim/workspace/deepdive_kai0/kai0/data/Task_A/self_built/dagger_all_mvA_3lvl",
+            default_prompt=None,
+            base_config=DataConfig(prompt_from_task=True),
             use_delta_joint_actions=False,
         ),
         weight_loader=weight_loaders.CheckpointWeightLoader(

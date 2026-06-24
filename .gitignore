@@ -78,6 +78,7 @@ node_modules/
 xvla/X-VLA-env/
 xvla/xvla_ckpts/
 xvla/ckpts/
+xvla/ckpts_official/
 
 # WAM training outputs (large checkpoints)
 giga_world_policy/runs/
@@ -137,3 +138,5 @@ Ctrl-World/**/*.ckpt
 Ctrl-World/**/train_sample.json
 Ctrl-World/**/*.mp4
 Ctrl-World/**/*.npy
+# official X-VLA folding ckpt (HF download, 3.3G model.safetensors) — keep on vePFS, never in git
+xvla/official_folding_ckpt/

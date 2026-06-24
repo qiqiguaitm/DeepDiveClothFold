@@ -64,6 +64,7 @@ class StatusHub:
             "session_log_path": sess["log"],
             "session_started_at": sess["started_at"],
             "state": ros.get("state"),
+            "rollout_paused": ros.get("rollout_paused"),
             "recording": ros.get("recording"),
             "button_left": ros.get("button_left", False),
             "button_right": ros.get("button_right", False),

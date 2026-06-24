@@ -556,15 +556,59 @@ def _find_cam_dir(parent: Path, cam_name: str) -> Optional[Path]:
     return None
 
 
+def _pack_zarr_dir_to_zip(zarr_dir: Path) -> Path:
+    """Pack a `.zarr/` dir into a sibling `.zarr.zip` (ZIP_STORED, contents at
+    root), removing the dir. Mirrors data_manager depth_archive.pack_zarr_dir."""
+    import os
+    import shutil
+    import zipfile
+    zp = Path(str(zarr_dir) + ".zip")
+    tmp = Path(str(zp) + ".tmp")
+    if tmp.exists():
+        tmp.unlink()
+    with zipfile.ZipFile(tmp, "w", compression=zipfile.ZIP_STORED) as zf:
+        for root, _dirs, files in os.walk(zarr_dir):
+            for name in files:
+                fp = Path(root) / name
+                zf.write(fp, fp.relative_to(zarr_dir).as_posix())
+    os.replace(tmp, zp)
+    shutil.rmtree(zarr_dir, ignore_errors=True)
+    return zp
+
+
 def flip_depth_zarr(src_zarr: Path, dst_zarr: Path) -> None:
-    """Horizontal-flip every frame of a uint16 depth zarr [T, H, W]."""
+    """Horizontal-flip every frame of a uint16 depth zarr [T, H, W].
+    Handles both packed `.zarr.zip` and legacy `.zarr/` dir; the output mirrors
+    the input format (zip in → zip out)."""
+    import shutil
+    import tempfile
+    import zipfile
+
     import zarr  # lazy
-    dst_zarr.parent.mkdir(parents=True, exist_ok=True)
-    z_in = zarr.open(str(src_zarr), mode="r")
-    z_out = zarr.open(str(dst_zarr), mode="w",
-                       shape=z_in.shape, chunks=z_in.chunks, dtype=z_in.dtype)
-    for i in range(int(z_in.shape[0])):
-        z_out[i] = np.ascontiguousarray(z_in[i][:, ::-1])
+    is_zip = src_zarr.suffix == ".zip"
+    src_tmp = None
+    if is_zip:
+        src_tmp = tempfile.mkdtemp(prefix="kai0_depthz_src_")
+        with zipfile.ZipFile(src_zarr) as zf:
+            zf.extractall(src_tmp)
+        z_in = zarr.open(src_tmp, mode="r")
+    else:
+        z_in = zarr.open(str(src_zarr), mode="r")
+    try:
+        # write flipped frames to a `.zarr/` dir (strip trailing ".zip" if any)
+        out_dir = dst_zarr.with_name(dst_zarr.name[:-4]) if is_zip else dst_zarr
+        out_dir.parent.mkdir(parents=True, exist_ok=True)
+        if out_dir.exists():
+            shutil.rmtree(out_dir, ignore_errors=True)
+        z_out = zarr.open(str(out_dir), mode="w",
+                          shape=z_in.shape, chunks=z_in.chunks, dtype=z_in.dtype)
+        for i in range(int(z_in.shape[0])):
+            z_out[i] = np.ascontiguousarray(z_in[i][:, ::-1])
+        if is_zip:
+            _pack_zarr_dir_to_zip(out_dir)
+    finally:
+        if src_tmp is not None:
+            shutil.rmtree(src_tmp, ignore_errors=True)
 
 
 def _flip_videos_for_episodes(src_dir: Path, dst_dir: Path,
@@ -601,7 +645,8 @@ def _flip_zarrs_for_episodes(src_dir: Path, dst_dir: Path,
     if not src_dir.is_dir():
         return 0
     zdirs = sorted([p for p in src_dir.iterdir()
-                    if p.is_dir() and p.suffix == ".zarr"])
+                    if (p.is_dir() and p.suffix == ".zarr")
+                    or (p.is_file() and p.name.endswith(".zarr.zip"))])
     if episode_filter is not None:
         keep = set(int(e) for e in episode_filter)
         zdirs = [p for p in zdirs if _ep_id_from_parquet_name(p.name) in keep]

@@ -23,7 +23,7 @@ export default function ReplayCard({ ep, task, onDeleted }: Props) {
 
   const del = async () => {
     if (!ep) return;
-    if (!confirm(`删除 ${task} ${ep.subset}/${ep.date.replace("-v2", "")} #${ep.episode_id}?\n` +
+    if (!confirm(`删除 ${task} ${ep.subset}/${ep.date.replace(/-v\d+$/, "")} #${ep.episode_id}?\n` +
                  `parquet + 视频 + meta 都会删除, 不可恢复。`)) return;
     setBusy(true); setErr(null);
     try {
@@ -45,7 +45,7 @@ export default function ReplayCard({ ep, task, onDeleted }: Props) {
   return (
     <div className="card replay-card">
       <h2>
-        Replay — {ep.subset} #{ep.episode_id} · {ep.date.replace("-v2", "")} ·
+        Replay — {ep.subset} #{ep.episode_id} · {ep.date.replace(/-v\d+$/, "")} ·
         {" "}{ep.duration_s.toFixed(1)}s · {ep.length}f
       </h2>
       <div style={{ color: "#8b949e", fontSize: 12, marginBottom: 8 }}>
@@ -55,9 +55,9 @@ export default function ReplayCard({ ep, task, onDeleted }: Props) {
         <>
           <div className="replay-vids">
             {CAMS.map(cam => (
-              <video key={`${ep.subset}/${ep.date}/${ep.episode_id}/${cam}`}
+              <video key={`${ep.subset}/${ep.date}/${ep.episode_id}/${cam}/${ep.created_at}`}
                 ref={el => (refs.current[cam] = el)}
-                src={api.episodeVideoUrl(ep.subset, ep.date, ep.episode_id, cam, task)}
+                src={api.episodeVideoUrl(ep.subset, ep.date, ep.episode_id, cam, task, ep.created_at)}
                 controls={false} muted preload="metadata"
                 style={{ width: "100%", background: "#000", borderRadius: 4 }} />
             ))}

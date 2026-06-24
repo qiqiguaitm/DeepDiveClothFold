@@ -155,6 +155,17 @@ def record_toggle() -> dict:
     return {"ok": True}
 
 
+@app.post("/api/dagger/rollout/next")
+def rollout_next() -> dict:
+    """Single-button rollout boundary (toggle). A rollout = one autonomous task
+    attempt (any scene, not folding-specific). 1st press = attempt done → finalize
+    inference (success) + pause; 2nd press = start next rollout (new inference ep +
+    resume, flushes RTC). Only acts in POLICY_RUN; recorder ignores otherwise."""
+    if not bridge.publish_rollout_next():
+        raise HTTPException(503, "ROS bridge not alive")
+    return {"ok": True}
+
+
 @app.post("/api/dagger/record/start")
 def record_start() -> dict:
     """开始: open a new dagger episode (only in HUMAN_RECORD, if not recording)."""

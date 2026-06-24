@@ -37,6 +37,11 @@ _REPO = os.environ.get("KAI0_REPO_ROOT", "/vePFS/tim/workspace/deepdive_kai0")
 VIS_BASE = Path(f"{_REPO}/kai0/data/Task_A/vis_base/v2")          # 源: v2 各日期 <date>-v2
 V3_ROOT = Path(f"{_REPO}/kai0/data/Task_A/vis_base/v3")           # per-date 模式输出: <date>-v3
 V3_2_ROOT = Path(f"{_REPO}/kai0/data/Task_A/vis_base/v3.2")       # idle_downsample 输出: <date>-v3.2 (v3 前端裁 + 中段选择性)
+VIS_DAGGER_V2 = Path(f"{_REPO}/kai0/data/Task_A/vis_dagger/v2")   # dagger 源: v2 各日期 <date>-v2
+VIS_DAGGER_V3 = Path(f"{_REPO}/kai0/data/Task_A/vis_dagger/v3")   # dagger v3 输出: <date>-v3 (同 base 前端裁 + drop depth)
+# tail-cap (Step 3, 2026-06-16): 就地裁 v3 末端"任务完成后的长静止尾巴" —— build 到暂存
+# <root>/v3_tailtmp/<date> 再原子换入 <root>/v3/<date> (crash-safe, v3 直接更新)。AH1 是 TOS 拉的单日 base/v3。
+AH1_V3 = Path(f"{_REPO}/kai0/data/Task_AH1/base/v3")
 DST_ROOT = Path(f"{_REPO}/kai0/data/Task_A/self_built")           # 合并模式输出 (原 A_0522_0526_*)
 DATES = ["2026-05-22-v2", "2026-05-26-v2"]
 CAMERAS = ("observation.images.top_head", "observation.images.hand_left", "observation.images.hand_right")
@@ -71,6 +76,9 @@ GRIP_THR = float(os.environ.get("V32_GRIP_THR", "0.02"))  # |Δgrip| above this 
 GRIP_GUARD = int(os.environ.get("V32_GRIP_GUARD", "30"))  # force-keep ±this many frames around a gripper transition (~1s dwell)
 WIN = 10        # frames of sustained motion to call it the onset
 MARGIN = 15     # keep this many frames before onset (avoid clipping the reach-start)
+# tail-cap (Step 3): keep this many TRAILING-idle frames as terminal settle; drop the rest of the long
+# post-completion hold. Symmetric to MARGIN's lead-in. 15 frames ≈ 0.5s @30Hz, < action_horizon=50.
+TAIL_CAP = int(os.environ.get("TAIL_CAP", "15"))
 
 
 def motion_onset(action: np.ndarray) -> int:
@@ -104,6 +112,9 @@ def trim_video_pyav(src_mp4: Path, dst_mp4: Path, cut: int, expected_frames: int
     for frame in in_c.decode(video=0):
         if idx >= cut:
             new = frame.reformat(format="yuv420p")
+            new.pts = None  # reset PTS → encoder assigns sequential-from-0 (else trimmed video keeps
+                            # original pts≈cut/fps, desyncing the 0-start parquet → lerobot timestamp
+                            # video-decode tolerance error in AdvantageLerobotDataset. see reset_video_pts.py)
             for pkt in out_stream.encode(new):
                 out_c.mux(pkt)
             written += 1
@@ -247,15 +258,19 @@ def _maybe_norm_stats(dst, compute: bool, action_dim: int):
               f"     {manual}", flush=True)
 
 
-def build_per_date_v3(date_v2: str, dry_run: bool = False, compute_norm: bool = True, action_dim: int = 32) -> dict:
-    """Per-date v3: trim 投放 static head from every episode of vis_base/v2/<date>-v2,
-    write vis_base/v3/<date>-v3. PRESERVES original episode_index (no merge/renumber),
+def build_per_date_v3(date_v2: str, dry_run: bool = False, compute_norm: bool = True, action_dim: int = 32,
+                      src_root: Path | None = None, dst_root: Path | None = None) -> dict:
+    """Per-date v3: trim 投放 static head from every episode of <src_root>/<date>-v2,
+    write <dst_root>/<date>-v3. PRESERVES original episode_index (no merge/renumber),
     drops depth (RGB-only), per-ep assert video frames == parquet rows.
+    src_root/dst_root default to vis_base v2/v3; pass VIS_DAGGER_V2/V3 for dagger.
 
     Returns a report dict. Reuses motion_onset / trim_video_pyav / per_episode_stats."""
-    src = VIS_BASE / date_v2
+    src_root = src_root or VIS_BASE
+    dst_root = dst_root or V3_ROOT
+    src = src_root / date_v2
     date_v3 = date_v2.replace("-v2", "-v3")
-    dst = V3_ROOT / date_v3
+    dst = dst_root / date_v3
     if not src.exists():
         raise FileNotFoundError(f"src date dir not found: {src}")
 
@@ -437,13 +452,150 @@ def build_per_date_v32(date_v3: str, dry_run: bool = False, compute_norm: bool =
     return rep
 
 
+def tail_cap_keep_indices(action: np.ndarray, tail_cap: int = TAIL_CAP,
+                          idle_thr: float = THR, grip_thr: float = GRIP_THR) -> np.ndarray:
+    """Tail-cap: keep ALL frames except trim the LONG trailing idle (post-task hold) down to
+    `tail_cap` terminal frames. A trailing frame is 'idle' only if BOTH arm AND gripper are static,
+    so a final gripper release/place is NEVER trimmed. ONLY the tail is touched — no middle thinning
+    → per-chunk displacement of task motion is unchanged (safe vs v3.2 speed-inflation). Returns a
+    contiguous prefix arange(0, keep_end)."""
+    T = len(action)
+    if T <= 1:
+        return np.arange(T)
+    da = np.abs(np.diff(action[:, ARM_DIMS], axis=0)).mean(axis=1)   # (T-1,)
+    dg = np.abs(np.diff(action[:, GRIP_DIMS], axis=0)).max(axis=1)   # (T-1,)
+    active = np.concatenate([[True], (da > idle_thr) | (dg > grip_thr)])  # (T,); frame0 anchor
+    tail = 0
+    for i in range(T - 1, -1, -1):
+        if active[i]:
+            break
+        tail += 1
+    if tail <= tail_cap:
+        return np.arange(T)                       # short/no tail → keep whole
+    return np.arange(T - (tail - tail_cap))       # keep tail_cap terminal-settle frames, drop the rest
+
+
+def build_per_date_tailcap(date_v3: str, v3_root: Path, tail_cap: int = TAIL_CAP,
+                           dry_run: bool = False, compute_norm: bool = False, action_dim: int = 32,
+                           idle_thr: float = THR, grip_thr: float = GRIP_THR,
+                           inplace: bool = True) -> dict:
+    """tail-cap (Step 3): from <v3_root>/<date>-v3 (front already trimmed) drop the long trailing
+    idle tail. IN-PLACE: builds into a staging sibling <v3_root>_tailtmp/<date>, then atomically
+    swaps it into <v3_root>/<date> (rmtree + rename; per-date crash-safe — a crash leaves v3 intact
+    + a stale _tailtmp to discard). All reads from src complete BEFORE the swap. Preserves ep ids,
+    rebuilds frame_index/index/timestamp, re-encodes the 3 mp4s to the kept prefix (assert ==).
+    Auto-detects src video dir naming (feature-key vs bare), ALWAYS writes feature-key dirs.
+    compute_norm default OFF (merge/final-build recomputes). inplace=False keeps output in staging."""
+    src = v3_root / date_v3
+    final = v3_root / date_v3
+    dst = v3_root.with_name(v3_root.name + "_tailtmp") / date_v3   # staging sibling, same filesystem
+    if not src.exists():
+        raise FileNotFoundError(f"v3 src not found: {src}")
+    parquets = sorted((src / "data" / "chunk-000").glob("episode_*.parquet"))
+    src_eps = {json.loads(l).get("episode_id", json.loads(l).get("episode_index")): json.loads(l)
+               for l in (src / "meta" / "episodes.jsonl").open()}
+    feat_dirs = (src / "videos" / "chunk-000" / CAMERAS[0]).exists()   # built-by-script vs TOS-pull (bare)
+    print(f"[{date_v3}] tail-cap={tail_cap} {len(parquets)} eps (src_feat_dirs={feat_dirs}, inplace={inplace})", flush=True)
+
+    if not dry_run:
+        if dst.exists():
+            shutil.rmtree(dst)          # clear stale staging
+        (dst / "data" / "chunk-000").mkdir(parents=True)
+        (dst / "meta").mkdir()
+        for cam in CAMERAS:
+            (dst / "videos" / "chunk-000" / cam).mkdir(parents=True)
+
+    episodes_out, stats_out, video_jobs, tail_drops = [], [], [], []
+    total_frames, total_in = 0, 0
+    for pq in parquets:
+        ep_id = int(pq.stem.split("_")[1])
+        df = pd.read_parquet(pq)
+        T0 = len(df)
+        action = np.stack(df["action"].to_numpy()).astype(np.float64)
+        keep_idx = tail_cap_keep_indices(action, tail_cap, idle_thr, grip_thr)
+        new_len = len(keep_idx)
+        total_in += T0
+        tail_drops.append(T0 - new_len)
+        if not dry_run:
+            sub = df.iloc[keep_idx].copy().reset_index(drop=True)
+            sub["frame_index"] = np.arange(new_len, dtype=np.int64)
+            sub["episode_index"] = np.int64(ep_id)
+            sub["index"] = np.arange(total_frames, total_frames + new_len, dtype=np.int64)
+            sub["timestamp"] = (np.arange(new_len, dtype=np.float32) / FPS).astype(np.float32)
+            sub.to_parquet(dst / "data" / "chunk-000" / f"episode_{ep_id:06d}.parquet", index=False)
+            for cam in CAMERAS:
+                src_cam = cam if feat_dirs else CAM_DIRS[cam]
+                sv = src / "videos" / "chunk-000" / src_cam / f"episode_{ep_id:06d}.mp4"
+                dv = dst / "videos" / "chunk-000" / cam / f"episode_{ep_id:06d}.mp4"
+                video_jobs.append((str(sv), str(dv), keep_idx.tolist(), new_len))
+            meta = src_eps.get(ep_id, {})
+            tasks = meta.get("tasks") or [meta.get("prompt", "Flatten and fold the cloth.")]
+            episodes_out.append({"episode_index": ep_id, "tasks": tasks, "length": new_len})
+            stats_out.append({"episode_index": ep_id, "stats": per_episode_stats(sub)})
+        total_frames += new_len
+
+    td = np.array(tail_drops)
+    rep = {"date": date_v3, "episodes": len(parquets), "frames_in": total_in, "frames_out": total_frames,
+           "tail_drop_median": int(np.median(td)) if len(td) else 0,
+           "tail_drop_max": int(td.max()) if len(td) else 0,
+           "eps_trimmed": int((td > 0).sum()),
+           "dropped_pct": float(100 * (total_in - total_frames) / total_in) if total_in else 0.0}
+    if dry_run:
+        print(f"  DRY: {total_in}→{total_frames} (tail-drop median={rep['tail_drop_median']} "
+              f"max={rep['tail_drop_max']}, trimmed {rep['eps_trimmed']}/{len(parquets)} eps, "
+              f"{rep['dropped_pct']:.2f}%)", flush=True)
+        return rep
+
+    if video_jobs:
+        from concurrent.futures import ProcessPoolExecutor, as_completed
+        print(f"  re-encoding {len(video_jobs)} videos ({BUILD_WORKERS} workers)...", flush=True)
+        with ProcessPoolExecutor(max_workers=BUILD_WORKERS) as ex:
+            for fut in as_completed({ex.submit(_select_job, j): j for j in video_jobs}):
+                fut.result()
+
+    with (dst / "meta" / "episodes.jsonl").open("w") as f:
+        for r in episodes_out:
+            f.write(json.dumps(r) + "\n")
+    with (dst / "meta" / "episodes_stats.jsonl").open("w") as f:
+        for r in stats_out:
+            f.write(json.dumps(r) + "\n")
+    shutil.copy(src / "meta" / "tasks.jsonl", dst / "meta" / "tasks.jsonl")
+    info = json.loads((src / "meta" / "info.json").read_text())
+    info["total_episodes"] = len(parquets)
+    info["total_frames"] = total_frames
+    info["total_videos"] = len(parquets) * len(CAMERAS)
+    info["total_chunks"] = 1
+    info["chunks_size"] = max(1000, len(parquets))
+    info["splits"] = {"train": f"0:{len(parquets)}"}
+    info["features"].pop("observation.depth.top_head", None)   # defensive (v3 is RGB-only)
+    info.pop("depth_path", None)
+    (dst / "meta" / "info.json").write_text(json.dumps(info, indent=2))
+
+    # atomic in-place swap: staging → v3 (all src reads已完成于上方 video re-encode + meta copy)
+    result = dst
+    if inplace:
+        shutil.rmtree(final)
+        shutil.move(str(dst), str(final))
+        try:
+            dst.parent.rmdir()          # remove now-empty _tailtmp root if last date
+        except OSError:
+            pass
+        result = final
+    print(f"  done → {result}  ({total_in}→{total_frames}, tail-drop median={rep['tail_drop_median']}, "
+          f"trimmed {rep['eps_trimmed']}/{len(parquets)} eps, {rep['dropped_pct']:.2f}%)", flush=True)
+    _maybe_norm_stats(result, compute_norm and not dry_run, action_dim)
+    return rep
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--mode", choices=["raw", "no_release"],
                     help="legacy merge mode: 5-22+5-26 → single self_built/A_0522_0526_{raw,no_release}")
     ap.add_argument("--per-date", nargs="+", metavar="DATE",
-                    help="per-date v3 mode: trim 投放 head, write vis_base/v3/<date>-v3 (preserve ep ids, "
-                         "no depth). Pass dates like 2026-05-22-v2, or 'all' for every <date>-v2 under vis_base/v2.")
+                    help="per-date v3 mode: trim 投放 head, write <root>/v3/<date>-v3 (preserve ep ids, "
+                         "no depth). Pass dates like 2026-05-22-v2, or 'all' for every <date>-v2 under the chosen root.")
+    ap.add_argument("--src-kind", choices=["base", "dagger"], default="base",
+                    help="per-date v3 source: 'base' (vis_base/v2→v3, default) or 'dagger' (vis_dagger/v2→v3).")
     ap.add_argument("--symlink-video", action="store_true",
                     help="raw mode only: symlink videos instead of copy (saves disk)")
     ap.add_argument("--dry-run", action="store_true", help="compute cuts + report, write nothing")
@@ -464,7 +616,45 @@ def main():
     ap.add_argument("--idle-thr", type=float, default=IDLE_THR, help="v3.2 idle |Δa| threshold")
     ap.add_argument("--keep-len", type=int, default=KEEP_LEN, help="v3.2 short-settle keep length (frames)")
     ap.add_argument("--k", type=int, default=DOWNSAMPLE_K, help="v3.2 long-pause keep-every-k")
+    ap.add_argument("--per-date-tailcap", nargs="+", metavar="DATE",
+                    help="tail-cap (Step 3): IN-PLACE trim the long TRAILING idle of <root>/v3/<date>-v3 "
+                         "to --tail-cap frames (build to <root>/v3_tailtmp then atomically swap into v3). "
+                         "Pass dates like 2026-05-10-v3, or 'all' for every -v3 under --tailcap-src root.")
+    ap.add_argument("--tailcap-src", choices=["base", "dagger", "ah1"], default="base",
+                    help="tail-cap source/target v3 root: base (vis_base/v3) / dagger (vis_dagger/v3) / ah1 (Task_AH1/base/v3)")
+    ap.add_argument("--tail-cap", type=int, default=TAIL_CAP,
+                    help="trailing-idle terminal frames to keep (default 15 = 0.5s @30Hz, < action_horizon=50)")
+    ap.add_argument("--grip-thr", type=float, default=GRIP_THR,
+                    help="gripper |Δ| threshold; tail NOT trimmed past a moving gripper (protect release/place)")
+    ap.add_argument("--tail-idle-thr", type=float, default=THR,
+                    help="tail-cap arm idle |Δa| threshold (default 3e-3 = aligned with front-trim THR)")
+    ap.add_argument("--no-inplace", action="store_true",
+                    help="tail-cap: keep output in staging <root>/v3_tailtmp instead of swapping into v3")
     args = ap.parse_args()
+
+    # ---- tail-cap mode (Step 3): IN-PLACE overwrite of v3 (staging → atomic swap) ----
+    if args.per_date_tailcap:
+        roots = {"base": V3_ROOT, "dagger": VIS_DAGGER_V3, "ah1": AH1_V3}
+        v3_root = roots[args.tailcap_src]
+        if args.per_date_tailcap == ["all"]:
+            dates = sorted(d.name for d in v3_root.iterdir() if d.is_dir() and d.name.endswith("-v3"))
+        else:
+            dates = args.per_date_tailcap
+        print(f"tail-cap ({args.tailcap_src}): {len(dates)} dates IN-PLACE → {v3_root} "
+              f"(tail_cap={args.tail_cap}, inplace={not args.no_inplace})", flush=True)
+        reps = [build_per_date_tailcap(d, v3_root, tail_cap=args.tail_cap, dry_run=args.dry_run,
+                                       compute_norm=not args.no_norm_stats, action_dim=args.action_dim,
+                                       idle_thr=args.tail_idle_thr, grip_thr=args.grip_thr,
+                                       inplace=not args.no_inplace) for d in dates]
+        print("\n=== tail-cap summary ===")
+        for r in reps:
+            if r.get("skipped"):
+                print(f"  {r['date']}: SKIPPED")
+            else:
+                print(f"  {r['date']}: {r['episodes']} ep, {r['frames_in']}→{r['frames_out']} "
+                      f"(tail-drop median={r['tail_drop_median']} max={r['tail_drop_max']}, "
+                      f"trimmed {r['eps_trimmed']}/{r['episodes']} eps, {r['dropped_pct']:.2f}%)")
+        return
 
     # ---- v3.2 selective idle-downsample mode ----
     if args.per_date_v32:
@@ -488,13 +678,15 @@ def main():
 
     # ---- per-date v3 mode ----
     if args.per_date:
+        src_root, dst_root = (VIS_DAGGER_V2, VIS_DAGGER_V3) if args.src_kind == "dagger" else (VIS_BASE, V3_ROOT)
         if args.per_date == ["all"]:
-            dates = sorted(d.name for d in VIS_BASE.iterdir() if d.is_dir() and d.name.endswith("-v2"))
+            dates = sorted(d.name for d in src_root.iterdir() if d.is_dir() and d.name.endswith("-v2"))
         else:
             dates = args.per_date
-        print(f"per-date v3: {len(dates)} dates → vis_base/v3/", flush=True)
+        print(f"per-date v3 ({args.src_kind}): {len(dates)} dates → {dst_root}", flush=True)
         reps = [build_per_date_v3(d, dry_run=args.dry_run,
-                                  compute_norm=not args.no_norm_stats, action_dim=args.action_dim) for d in dates]
+                                  compute_norm=not args.no_norm_stats, action_dim=args.action_dim,
+                                  src_root=src_root, dst_root=dst_root) for d in dates]
         print("\n=== per-date v3 summary ===")
         for r in reps:
             if r.get("skipped"):
