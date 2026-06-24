@@ -283,19 +283,61 @@ def _build_jet_lut() -> "np.ndarray":  # type: ignore[name-defined]
 
 _JET_LUT = None  # lazy: 等到第一次有 depth 请求时再算 + 装 numpy/PIL
 
+# Depth is now stored as one `.zarr.zip` per episode (was a ~1.7k-file `.zarr/`
+# dir). Reading unzips to a temp dir; cache the opened array per episode so
+# slider-scrubbing many frames doesn't re-unzip on every request. Small LRU
+# (a few episodes) — evicting cleans up the temp dir.
+import atexit as _atexit
+import collections as _collections
+import threading as _threading
 
-def _zarr_open_readonly(path):
-    import zarr
-    return zarr.open(str(path), mode="r")
+from .depth_archive import close_depth, open_depth_readonly, resolve_depth_artifact
+
+_DEPTH_CACHE: "_collections.OrderedDict[str, tuple]" = _collections.OrderedDict()
+_DEPTH_CACHE_MAX = 4
+_DEPTH_CACHE_LOCK = _threading.Lock()
+
+
+def _open_depth_cached(task_id: str, subset: str, episode_id: int, camera: str):
+    """Return a read-only zarr array for the episode's depth, or None if absent.
+    Handles both new `.zarr.zip` and legacy `.zarr/` dir; caches the opened
+    (extracted) array across requests."""
+    base = episode_depth_zarr_path(task_id, subset, episode_id, camera)
+    art = resolve_depth_artifact(base)
+    if art is None:
+        return None
+    key = str(art)
+    with _DEPTH_CACHE_LOCK:
+        hit = _DEPTH_CACHE.get(key)
+        if hit is not None:
+            _DEPTH_CACHE.move_to_end(key)
+            return hit[0]
+    z, tmp = open_depth_readonly(art)  # extract (zip) outside the lock
+    with _DEPTH_CACHE_LOCK:
+        if key in _DEPTH_CACHE:  # lost a race — drop our copy, reuse cached
+            close_depth(tmp)
+            _DEPTH_CACHE.move_to_end(key)
+            return _DEPTH_CACHE[key][0]
+        _DEPTH_CACHE[key] = (z, tmp)
+        while len(_DEPTH_CACHE) > _DEPTH_CACHE_MAX:
+            _k, (_z, _tmp) = _DEPTH_CACHE.popitem(last=False)
+            close_depth(_tmp)
+    return z
+
+
+@_atexit.register
+def _cleanup_depth_cache():
+    for _z, _tmp in list(_DEPTH_CACHE.values()):
+        close_depth(_tmp)
+    _DEPTH_CACHE.clear()
 
 
 @app.get("/api/episodes/{task_id}/{subset}/{episode_id}/depth/{camera}/info")
 def get_episode_depth_info(task_id: str, subset: str, episode_id: int, camera: str):
     """返回 depth zarr 的形状, 供前端按 frame_index 拖动。"""
-    p = episode_depth_zarr_path(task_id, subset, episode_id, camera)
-    if not p.exists():
+    z = _open_depth_cached(task_id, subset, episode_id, camera)
+    if z is None:
         raise HTTPException(status_code=404, detail="depth zarr missing")
-    z = _zarr_open_readonly(p)
     return {"frames": int(z.shape[0]), "height": int(z.shape[1]), "width": int(z.shape[2])}
 
 
@@ -308,10 +350,9 @@ def get_episode_depth_frame(
     """读 depth zarr 的第 N 帧, JET 上色, 返回 PNG。
     min_mm/max_mm 让前端可调节窗位 (常见 0.2m – 2m 桌面工作距离)."""
     global _JET_LUT
-    p = episode_depth_zarr_path(task_id, subset, episode_id, camera)
-    if not p.exists():
+    z = _open_depth_cached(task_id, subset, episode_id, camera)
+    if z is None:
         raise HTTPException(status_code=404, detail="depth zarr missing")
-    z = _zarr_open_readonly(p)
     n = int(z.shape[0])
     if n == 0 or frame_index < 0 or frame_index >= n:
         raise HTTPException(status_code=404, detail=f"frame {frame_index} out of range (n={n})")

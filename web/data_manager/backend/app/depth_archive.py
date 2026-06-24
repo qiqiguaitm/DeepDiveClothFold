@@ -35,8 +35,12 @@ def zip_path_for(zarr_dir: Path | str) -> Path:
 
 def resolve_depth_artifact(zarr_dir: Path | str) -> Path | None:
     """Given the base `.../episode_X.zarr` path, return the artifact that exists:
-    prefer the packed `.zarr.zip`, fall back to the legacy `.zarr/` dir, else None."""
+    prefer the lossless FFV1 `.mkv` (newest, ~58% smaller), then the packed
+    `.zarr.zip`, then the legacy `.zarr/` dir, else None."""
     zarr_dir = Path(zarr_dir)
+    mkv = Path(str(zarr_dir).removesuffix(".zarr") + ".mkv")
+    if mkv.is_file():
+        return mkv
     zp = zip_path_for(zarr_dir)
     if zp.is_file():
         return zp
@@ -77,6 +81,14 @@ def open_depth_readonly(artifact: Path | str):
     import zarr  # lazy: only when a reader actually needs frames
 
     artifact = Path(artifact)
+    if artifact.suffix == ".mkv":  # lossless FFV1 gray16le depth video
+        import av
+        import numpy as np
+
+        c = av.open(str(artifact))
+        frames = [f.to_ndarray() for f in c.decode(video=0)]  # each (H,W) uint16
+        c.close()
+        return np.stack(frames), None  # (T,H,W) uint16 — supports .shape / arr[i]
     if artifact.is_dir():
         return zarr.open(str(artifact), mode="r"), None
     if artifact.suffix == ZIP_SUFFIX:
