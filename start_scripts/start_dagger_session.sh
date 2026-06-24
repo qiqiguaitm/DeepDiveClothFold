@@ -132,6 +132,15 @@ if [[ -n "$ASSET_ID" ]] && [[ ! -f "$NORM_STATS" ]]; then
     exit 1
 fi
 
+# Deploy-time gripper frame remap (old 100mm-range ckpt → real 0–70mm robot).
+# The dagger POLICY loads HERE (infra runs enable_policy:=false), so the env must
+# be set in this script. Default ON (本机已官方 0–70mm 标定, 部署的多是旧 frame
+# ckpt); 部署新 frame ckpt 时设 =0 关。Read by v0 create_trained_policy + v1
+# serve_policy_v1. 见 docs/deployment/data_collection/gripper_calibration.md
+export KAI0_GRIPPER_DEPLOY_REMAP="${KAI0_GRIPPER_DEPLOY_REMAP:-1}"
+export KAI0_GRIPPER_REAL_RANGE="${KAI0_GRIPPER_REAL_RANGE:-0.0,0.07}"
+[ "$KAI0_GRIPPER_DEPLOY_REMAP" = "1" ] && echo "[gripper-remap] ON: 夹爪 norm_stats [q01,q99]→真机[$KAI0_GRIPPER_REAL_RANGE]m (dims 6,13)"
+
 # ── Resolve variant ──────────────────────────────────────────────────────
 if [[ "$VARIANT" == "auto" ]]; then
     if [[ "$CHECKPOINT_DIR" == */ckpt_v1/* ]]; then VARIANT="v1"; else VARIANT="v0"; fi

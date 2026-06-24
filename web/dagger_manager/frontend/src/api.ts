@@ -33,6 +33,7 @@ export const api = {
   recordDiscard: () => json("/api/dagger/record/discard", { method: "POST" }),
   execute: (enable: boolean) =>
     json("/api/dagger/execute", { method: "POST", body: JSON.stringify({ enable }) }),
+  rolloutNext: () => json("/api/dagger/rollout/next", { method: "POST" }),
   joints: () => json<JointState>("/api/joints"),
   tasks: () => json<{ task: string; has_data: boolean }[]>("/api/dagger/tasks"),
   episodes: (task = "Task_A") =>
@@ -41,8 +42,13 @@ export const api = {
     json(`/api/dagger/episodes/${subset}/${date}/${ep}?task=${encodeURIComponent(task)}`,
          { method: "DELETE" }),
   // Video URL (not fetched as JSON — used as <video src>). Vite proxies /api.
-  episodeVideoUrl: (subset: string, date: string, ep: number, camera: string, task = "Task_A") =>
-    `/api/dagger/episodes/${subset}/${date}/${ep}/video/${camera}?task=${encodeURIComponent(task)}`,
+  // `bust` (episode created_at) cache-busts: re-recording an episode at the same
+  // subset/date/id reuses the URL, so without this the browser replays the stale
+  // cached video (the endpoint sends no Cache-Control).
+  episodeVideoUrl: (subset: string, date: string, ep: number, camera: string,
+                    task = "Task_A", bust?: number | null) =>
+    `/api/dagger/episodes/${subset}/${date}/${ep}/video/${camera}?task=${encodeURIComponent(task)}`
+    + (bust != null ? `&t=${bust}` : ""),
 };
 
 export function connectStatusWs(onSnap: (s: DaggerStatus) => void): WebSocket {

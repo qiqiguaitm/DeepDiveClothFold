@@ -30,6 +30,7 @@ export interface DaggerStatus {
   session_log_path: string | null;
   session_started_at: number | null;
   state: DaggerState | null;
+  rollout_paused: boolean | null;
   recording: boolean | null;
   button_left: boolean;
   button_right: boolean;

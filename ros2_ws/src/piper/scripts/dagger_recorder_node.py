@@ -255,6 +255,23 @@ class DaggerRecorder(Node):
         self._inf_started_at: float = 0.0
         self._inf_wrote_frames = 0
 
+        # ── Per-rollout boundary + inference↔dagger alignment ──
+        # One "rollout" = one autonomous task attempt (cloth fold, pick-place,
+        # wipe, …). The /dagger/rollout_next button toggles a pause between
+        # rollouts (finalize inference as completed → execute=false → operator
+        # resets the scene → press again → new inference ep + execute=true, which
+        # flushes RTC on the policy side; the model is NOT reloaded).
+        # Alignment keys stamped into BOTH inference + dagger episode meta:
+        #   rollout_id    — shared by every episode (inference + dagger) of one fold.
+        #   takeover_id   — increments per takeover; an inference segment cut by a
+        #                   takeover records ends_takeover_id, and the dagger
+        #                   correction recorded during that takeover records the
+        #                   same takeover_id → the two are paired for RECAP/IWR.
+        self._rollout_paused = False
+        self._rollout_id = 0
+        self._takeover_id = 0
+        self._cur_takeover_id: Optional[int] = None
+
         self._rgb: dict[str, Optional[np.ndarray]] = {c: None for c in CAMERAS}
         self._depth: dict[str, Optional[np.ndarray]] = {c: None for c in DEPTH_CAMERAS}
         self._q_slave_left:  list[float] = [0.0] * 7
@@ -329,6 +346,8 @@ class DaggerRecorder(Node):
                                  lambda m: self._on_master("R", m), 10)
 
         self.create_subscription(Bool, "/dagger/takeover", self._on_takeover, 1)
+        # Single-button per-fold boundary (toggle: end-fold ↔ start-next-fold).
+        self.create_subscription(Empty, "/dagger/rollout_next", self._on_rollout_next, 1)
         # Per-arm physical-button state (published by arm_master_servo_node).
         # dagger_launch remaps these to /master_button_left and /master_button_right.
         self.create_subscription(Bool, "/master_button_left",
@@ -362,6 +381,11 @@ class DaggerRecorder(Node):
         # from "actively writing a dagger episode".
         self.pub_recording = self.create_publisher(Bool, "/dagger/recording", latched)
         self.pub_recording.publish(Bool(data=self._recording))
+        # Rollout pause flag (latched): True = between rollouts, waiting for the
+        # operator to reset the scene and press "start next". Lets the web UI show
+        # whether the next button press will END the current rollout or START a new one.
+        self.pub_rollout_paused = self.create_publisher(Bool, "/dagger/rollout_paused", latched)
+        self.pub_rollout_paused.publish(Bool(data=self._rollout_paused))
         self.pub_drive_left  = self.create_publisher(JointState, MASTER_DRIVE_LEFT, 10)
         self.pub_drive_right = self.create_publisher(JointState, MASTER_DRIVE_RIGHT, 10)
         self.pub_cfg_left  = self.create_publisher(String, MASTER_CONFIG_LEFT, 1)
@@ -477,6 +501,9 @@ class DaggerRecorder(Node):
                 self._seen_off_after_boot = True
             seen_off = self._seen_off_after_boot
 
+        if rising and cur == State.POLICY_RUN and self._rollout_paused:
+            self.get_logger().info(f"[button] {side} rising → IGNORED (rollout paused for cloth reset)")
+            return
         if rising and cur == State.POLICY_RUN:
             if not seen_off:
                 self.get_logger().warn(
@@ -644,11 +671,18 @@ class DaggerRecorder(Node):
             self._state = State.ALIGNING
         self._publish_state()
 
-        # 1) halt policy publishing /master/joint_* + finalize inference ep
+        # 1) halt policy publishing /master/joint_* + finalize inference ep.
+        # terminal="intervention": this rollout FAILED (operator took over) →
+        # success=False + intervention_frame_index recorded for RECAP/IWR.
         self.get_logger().info("[TAKEOVER] 1/4 halt policy + close inference episode")
         self.pub_execute.publish(Bool(data=False))
         time.sleep(0.5)
-        self._close_inference_episode()
+        # New takeover id pairs the inference segment we're about to close
+        # (ends_takeover_id) with the dagger correction recorded next (takeover_id).
+        with self._lock:
+            self._takeover_id += 1
+            self._cur_takeover_id = self._takeover_id
+        self._close_inference_episode(terminal="intervention")
 
         # 2) validate slave pose
         with self._lock:
@@ -797,10 +831,15 @@ class DaggerRecorder(Node):
 
         try:
             writer.finalize()
+            # Alignment: this correction pairs with the inference segment cut by
+            # the same takeover (matching takeover_id / ends_takeover_id) and
+            # belongs to the same fold (rollout_id).
             write_episode_meta(
                 writer, duration, success=True,
                 note=f"dagger correction ({wrote} frames @ {FPS} Hz)",
                 scene_tags=[],
+                extra={"intervention": 1, "rollout_id": self._rollout_id,
+                       "takeover_id": self._cur_takeover_id},
             )
             update_info_json(self._task, self._subset)
             self.get_logger().info(
@@ -857,7 +896,21 @@ class DaggerRecorder(Node):
             f"  inference ep={ep} → {writer.root}"
         )
 
-    def _close_inference_episode(self) -> None:
+    def _close_inference_episode(self, terminal: str = "session_end") -> None:
+        """Finalize the current inference (policy-rollout) episode.
+
+        terminal cause drives the success label — CRITICAL for the RECAP /
+        advantage pipeline that consumes inference/ (the whole reason Form C
+        records it). A rollout cut by a human takeover is a FAILED rollout (the
+        operator intervened *because* the policy was failing): never claim a
+        success we cannot verify.
+          - "intervention" → success=False; the tail is the failure region that
+            led to rescue. Record intervention_frame_index so the advantage
+            estimator / IWR can locate / down-weight it.
+          - "session_end"  → success=False (unverified — could be mid-task).
+          - "completed"    → success=True; ONLY for an explicit success signal
+            (future auto-detector or operator confirmation), never the default.
+        """
         with self._lock:
             writer = self._inference_writer
             started_at = self._inf_started_at
@@ -877,12 +930,28 @@ class DaggerRecorder(Node):
                 self.get_logger().error(f"abort failed: {e}")
             return
 
+        if terminal == "completed":
+            success = True
+            note = f"policy rollout COMPLETED ({wrote} frames @ {FPS} Hz)"
+            extra = {"terminal": "completed", "rollout_id": self._rollout_id}
+        elif terminal == "intervention":
+            success = False
+            note = (f"policy rollout TERMINATED BY INTERVENTION @ frame {wrote} "
+                    f"(failed; {wrote} frames @ {FPS} Hz)")
+            # ends_takeover_id pairs this failed segment with the dagger correction
+            # recorded next (same takeover_id) — for RECAP/IWR credit assignment.
+            extra = {"terminal": "intervention", "intervention_frame_index": wrote,
+                     "rollout_id": self._rollout_id, "ends_takeover_id": self._cur_takeover_id}
+        else:  # session_end / unknown — not a verified success
+            success = False
+            note = f"policy rollout (session_end, success unverified; {wrote} frames @ {FPS} Hz)"
+            extra = {"terminal": "session_end", "rollout_id": self._rollout_id}
+
         try:
             writer.finalize()
             write_episode_meta(
-                writer, duration, success=True,
-                note=f"policy rollout ({wrote} frames @ {FPS} Hz)",
-                scene_tags=[],
+                writer, duration, success=success,
+                note=note, scene_tags=[], extra=extra,
             )
             update_info_json(self._task, "inference")
             self.get_logger().info(
@@ -895,6 +964,48 @@ class DaggerRecorder(Node):
                 writer.abort()
             except Exception:
                 pass
+
+    def _on_rollout_next(self, _msg) -> None:
+        """Single-button rollout boundary (toggle). Only meaningful in POLICY_RUN.
+
+        One "rollout" = one autonomous TASK ATTEMPT (a cloth fold, a pick-&-place,
+        a wipe — whatever the policy is rolling out). NOT folding-specific.
+
+        Press 1 (attempt complete): finalize the inference episode as a SUCCESS
+          (terminal="completed") and PAUSE — execute=false so the operator can
+          safely reset the scene. The policy model stays loaded/warm.
+        Press 2 (scene reset done): START the next rollout — bump rollout_id, open
+          a fresh inference episode, execute=true (the observe→execute transition
+          flushes the policy's RTC action buffer, so no stale chunk carries over).
+
+        Failures are NEVER marked here: an attempt that needed help was already cut
+        by the takeover path (terminal="intervention", success=False). So the
+        intervention-vs-success split is fully automatic — by HOW the episode
+        ended, not by an operator choice. /dagger/rollout_paused is latch-published
+        so the web UI can show which press (end vs start) comes next.
+        """
+        with self._lock:
+            cur = self._state
+            paused = self._rollout_paused
+        if cur != State.POLICY_RUN:
+            self.get_logger().warn(f"[rollout_next] ignored — state={cur.value} (only POLICY_RUN)")
+            return
+        if not paused:
+            self.get_logger().info("[rollout_next] rollout complete → finalize inference (completed) + PAUSE for scene reset")
+            self._close_inference_episode(terminal="completed")
+            self.pub_execute.publish(Bool(data=False))
+            with self._lock:
+                self._rollout_paused = True
+        else:
+            with self._lock:
+                self._rollout_paused = False
+                self._rollout_id += 1
+                rid = self._rollout_id
+            self.pub_execute.publish(Bool(data=True))  # flushes RTC on policy side
+            self.get_logger().info(f"[rollout_next] START rollout_id={rid} (execute on, new inference ep next tick)")
+        with self._lock:
+            paused_now = self._rollout_paused
+        self.pub_rollout_paused.publish(Bool(data=paused_now))
 
     # ── 30 Hz capture (Form C dual-writer dispatch) ──
     def _on_record_tick(self) -> None:
@@ -971,6 +1082,10 @@ class DaggerRecorder(Node):
             return
 
         if inf_writer is None:
+            # Paused between folds (button) — don't open a new inference ep yet.
+            with self._lock:
+                if self._rollout_paused:
+                    return
             # Lazy-open: need slave moved + RGB before opening (else empty parquet).
             with self._lock:
                 slave_ready = (any(abs(x) > 1e-4 for x in self._q_slave_left[:6]) and
@@ -1017,7 +1132,7 @@ class DaggerRecorder(Node):
             self._close_episode()
         if inf_open:
             self.get_logger().warn("shutdown during inference recording — finalizing")
-            self._close_inference_episode()
+            self._close_inference_episode(terminal="session_end")
 
 
 def main(args=None):

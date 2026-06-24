@@ -16,9 +16,8 @@
 set -eo pipefail
 
 # ── 参数解析 ──
-# Default ckpt: dagger 采集默认基线模型 (Task_A pure 200 ep pi0.5 base @ step 49999).
-# 通过 --ckpt 显式覆盖.
-DEFAULT_CHECKPOINT_DIR="/data1/DATA_IMP/checkpoints/ckpt_v0/task_a_pure200_base_pi05_step49999"
+# --ckpt is OPTIONAL: dagger infra runs enable_policy:=false; the policy ckpt is
+# selected + started from the web UI (ckpt picker), not here.
 CHECKPOINT_DIR=""
 TASK_NAME=""
 PROMPT=""
@@ -39,11 +38,11 @@ usage() {
 Usage: $0 [options]
        $0 --ckpt <checkpoint_dir> [options]
 
-Default checkpoint (used when --ckpt is omitted):
-  $DEFAULT_CHECKPOINT_DIR
+--ckpt is OPTIONAL: infra (CAN/cameras/arms/recorder/pedal) starts with
+enable_policy:=false; pick & start the policy ckpt in the web UI ckpt-picker.
 
 Options:
-  --ckpt <path>      Override default ckpt (must contain train_config.json + _CHECKPOINT_METADATA)
+  --ckpt <path>      Optional: CLI sidecar pre-validation (train_config.json + _CHECKPOINT_METADATA)
   --task <name>      Task name (Task_A/B/C); empty = infer from --ckpt
   --prompt <str>     Override prompt for tasks.jsonl
   --subset <str>     Subset under <task>/ (default: dagger)
@@ -79,31 +78,33 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-if [[ -z "$CHECKPOINT_DIR" ]]; then
-    CHECKPOINT_DIR="$DEFAULT_CHECKPOINT_DIR"
-    echo "[info] --ckpt omitted, using default: $CHECKPOINT_DIR" >&2
-fi
-[[ ! -d "$CHECKPOINT_DIR" ]] && { echo "[FAIL] ckpt dir not found: $CHECKPOINT_DIR" >&2; exit 1; }
-
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-# ── Sidecar validation + env setup (mirrors start_autonomy_from_ckpt.sh exactly) ──
-SIDECAR="$CHECKPOINT_DIR/train_config.json"
-[[ ! -f "$SIDECAR" ]] && {
-    echo "[FAIL] $SIDECAR not found." >&2
-    echo "       Use train_scripts/data/pack_inference_ckpt.py to produce it." >&2
-    exit 1
-}
-[[ ! -f "$CHECKPOINT_DIR/_CHECKPOINT_METADATA" ]] && {
-    echo "[FAIL] $CHECKPOINT_DIR/_CHECKPOINT_METADATA missing — invalid ckpt dir." >&2
-    exit 1
-}
-
-# CRITICAL: openpi reads OPENPI_EXTRA_CONFIG at policy load to pick up
-# override_asset_id + per-experiment overrides (norm_stats path, etc.).
-# Without this env var, policy uses base-config defaults → different actions.
-export OPENPI_EXTRA_CONFIG="$SIDECAR"
+# --ckpt is OPTIONAL: the dagger INFRA launches with enable_policy:=false (CAN +
+# cameras + arms + recorder + pedal only). The policy ckpt is NOT loaded here —
+# you select it in the web UI ckpt-picker, which starts the policy session
+# (start_dagger_session.sh) separately. Pass --ckpt only if you want CLI sidecar
+# pre-validation; omitted = pure infra-only mode.
+SIDECAR=""
+if [[ -n "$CHECKPOINT_DIR" ]]; then
+    [[ ! -d "$CHECKPOINT_DIR" ]] && { echo "[FAIL] --ckpt dir not found: $CHECKPOINT_DIR" >&2; exit 1; }
+    SIDECAR="$CHECKPOINT_DIR/train_config.json"
+    [[ ! -f "$SIDECAR" ]] && {
+        echo "[FAIL] $SIDECAR not found." >&2
+        echo "       Use train_scripts/data/pack_inference_ckpt.py to produce it." >&2
+        exit 1
+    }
+    [[ ! -f "$CHECKPOINT_DIR/_CHECKPOINT_METADATA" ]] && {
+        echo "[FAIL] $CHECKPOINT_DIR/_CHECKPOINT_METADATA missing — invalid ckpt dir." >&2
+        exit 1
+    }
+    # openpi reads OPENPI_EXTRA_CONFIG at policy load for override_asset_id etc.
+    export OPENPI_EXTRA_CONFIG="$SIDECAR"
+else
+    echo "[info] no --ckpt: infra-only mode (CAN/cameras/arms/recorder/pedal)." >&2
+    echo "       Select & start the policy ckpt in the web UI (ckpt picker)." >&2
+fi
 
 # V3 collection (2026-06-15): inherited by dagger_recorder_node via env.
 #   KAI0_FRONT_TRIM=1          online leading-idle trim in EpisodeWriter (keeps
@@ -168,16 +169,18 @@ if [[ "${KAI0_CPU_PIN:-1}" == "1" ]]; then
     )
 fi
 
-if [[ -z "$CONFIG_NAME" ]]; then
-    CONFIG_NAME=$(/data1/miniconda3/bin/python -c \
-        "import json; print(json.load(open('$SIDECAR'))['base_config_name'])")
-fi
-ASSET_ID=$(/data1/miniconda3/bin/python -c \
-    "import json; print(json.load(open('$SIDECAR')).get('override_asset_id', ''))")
-
-if [[ -n "$ASSET_ID" ]] && [[ ! -f "$CHECKPOINT_DIR/assets/$ASSET_ID/norm_stats.json" ]]; then
-    echo "[FAIL] $CHECKPOINT_DIR/assets/$ASSET_ID/norm_stats.json missing (override_asset_id mismatch)" >&2
-    exit 1
+ASSET_ID=""
+if [[ -n "$SIDECAR" ]]; then
+    if [[ -z "$CONFIG_NAME" ]]; then
+        CONFIG_NAME=$(/data1/miniconda3/bin/python -c \
+            "import json; print(json.load(open('$SIDECAR'))['base_config_name'])")
+    fi
+    ASSET_ID=$(/data1/miniconda3/bin/python -c \
+        "import json; print(json.load(open('$SIDECAR')).get('override_asset_id', ''))")
+    if [[ -n "$ASSET_ID" ]] && [[ ! -f "$CHECKPOINT_DIR/assets/$ASSET_ID/norm_stats.json" ]]; then
+        echo "[FAIL] $CHECKPOINT_DIR/assets/$ASSET_ID/norm_stats.json missing (override_asset_id mismatch)" >&2
+        exit 1
+    fi
 fi
 
 # Deploy-time gripper frame remap (old 100mm-range ckpt → real 0–70mm robot).
@@ -276,10 +279,14 @@ AUTONOMY_SH="$SCRIPT_DIR/kai/start_autonomy.sh"
 
 # TUNE_ARGS (head-depth + cpu-affinity) land before EXTRA_ARGS so an explicit
 # user override on the CLI still wins (ros2 launch: last key:=value wins).
+# config_name/checkpoint_dir only matter to the policy node (enable_policy:=false
+# here → unused by infra). Pass them only when a ckpt was given on the CLI.
+CKPT_ARGS=()
+[[ -n "$CHECKPOINT_DIR" ]] && CKPT_ARGS=("config_name:=$CONFIG_NAME" "checkpoint_dir:=$CHECKPOINT_DIR")
+
 "$AUTONOMY_SH" --dagger \
     "${RERUN_FLAG[@]}" \
-    "config_name:=$CONFIG_NAME" \
-    "checkpoint_dir:=$CHECKPOINT_DIR" \
+    "${CKPT_ARGS[@]}" \
     "${DAGGER_ARGS[@]}" \
     "${TUNE_ARGS[@]}" \
     "${EXTRA_ARGS[@]}" \
