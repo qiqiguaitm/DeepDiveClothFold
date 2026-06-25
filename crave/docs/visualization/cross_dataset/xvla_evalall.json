@@ -1,0 +1,9 @@
+{
+  "ds": "xvla",
+  "readout": "transition back1",
+  "n_eps": 168,
+  "M": 52,
+  "corr_mean": 0.9221154868275583,
+  "corr_median": 0.9244726145876476,
+  "frac_corr_ge_0.7": 1.0
+}
