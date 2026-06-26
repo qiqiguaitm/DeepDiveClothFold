@@ -2148,6 +2148,36 @@ _CONFIGS = [
         inline_eval_every=4,
     ),
 
+    # VLANeXt #12 频域 DCT loss (vlanext_dct_then_soft_connection_plan.md Step 1): 与 pi05_v4_awbc 逐字段一致,
+    # 唯一变量 = model 开 use_dct_loss=True (weight/freq 用论文默认 0.1/1.0/0.2). 压动作 chunk 高频抖动 → 更平滑.
+    # DCT loss 已端到端实现 (pi0.py + train.py), 默认关 → 此 config 是唯一启用处, 不影响任何旧 config (向后兼容).
+    TrainConfig(
+        name="pi05_v4_awbc_dct",
+        model=pi0_config.Pi0Config(pi05=True, use_dct_loss=True),  # ⭐ 唯一变量: DCT 频域 loss (默认 weight 0.1/low1.0/high0.2)
+        data=LerobotAgilexDataConfig(
+            repo_id="/vePFS/tim/workspace/deepdive_kai0/kai0/data/Task_A/self_built/A_v4_base_dagger",
+            default_prompt=None,
+            base_config=DataConfig(prompt_from_task=True),
+            use_delta_joint_actions=False,
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader(
+            "/vePFS/tim/workspace/openpi_cache/openpi-assets/checkpoints/pi05_base/params"
+        ),
+        lr_schedule=_optimizer.CosineDecaySchedule(
+            warmup_steps=1_000, peak_lr=1.5e-5, decay_steps=50_000, decay_lr=1.5e-6,
+        ),
+        ema_decay=0.9999,
+        num_train_steps=50_000,
+        keep_period=10_000,
+        save_interval=2_000,
+        num_workers=16,
+        batch_size=128,
+        fsdp_devices=8,
+        inline_eval_val_root="/vePFS/tim/workspace/deepdive_kai0/kai0/data/Task_A/self_built/vis_v2_merged_val",
+        inline_eval_n_frames=200,
+        inline_eval_every=4,
+    ),
+
     # AWBC milestone-value A臂 (awbc_milestone_value_AB_plan.md §3): V2.4 零训练 value 直接当 advantage 源.
     # clone of pi05_flatten_fold_awbc (C臂), 唯一变量 = 数据 (ds_A=dagger_all_mvA, V2.4-mv discretized
     # quantile-matched 25.2%neg). 同 warm-start / config / eval → 单变量隔离 "value 来源".
