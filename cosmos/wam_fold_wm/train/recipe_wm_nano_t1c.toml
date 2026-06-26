@@ -1,0 +1,87 @@
+# wam_fold_wm_nano — Cosmos3-Nano FORWARD-DYNAMICS world-model posttrain on wam_fold_v1.
+# World-model counterpart of wam_fold_policy/train/recipe_nano.toml; the dataloader wiring
+# (FD mode, chunk 32) lives in the experiment Python
+# (configs/base/experiment/action/posttrain_config/wam_fold_wm_nano.py).
+# Plan: docs/training/future_plans/plans/cosmos3_wam_fold_world_model_plan.md
+
+[job]
+task         = "vfm"
+experiment   = "wam_fold_wm_nano_t1c"
+project      = "cosmos3"
+group        = "action"
+name         = "wam_fold_wm_nano_t1c"
+wandb_mode   = "offline"
+
+[model]
+max_num_tokens_after_packing = 45056
+joint_attn_implementation    = "two_way"
+precision                    = "bfloat16"
+
+# EMA off — same CPU-RAM OOM rationale as the policy recipe (16B EMA copy lives on CPU).
+[model.ema]
+enabled         = false
+rate            = 0.1
+iteration_shift = 0
+
+[model.parallelism]
+data_parallel_shard_degree     = 8   # single-node 8xA100 first (local-first plan);
+data_parallel_replicate_degree = 1   # multinode later: set replicate = <num_nodes>
+
+[model.compile]
+enabled         = true
+compile_dynamic = true
+
+# AC selective+fmha is REQUIRED at 16B/45k tokens (policy run measured mode="none" OOM).
+[model.activation_checkpointing]
+mode               = "selective"
+save_ops_regex     = ["fmha"]
+preserve_rng_state = true
+determinism_check  = "default"
+
+[model.tokenizer]
+vae_path = "${oc.env:WAN_VAE_PATH}"
+
+[optimizer]
+betas          = [0.9, 0.95]
+eps            = 1.0e-8
+fused          = true
+keys_to_select = []
+# Official action recipe lr (base init + fresh action I/O modules). The 5x
+# lr_multipliers on action modules are set in the experiment Python (dict-valued,
+# stays out of TOML). Fallback if smoke loss diverges: 5e-5.
+lr             = 2.0e-4
+weight_decay   = 0
+
+# One cosine cycle must span the FULL run (see policy recipe CRASH FIX note).
+[scheduler]
+cycle_lengths      = [10000]
+f_max              = [1.0]
+f_min              = [0.0]
+f_start            = [0.0]
+verbosity_interval = 0
+warm_up_steps      = [30]
+
+[trainer]
+distributed_parallelism = "fsdp"
+grad_accum_iter         = 1
+logging_iter            = 1
+max_iter                = 300
+
+[trainer.callbacks.grad_clip]
+clip_norm    = 0.1
+force_finite = true
+
+[checkpoint]
+keys_to_skip_loading = [
+    "net_ema.",
+    "action2llm.",
+    "llm2action.",
+    "action_modality_embed",
+    "action_pos_embed.",
+]
+load_path     = "${oc.env:BASE_CKPT_DCP}"
+save_iter     = 100
+# strict_resume=false is set in the experiment Python (not a TOML schema field).
+
+# NOTE: no [dataloader_train] block — DataPackerDataLoader takes max_tokens (set in the
+# experiment Python). Override via CLI: dataloader_train.max_tokens=<N>

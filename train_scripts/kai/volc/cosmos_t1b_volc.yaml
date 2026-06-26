@@ -1,0 +1,58 @@
+# Cosmos3 AC-WM t1b (L1 + multi-frame history) on Volcano Robot-North-H20 (1×8 H20).
+# Reuses the vePFS deployment (env/model/data synced for t1c); visrobot-only.
+#
+# Submit:
+#   source /mnt/pfs/p46h4f/cosmos/deepdive_kai0/train_scripts/kai/volc/.volc_creds
+#   /mnt/pfs/p46h4f/cosmos/.venv/bin/python train_scripts/kai/volc/submit_yaml.py \
+#     train_scripts/kai/volc/cosmos_t1b_volc.yaml
+
+TaskName: "cosmos-acwm-t1b-volc"
+Description: "Cosmos3 AC-WM t1b (L1+history K2) on 8x H20, visrobot-only, vePFS venv"
+Tags: []
+
+ImageUrl: "dvs-cr-cn-beijing.cr.volces.com/vis_robot/kai:kai0-gf1"
+ResourceQueueName: "Robot-North-H20"
+Framework: "PyTorch"   # provides MLP_WORKER_0_HOST / MLP_ROLE_INDEX / MLP_WORKER_NUM
+
+TaskRoleSpecs:
+  - RoleName: "worker"
+    RoleReplicas: 1
+    Flavor: "ml.hpcpni3ln.45xlarge"   # 8x H20-SXM5-96GB + RDMA (queue only allows Preset flavors)
+
+# 闲时任务: borrow idle/other-queue capacity to dodge the in-queue 8-GPU fragmentation.
+# t1b is fault-tolerant (self-healing loop + save_iter=250) so preemption just resumes.
+Preemptible: true
+
+ActiveDeadlineSeconds: 86400   # 24h
+
+Storages:
+  - Type: "Vepfs"
+    VepfsId: "vepfs-cnbj875793a96d6b"
+    SubPath: "vis_robot"
+    MountPath: "/vePFS-North-E/vis_robot"
+
+CacheType: "Cloudfs"
+
+Envs:
+  - Name: HF_HUB_OFFLINE
+    Value: "1"
+    IsPrivate: false
+  - Name: TRANSFORMERS_OFFLINE
+    Value: "1"
+    IsPrivate: false
+  - Name: TOKENIZERS_PARALLELISM
+    Value: "false"
+    IsPrivate: false
+  - Name: NCCL_DEBUG
+    Value: "WARN"
+    IsPrivate: false
+
+Entrypoint: |
+  STAMP=$(date -u +%Y%m%d_%H%M%S)
+  mkdir -p /vePFS-North-E/vis_robot/logs
+  LOG=/vePFS-North-E/vis_robot/logs/cosmos_t1b_volc_${STAMP}_node${MLP_ROLE_INDEX:-0}.log
+  exec >> "$LOG" 2>&1
+  echo "=== t1b-volc entrypoint start $(date) node=${MLP_ROLE_INDEX:-0}/${MLP_WORKER_NUM:-1} ==="
+  nvidia-smi -L
+  bash /vePFS-North-E/vis_robot/workspace/tim/run_t1b_volc.sh
+  echo "=== t1b-volc entrypoint end $(date) ==="

@@ -1,0 +1,62 @@
+# Cosmos3 AC-WM t1b on Volcano Robot-North-H20 — 4-GPU FlexibleResourceClaim variant.
+# The whole-node 8-GPU Preset request queued forever on a FRAGMENTED queue (28/56 H20 free
+# but no node had 8 contiguous-free). A 4-GPU flexible claim fits a half-used node so it runs
+# now (guaranteed, not preemptible). Reuses the vePFS deployment; visrobot-only.
+#
+# Submit (from gf3, kai0 venv has the volc SDK):
+#   source .volc_creds
+#   <kai0venv>/bin/python3 submit_yaml.py cosmos_t1b_volc_4gpu.yaml
+
+TaskName: "cosmos-acwm-t1b-volc-4g"
+Description: "Cosmos3 AC-WM t1b (L1+history K2) 4x H20 flexible, visrobot-only, vePFS venv"
+Tags: []
+
+ImageUrl: "dvs-cr-cn-beijing.cr.volces.com/vis_robot/kai:kai0-gf1"
+ResourceQueueName: "Robot-North-H20"
+Framework: "PyTorch"
+
+TaskRoleSpecs:
+  - RoleName: "worker"
+    RoleReplicas: 1
+    FlexibleResourceClaim:
+      GpuCount: 4
+      GpuType: "NVIDIA-H20-SXM5-96GB"
+      Cpu: 90
+      MemoryGiB: 900
+
+ActiveDeadlineSeconds: 86400
+
+Storages:
+  - Type: "Vepfs"
+    VepfsId: "vepfs-cnbj875793a96d6b"
+    SubPath: "vis_robot"
+    MountPath: "/vePFS-North-E/vis_robot"
+
+CacheType: "Cloudfs"
+
+Envs:
+  - Name: HF_HUB_OFFLINE
+    Value: "1"
+    IsPrivate: false
+  - Name: TRANSFORMERS_OFFLINE
+    Value: "1"
+    IsPrivate: false
+  - Name: TOKENIZERS_PARALLELISM
+    Value: "false"
+    IsPrivate: false
+  - Name: NCCL_DEBUG
+    Value: "WARN"
+    IsPrivate: false
+  - Name: GPUS
+    Value: "4"
+    IsPrivate: false
+
+Entrypoint: |
+  STAMP=$(date -u +%Y%m%d_%H%M%S)
+  mkdir -p /vePFS-North-E/vis_robot/logs
+  LOG=/vePFS-North-E/vis_robot/logs/cosmos_t1b_volc_${STAMP}_node${MLP_ROLE_INDEX:-0}.log
+  exec >> "$LOG" 2>&1
+  echo "=== t1b-volc-4g entrypoint start $(date) node=${MLP_ROLE_INDEX:-0}/${MLP_WORKER_NUM:-1} GPUS=${GPUS} ==="
+  nvidia-smi -L
+  GPUS=${GPUS:-4} bash /vePFS-North-E/vis_robot/workspace/tim/run_t1b_volc.sh
+  echo "=== t1b-volc-4g entrypoint end $(date) ==="
