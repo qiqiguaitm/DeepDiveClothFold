@@ -6,6 +6,18 @@ import os
 import typing
 from typing import Literal, Protocol, SupportsIndex, TypeVar
 
+# Monkey-patch huggingface_hub BEFORE lerobot imports it:
+# Newer huggingface_hub (>=0.30) strictly validates repo_id against the HF API
+# even for local paths, which crashes in offline containers (no network).
+# This patch skips the network call for paths starting with "/" or "local/".
+import huggingface_hub
+_orig_list_repo_refs = huggingface_hub.HfApi.list_repo_refs
+def _patched_list_repo_refs(self, repo_id: str, **kwargs):
+    if isinstance(repo_id, str) and repo_id.startswith(("/", "local/")):
+        return []
+    return _orig_list_repo_refs(self, repo_id, **kwargs)
+huggingface_hub.HfApi.list_repo_refs = _patched_list_repo_refs
+
 import jax
 import jax.numpy as jnp
 import lerobot.common.datasets.lerobot_dataset as lerobot_dataset
