@@ -9,21 +9,28 @@ from typing import Literal, Protocol, SupportsIndex, TypeVar
 # Monkey-patch huggingface_hub BEFORE lerobot imports it:
 # Newer huggingface_hub (>=0.30) strictly validates repo_id against the HF API
 # even for local paths, which crashes in offline containers (no network).
-# This patch skips the network call for paths starting with "/" or "local/".
-# lerobot expects list_repo_refs to return an object with .branches and .tags
-# (see lerobot/common/datasets/utils.py:309-310).
+# This patch fakes a local GitRefs for paths starting with "/" or "local/",
+# including a version tag so lerobot's codebase_version check passes
+# (lerobot/common/datasets/utils.py:330 raises RevisionNotFoundError if no
+# versioned tags/branches exist).
 import dataclasses
 import huggingface_hub
 
 @dataclasses.dataclass
-class _EmptyGitRefs:
-    branches: list = dataclasses.field(default_factory=list)
-    tags: list = dataclasses.field(default_factory=list)
+class _MockRefName:
+    name: str
+
+@dataclasses.dataclass
+class _LocalGitRefs:
+    branches: list
+    tags: list
 
 _orig_list_repo_refs = huggingface_hub.HfApi.list_repo_refs
 def _patched_list_repo_refs(self, repo_id: str, **kwargs):
     if isinstance(repo_id, str) and repo_id.startswith(("/", "local/")):
-        return _EmptyGitRefs()
+        # Return a mock branch with the standard lerobot v2.1 codebase version.
+        # This satisfies the version tag check in get_repo_versions().
+        return _LocalGitRefs(branches=[_MockRefName("v2.1")], tags=[])
     return _orig_list_repo_refs(self, repo_id, **kwargs)
 huggingface_hub.HfApi.list_repo_refs = _patched_list_repo_refs
 
