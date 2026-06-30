@@ -2,8 +2,8 @@
   "ds": "coffee",
   "readout": "transition back1",
   "n_eps": 50,
-  "M": 24,
-  "corr_mean": 0.9909971408379876,
-  "corr_median": 0.9949824216726597,
+  "M": 26,
+  "corr_mean": 0.9912763108178604,
+  "corr_median": 0.9960465085324688,
   "frac_corr_ge_0.7": 1.0
 }
