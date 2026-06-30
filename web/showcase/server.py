@@ -45,6 +45,11 @@ _reports_dir = _web_dir / "reports"
 if _reports_dir.is_dir():
     app.mount("/reports", StaticFiles(directory=str(_reports_dir), html=True), name="reports")
 
+# ── Content pages (self-contained HTML with embedded images) ──
+_content_pages = _web_dir / "content"
+if _content_pages.is_dir():
+    app.mount("/content", StaticFiles(directory=str(_content_pages), html=True), name="content_pages")
+
 
 @app.get("/", response_class=HTMLResponse)
 async def index():
@@ -160,7 +165,7 @@ async def get_readme(lang: str = "zh"):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=int, default=int(os.environ.get("SHOWCASE_PORT", 8765)))
-    parser.add_argument("--host", default=os.environ.get("SHOWCASE_HOST", "0.0.0.0"))
+    parser.add_argument("--host", default=os.environ.get("SHOWCASE_HOST", "127.0.0.1"))
     parser.add_argument("--reload", action="store_true", help="dev: auto-reload on edit")
     args = parser.parse_args()
 

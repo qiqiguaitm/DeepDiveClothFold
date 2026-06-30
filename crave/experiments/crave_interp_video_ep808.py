@@ -24,7 +24,11 @@ CLS = {1: ("POS", "上升段 POSITIVE", (0.3, 0.85, 0.3)), 0: ("NORMAL", "平台
 z = np.load(OUT / "_cache.npz")
 cv_, ae_v, ccls, acls, nm30, Pord, n = z["cv"], z["ae_v"], z["ccls"].astype(int), z["acls"].astype(int), z["nm30"].astype(int), z["Pord"], int(z["n"])
 HAVE_AE = bool(int(z["have_ae"])) if "have_ae" in z else True   # kai0_base 等无 KAI0-AE 标注 → 仅 CRAVE
-proto_imgs = np.load(OUT / "_proto_imgs.npy"); proto_meta = np.load(OUT / "_proto_meta.npy")
+_DECP = OUT / "_proto_decoded.npy"
+_USE_DEC = os.environ.get("INTERP_DECODE_PROTO", "0") == "1" and _DECP.exists()
+proto_imgs = np.load(_DECP) if _USE_DEC else np.load(OUT / "_proto_imgs.npy")
+proto_meta = np.load(OUT / "_proto_meta.npy")
+print(f"[proto] using {'DECODED centroid' if _USE_DEC else 'nearest-frame'} representation", flush=True)
 fc = {c: float((ccls == c).mean()) for c in (1, 0, -1)}; fa = {c: float((acls == c).mean()) for c in (1, 0, -1)} if HAVE_AE else {1: 0, 0: 0, -1: 0}
 
 
@@ -76,10 +80,11 @@ plt.close(PFIG)
 def proto_card(k):
     img = proto_imgs[k]; pid, prog, pe = int(proto_meta[k][0]), proto_meta[k][1], int(proto_meta[k][2])
     f = plt.figure(figsize=(3.4, 6.2), dpi=100); a = f.add_axes([0.04, 0.30, 0.92, 0.46]); a.imshow(img); a.axis("off")
-    f.text(0.5, 0.96, "当前 value 对应的\n典型簇(milestone)", ha="center", va="top", fontsize=12, color="#222")
+    _rep = "簇中心解码图\n(milestone)" if _USE_DEC else "典型簇(milestone)"
+    f.text(0.5, 0.96, f"当前 value 对应的\n{_rep}", ha="center", va="top", fontsize=12, color="#222")
     f.text(0.5, 0.25, f"典型簇 #{pid}", ha="center", fontsize=15, color="#3b6fb0", fontweight="bold")
     f.text(0.5, 0.17, f"挖掘进度 = {prog:.2f}", ha="center", fontsize=13, color="#1a9641")
-    f.text(0.5, 0.09, f"= CRAVE value\n(原型来自 demo ep{pe})", ha="center", fontsize=10, color="#555")
+    f.text(0.5, 0.09, (f"= CRAVE value\n(簇中心 grid 平均→解码)" if _USE_DEC else f"= CRAVE value\n(原型来自 demo ep{pe})"), ha="center", fontsize=10, color="#555")
     f.patch.set_facecolor("#f5f5f5"); f.canvas.draw()
     im = np.asarray(f.canvas.buffer_rgba())[..., :3].copy(); plt.close(f); return im
 proto_cards = [proto_card(k) for k in range(len(proto_imgs))]

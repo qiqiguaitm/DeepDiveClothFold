@@ -140,3 +140,9 @@ ctrl_wm/**/*.mp4
 ctrl_wm/**/*.npy
 # official X-VLA folding ckpt (HF download, 3.3G model.safetensors) — keep on vePFS, never in git
 xvla/official_folding_ckpt/
+
+# ===== VLANEXT (外部 VLA, github.com/DravenALG/VLANeXt) =====
+#   VLANEXT 现为独立嵌套 git 仓(自带 .git, origin=github;官方代码 + 我们的 kai0 集成)。
+#   父仓整体忽略,避免把嵌套仓当 submodule/embedded repo 误纳入。
+#   其内部大产物(data/ckpt/权重)由 VLANEXT/.git/info/exclude 本地忽略。
+/VLANEXT/

@@ -47,6 +47,23 @@ def conf_hold(ms, base, tau_lo, tau_hi, thresh=0.5):
     return held
 
 
+def _smooth_block(B, k):
+    """temporal moving-average over k frames within one episode (edge-padded; preserves length)."""
+    if k <= 1 or len(B) <= 1: return B
+    pad = np.pad(B, ((k - 1 - (k - 1) // 2, (k - 1) // 2), (0, 0)), mode="edge")
+    cs = np.concatenate([np.zeros((1, B.shape[1]), B.dtype), np.cumsum(pad, 0)])
+    return ((cs[k:] - cs[:-k]) / k).astype(B.dtype)
+
+
+def temporal_smooth(F, E, k):
+    """smooth features per-episode (cut noise-driven cluster flips; XVLA emission is highly ambiguous)."""
+    if k <= 1: return F
+    out = F.copy()
+    for e in np.unique(E):
+        idx = np.where(E == e)[0]; out[idx] = _smooth_block(F[idx], k)
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser(); ap.add_argument("--ds", default="coffee"); ap.add_argument("--encoder", default="dinov3-h")
     ap.add_argument("--back-barrier", type=float, default=1.0); ap.add_argument("--beta", type=float, default=0.4); ap.add_argument("--lam-geo", type=float, default=1.0)
@@ -55,6 +72,8 @@ def main():
     ap.add_argument("--conf-lo", type=float, default=50.0); ap.add_argument("--conf-hi", type=float, default=82.0); ap.add_argument("--hold-thresh", type=float, default=0.5)   # confidence hold percentiles (conf-hi<=0 disables)
     ap.add_argument("--video-ep", type=int, default=-1); ap.add_argument("--video-corr", type=float, default=0.9)   # video episode: forced id, else longest with corr>=video_corr
     ap.add_argument("--native-fps", type=float, default=0.0)   # 0 = auto (coffee 50Hz, xvla 30Hz) — cluster AND value-output at native rate
+    ap.add_argument("--proprio-weight", type=float, default=0.2)   # weight on the 28d proprio block in F=[vis ⊕ w·prop]; 1.0=equal(proprio dominates XVLA), 0.2=vision-primary
+    ap.add_argument("--feat-smooth", type=int, default=9)   # temporal moving-average window (frames) on features → cut noise-driven cluster flips (XVLA value 突变)
     ap.add_argument("--max-gap", type=float, default=0.12)   # uniformity-aware milestone selection: cap value gaps (0 = stock build_milestones)
     ap.add_argument("--decode-workers", type=int, default=24)   # parallel video-decode threads (56 cores avail)
     ap.add_argument("--enc-bs", type=int, default=448)   # DINOv3 encode batch (128 default → 4GB/80GB; 448 ≈ 14GB)
@@ -100,7 +119,9 @@ def main():
         EPID.append(np.full(n, e)); TPOS.append(np.arange(n) / max(1, n - 1)); THUMB += th; eplen[e] = n
     img = np.concatenate(POOL); Pm = np.concatenate(STATE); E = np.concatenate(EPID); Tv = np.concatenate(TPOS); THUMB = np.stack(THUMB)
     PMU, PSD = Pm.mean(0), Pm.std(0) + 1e-8
-    F = np.concatenate([img, L2((Pm - PMU) / PSD)], 1); ne = len(eps)
+    F = np.concatenate([img, a.proprio_weight * L2((Pm - PMU) / PSD)], 1); ne = len(eps)   # proprio down-weighted → vision-primary assignment (fixes XVLA proprio-driven mis-match)
+    F = temporal_smooth(F, E, a.feat_smooth)   # temporal smoothing → fewer noise-driven flips (XVLA emission margin tiny)
+    if a.feat_smooth > 1: print(f"[{a.ds}] temporal feature smoothing: window={a.feat_smooth} frames", flush=True)
     if a.max_gap > 0:   # uniformity-aware selection: cap milestone value gaps (fills coffee's v=0.56→0.94 void)
         cen, lab, order, Pord, M, nf = build_milestones_uniform(F, E, Tv, ne, max_gap=a.max_gap)
         print(f"[{a.ds}] uniform milestone selection: M={M} (+{nf} gap-filled, max_gap={a.max_gap})", flush=True)
@@ -191,8 +212,9 @@ def main():
         e = max(good or list(eplen), key=lambda k: eplen[k])
     print(f"[{a.ds}] video ep {e} ({eplen[e]} stride-frames, corr={ep_corr.get(e, float('nan')):.2f}); native readout+video...", flush=True)
     f224, staten, fpsd = load_ep_native(cfg, e)
-    Fq = np.concatenate([L2(enc.encode_pooled(f224)), L2((mkp_gap(staten, cfg.stride) - PMU) / PSD)], 1)
-    ms = viterbi_pen(emit_of(Fq, C, sk, Pord, a.gamma, a.margin), pen)   # emission-primary light prior + progress prior (no fps over-scaling; keeps jumps, kills drop-to-0)
+    Fq = np.concatenate([L2(enc.encode_pooled(f224, bs=a.enc_bs)), a.proprio_weight * L2((mkp_gap(staten, cfg.stride) - PMU) / PSD)], 1)
+    Fq = _smooth_block(Fq, a.feat_smooth)   # same proprio-weight + temporal smoothing as clustering F
+    ms = ms_of(Fq)   # full readout (progress prior + far-ahead cap + confidence hold), consistent with validation
     mw = max(5, int(round(5 * fpsd / 3))) | 1
     v = smooth_monotone(med(Pord[ms], mw), fps=fpsd); n = len(v)
     H = 360; CW = int(round(f224[0].shape[1] / f224[0].shape[0] * H)); PW, CardW = 540, 300; L, Rr, Tt, B = 56, 16, 16, 38

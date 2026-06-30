@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head><meta charset="UTF-8"><title>§4.2 用「簇平均 value」表示 milestone 进度</title>
+<style>
+body { font-family: 'Segoe UI', 'Noto Sans SC', sans-serif; max-width: 1000px; margin: 0 auto; padding: 20px; background: #f9f9fb; color: #222; }
+img { max-width: 100%; margin: 20px 0; border: 1px solid #ddd; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,.08); }
+h2 { color: #1a1a2e; border-left: 4px solid #4361ee; padding-left: 12px; }
+h3 { color: #333; }
+.caption { font-size: 14px; color: #555; margin-top: -12px; margin-bottom: 24px; line-height: 1.6; }
+.highlight { background: #fffbe6; padding: 2px 6px; border-radius: 3px; }
+.note { background: #eef5ff; border-left: 4px solid #4361ee; padding: 12px 16px; margin: 20px 0; border-radius: 4px; font-size: 14px; }
+ul { line-height: 1.8; }
+</style></head>
+<body>
+
+<h2>§4.2 为什么用「簇平均 value」当 milestone 进度</h2>
+
+<p>CRAVE 将每个簇的 <span class="highlight">平均 value(任务进度)</span> 作为该簇代表 milestone 的进度值 (Pord),
+而不是取单帧或质心距离。理由在于聚类后,<strong>簇内帧的 value 高度一致</strong>:
+簇平均 value 能忠实代表该簇绝大多数帧的真实进度。</p>
+
+<h3>图A: 置信度过滤的特征空间</h3>
+<link rel="preload" as="image" href="img/value_consistency_proof_v2.png"><img src="img/value_consistency_proof_v2.png" alt="value consistency proof">
+<div class="caption">
+<strong>图 A</strong> — DINOv3-H 1280 维特征聚 K=10 簇 → <strong>置信度过滤(CQ=0.85)</strong>:
+仅保留每簇离质心最近的 85% 帧(高置信),排除离群帧对降维布局的干扰;
+仅这 4247 帧训练 t-SNE,灰色低置信帧被动投影。
+每簇一色,簇间互不交织,展示特征空间被进度有序组织。
+</div>
+
+<h3>图B: 簇平均 value 一致性</h3>
+<div class="caption">
+<strong>图 B</strong> — K=160 密聚类后,横轴为每帧自身的 GT 进度 value,
+纵轴为该帧所在簇的均值。核心观察:
+<ul>
+  <li><strong>紫色点(相干簇, std&lt;中位)</strong>:紧贴 y=x 对角线,证明簇均值忠实代表帧;</li>
+  <li><strong>灰色点(松散簇, std≥中位)</strong>:偏离对角线,反映"视觉复现态"(同一外观在不同进度出现),这正是后续 Viterbi-DP 要解决的问题;</li>
+  <li>相干簇 R²=0.84, 簇内 value std 中位仅 0.09 → <strong>簇平均 value 可作为 milestone 的可靠进度近似</strong>。</li>
+</ul>
+</div>
+
+<div class="note">
+<strong>结论:</strong> CRAVE 用「簇平均 value」作为 milestone 的 Pord(进度排序),
+既利用了聚类压缩(160→80 簇),又保留了进度的定量连续性。
+少数松散复现态(跨进度重复出现的外观)不参与 milestone 赋值,
+交给 Viterbi 在读出阶段通过转移先验处理。
+</div>
+
+</body>
+</html>

@@ -301,6 +301,28 @@ for k in range(NM):
     proto.append((k, float(Pord[k]), e, fj, img))
 print(f"原型帧 {len(proto)} 个已取", flush=True)
 
+# ===== 簇中心解码图(INTERP_DECODE_PROTO=1): 每 milestone 取簇内 top-24 近邻 → large grid 平均(=簇中心)→ small 解码器解码 =====
+if os.environ.get("INTERP_DECODE_PROTO", "0") == "1":
+    from crave.encoders import load_encoder
+    from crave.decoding import train_dec
+    print("簇中心解码: 编码成员 grid + 训 small 解码器 ...", flush=True)
+    _enc = load_encoder("dinov2-large", dtype="fp32"); _NS = 24; _samp = []; _rng = []
+    for k in range(NM):
+        loc = np.where(lab == order[k])[0]
+        if len(loc) == 0:
+            _rng.append((len(_samp), len(_samp))); continue
+        d_ = np.linalg.norm(G[loc] - C[k], axis=1); loc = loc[np.argsort(d_)[:_NS]]; s0 = len(_samp)
+        for gi in loc:
+            _samp.append(cv2.resize(grab(int(E[gi]), int(FI[gi]) * STRIDE), (224, 224)))
+        _rng.append((s0, len(_samp)))
+    _grids = _enc.encode_grid(list(_samp)); _img128 = np.stack([cv2.resize(s, (128, 128)) for s in _samp])
+    _decf = train_dec(_grids, _img128, 1024, "small", 55); _dec = []
+    for k in range(NM):
+        s0, e0 = _rng[k]
+        _dec.append(cv2.resize(_decf(_grids[s0:e0].mean(0)[None])[0], (240, 180)) if e0 > s0 else np.zeros((180, 240, 3), np.uint8))
+    np.save(OUT / "_proto_decoded.npy", np.array(_dec))
+    print(f"SAVED _proto_decoded.npy ({NM} 簇中心解码图)", flush=True)
+
 # 画廊
 ncol = 5; nrow = int(np.ceil(NM / ncol))
 figg, axg = plt.subplots(nrow, ncol, figsize=(ncol * 2.6, nrow * 2.95), constrained_layout=True)
@@ -431,7 +453,7 @@ from collections import defaultdict
 bycl = defaultdict(list)
 for ck, vs, ve in clr: bycl[ck].append((vs, ve))
 _md = [f"# ep{EP} 簇-帧对应(按簇归类)\n",
-       f"ep{EP} 经过 {ncl} 段(nm30,与视频/`cluster_timeline.png` 一致),访问 {len(bycl)} 个不同 milestone 簇。",
+       f"ep{EP} 经过 {len(clr)} 段(nm30,与视频/`cluster_timeline.png` 一致),访问 {len(bycl)} 个不同 milestone 簇。",
        f"同一簇可能对应**多段帧**(状态在该 milestone 反复出现)。\n",
        f"| 典型簇 | 进度 Pord | ep{EP} 命中帧段(可多段) | 总帧 |", "|---|---|---|---|"]
 for ck in sorted(bycl, key=lambda k: Pord[k]):

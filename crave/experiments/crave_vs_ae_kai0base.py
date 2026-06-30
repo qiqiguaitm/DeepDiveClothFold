@@ -53,14 +53,16 @@ crave = smooth_monotone(crave, fps=30.0)  # 连续读出(标准 smooth_monotone)
 
 dQ = pd.read_parquet(Q5 / "data" / f"chunk-{TEST//csQ:03d}" / f"episode_{TEST:06d}.parquet")
 ae = dQ["absolute_value"].to_numpy().astype(float)
-NF = min(NF, len(ae)); crave = crave[:NF]; ae = ae[:NF]
+ra = dQ["relative_advantage"].to_numpy().astype(float)   # AE 模型直接输出的相对 value(advantage 头),P/N 评价用它
+NF = min(NF, len(ae)); crave = crave[:NF]; ae = ae[:NF]; ra = ra[:NF]
 
 
 def adv(v, w=W):
     return np.clip(advantage(v, w), -1, 1)
 
 
-crave_adv = adv(crave); ae_adv = adv(ae)
+# AE 的 P/N 用模型直出的 relative_advantage(正确);CRAVE 无相对头,只能由其 value 差分派生
+crave_adv = adv(crave); ae_adv = np.clip(ra, -1, 1)
 np.savez(REPO / "temp/_crave_ae_kai0base.npz", crave=crave, ae=ae, crave_adv=crave_adv, ae_adv=ae_adv, fps=30.0)
 x = np.arange(NF)
 r_shape = pearsonr(crave, ae)[0]; tau_shape = kendalltau(crave, ae)[0]
@@ -88,12 +90,12 @@ axv.set_ylabel("value"); axv.set_xlim(0, NF); axv.grid(alpha=.25); axv.legend(fo
 axv.set_title(f"kai0_base ep{TEST} ({NF}f≈{NF/30:.0f}s): 等价对比(同域 base+dagger 挖矿, AE 同域训练)", fontsize=10.5)
 axe = fig.add_subplot(gs[0, 3]); axe.imshow(last); axe.axis("off"); axe.set_title("末帧(任务终态)", fontsize=9)
 axa = fig.add_subplot(gs[1, :3], sharex=axv)
-axa.plot(x, crave_adv, color="#2ca02c", lw=1.4, label=f"CRAVE adv (neg {np.mean(crave_adv<0)*100:.0f}%)")
-axa.plot(x, ae_adv, color="#d62728", lw=1.2, alpha=.8, label=f"AE adv (neg {np.mean(ae_adv<0)*100:.0f}%)")
+axa.plot(x, crave_adv, color="#2ca02c", lw=1.4, label=f"CRAVE adv = Δvalue 派生 (neg {np.mean(crave_adv<0)*100:.0f}%)")
+axa.plot(x, ae_adv, color="#d62728", lw=1.2, alpha=.8, label=f"AE relative_advantage 直出 (neg {np.mean(ae_adv<0)*100:.0f}%)")
 axa.axhline(0, color="k", lw=.7); axa.fill_between(x, 0, crave_adv, where=crave_adv < 0, color="#2ca02c", alpha=.15)
 axa.fill_between(x, 0, ae_adv, where=ae_adv < 0, color="#d62728", alpha=.12)
-axa.set_ylabel(f"advantage (n vs n+{W})"); axa.set_xlabel("frame"); axa.set_xlim(0, NF); axa.grid(alpha=.25); axa.legend(fontsize=9, loc="lower left")
-axa.set_title("advantage 对比", fontsize=10)
+axa.set_ylabel("advantage / relative value"); axa.set_xlabel("frame"); axa.set_xlim(0, NF); axa.grid(alpha=.25); axa.legend(fontsize=9, loc="lower left")
+axa.set_title("P/N(退步)评价:AE 用模型直出 relative_advantage,CRAVE 用 Δvalue(无相对头)", fontsize=9.5)
 axn = fig.add_subplot(gs[2, :2])
 axn.plot(x, norm01(crave), color="#2ca02c", lw=1.8, label="CRAVE (min-max)")
 axn.plot(x, norm01(ae), color="#d62728", lw=1.4, alpha=.8, label="AE (min-max)")
@@ -105,7 +107,7 @@ txt = (f"【等价对比 · kai0_base ep{TEST} · 同域同数据】\n\n"
        f"  CRAVE(零训练, base+dagger 挖矿): end {crave[-1]:.2f}  单调 {np.mean(np.diff(crave)>=-1e-6)*100:.0f}%\n"
        f"  pi0-AE(监督, kai0 训练):        end {ae[-1]:.2f}  max {ae.max():.2f}  单调 {np.mean(np.diff(ae)>=-1e-6)*100:.0f}%\n\n"
        f"  形状相关 Pearson {r_shape:.2f} / τ {tau_shape:.2f}\n"
-       f"  退步(adv<0)占比: CRAVE {np.mean(crave_adv<0)*100:.0f}% vs AE {np.mean(ae_adv<0)*100:.0f}%\n\n"
+       f"  退步占比: CRAVE(Δvalue) {np.mean(crave_adv<0)*100:.0f}% vs AE(relative_advantage 直出) {np.mean(ae_adv<0)*100:.0f}%\n\n"
        "公平设定: AE 同域(kai0 base+dagger)训练, CRAVE 同域同数据\n"
        "重新挖矿; 测试取 kai0_base 长 episode。此为 in-distribution\n"
        "样本(AE 主场), 看两者在公平条件下的一致性与差异。")
