@@ -28,10 +28,6 @@ Storages:
 CacheType: "Cloudfs"
 
 Envs:
-  - Name: HF_HUB_OFFLINE
-    Value: "1"
-  - Name: TRANSFORMERS_OFFLINE
-    Value: "1"
   - Name: TOKENIZERS_PARALLELISM
     Value: "false"
   - Name: NCCL_DEBUG
