@@ -66,6 +66,7 @@ def load_graph_policy_data(
     device: torch.device,
     include_proto: bool,
     label_source: str = "graph_lookup",
+    proto_target_source: str = "centroid",
 ) -> tuple[dict[str, torch.Tensor], np.lib.npyio.NpzFile, np.lib.npyio.NpzFile]:
     """Load frame features + next-milestone supervision targets (Stage-2/3).
 
@@ -107,7 +108,21 @@ def load_graph_policy_data(
         "max_product_target": torch.from_numpy(max_product_target).to(device),
     }
     if include_proto:
-        proto = g["prototype_table"].astype(np.float32)
-        data["greedy_proto_target"] = torch.from_numpy(proto[greedy_target]).to(device)
-        data["max_product_proto_target"] = torch.from_numpy(proto[max_product_target]).to(device)
+        if proto_target_source == "episode_medoid":
+            # Continuous, episode-real target: the next stage's medoid latent
+            # (real frame closest to its centroid), L2-normalized. Both point
+            # heads share it since it is the single observed next stage.
+            if "next_medoid" not in z.files:
+                raise KeyError("proto_target_source=episode_medoid needs `next_medoid` in the dataset")
+            med = z["next_medoid"].astype(np.float32)
+            med = med / (np.linalg.norm(med, axis=1, keepdims=True) + 1e-8)
+            med_t = torch.from_numpy(med).to(device)
+            data["greedy_proto_target"] = med_t
+            data["max_product_proto_target"] = med_t
+        elif proto_target_source == "centroid":
+            proto = g["prototype_table"].astype(np.float32)
+            data["greedy_proto_target"] = torch.from_numpy(proto[greedy_target]).to(device)
+            data["max_product_proto_target"] = torch.from_numpy(proto[max_product_target]).to(device)
+        else:
+            raise ValueError(f"unknown proto_target_source {proto_target_source!r}")
     return data, z, g

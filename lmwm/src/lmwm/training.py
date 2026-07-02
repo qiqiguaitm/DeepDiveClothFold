@@ -51,6 +51,36 @@ def sample_batch(train_idx: torch.Tensor, batch_size: int, device: torch.device)
     return train_idx[torch.randint(0, len(train_idx), (batch_size,), device=device)]
 
 
+def build_param_groups(model: nn.Module, weight_decay: float, exclude_bias_norm: bool) -> list[dict]:
+    """AdamW param groups. When ``exclude_bias_norm`` (LaWM-style), biases and
+    norm-layer weights go in a no-weight-decay group. Otherwise a single group.
+    """
+    if not exclude_bias_norm:
+        return [{"params": [p for p in model.parameters() if p.requires_grad], "weight_decay": weight_decay}]
+    norm_types = (nn.LayerNorm, nn.BatchNorm1d, nn.BatchNorm2d, nn.GroupNorm)
+    decay, no_decay, seen = [], [], set()
+    for mod_name, module in model.named_modules():
+        is_norm = isinstance(module, norm_types)
+        for pname, p in module.named_parameters(recurse=False):
+            if not p.requires_grad or id(p) in seen:
+                continue
+            seen.add(id(p))
+            (no_decay if (is_norm or pname.endswith("bias")) else decay).append(p)
+    return [{"params": decay, "weight_decay": weight_decay},
+            {"params": no_decay, "weight_decay": 0.0}]
+
+
+def make_warmup_scheduler(optimizer: torch.optim.Optimizer, warmup_steps: int) -> torch.optim.lr_scheduler.LambdaLR | None:
+    """Linear warmup then constant (LaWM pattern). Returns None if warmup_steps<=0."""
+    if warmup_steps <= 0:
+        return None
+
+    def lr_lambda(step: int) -> float:
+        return min(1.0, float(step + 1) / float(warmup_steps))
+
+    return torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lr_lambda)
+
+
 def save_checkpoint(path: Path, model: nn.Module, cfg: dict, meta: dict, metrics: dict | None) -> None:
     torch.save({"model": model.state_dict(), "config": cfg, "meta": meta, "metrics": metrics}, path)
 

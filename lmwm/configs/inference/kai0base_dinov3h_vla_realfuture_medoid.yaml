@@ -1,0 +1,9 @@
+# VLA interface using the episode-medoid subgoal head (Phase A/B recipe + medoid target).
+# Identical discrete next-milestone head as the real-future model, but subgoal_latent
+# is trained to hit the real next-stage medoid (cos 0.864 vs 0.832), a better VLA goal.
+checkpoint: lmwm/checkpoints/stage3_realfuture_medoid/20260702_083737+kai0base_dinov3h_stage3_realfuture_medoid/best.pt
+graph_npz: lmwm/data/recurrence_graphs/kai0base_dinov3h/recurrence_graph.npz
+device: cuda:0
+temperature: 1.30
+prior_weight: 0.30
+topk: 5

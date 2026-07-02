@@ -36,6 +36,9 @@ See `docs/recurrence_state_world_model_plan.md` for the current plan.
 | [docs/phase_b_calibration_prior_20260702.md](docs/phase_b_calibration_prior_20260702.md) | Phase B — 校准(ECE 0.10→0.005)+ 图作软先验融合(λ=0.3) |
 | [docs/phase_c_history_20260702.md](docs/phase_c_history_20260702.md) | Phase C — 帧历史条件(负结果:无增益) |
 | [docs/vla_integration_20260702.md](docs/vla_integration_20260702.md) | Phase D — VLA 集成接口(`lmwm.vla_interface.VLALMWMPredictor`) |
+| [docs/lawm_reference_20260702.md](docs/lawm_reference_20260702.md) | LaWM/LAM 训练配方参考 + 在 LMWM 数据上的损失测试 + 优化建议 |
+| [docs/ceiling_analysis_20260702.md](docs/ceiling_analysis_20260702.md) | 是否到瓶颈?深度分析(kNN 上界 + 标签/混叠诊断)+ 突破方法 |
+| [docs/episode_medoid_target_analysis_20260702.md](docs/episode_medoid_target_analysis_20260702.md) | 提议分析:用 episode-local medoid latent 作 milestone 目标(实测 0.877 > 簇心 0.836) |
 | [docs/recurrence_state_world_model_plan.md](docs/recurrence_state_world_model_plan.md) | 设计规划 — 设计原理、LaWAM 参考点、分阶段路线 |
 | [docs/automatic_iteration_log_20260701.md](docs/automatic_iteration_log_20260701.md) | 自动迭代日志 — 每一步实验的详尽记录 |
 | [docs/stage1_dinov3h_run_20260701.md](docs/stage1_dinov3h_run_20260701.md) | Stage-1 DINOv3-H 训练记录 |

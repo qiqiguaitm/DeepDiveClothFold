@@ -18,8 +18,10 @@ from lmwm.data import load_config, load_graph_policy_data, split_indices  # noqa
 from lmwm.models import UnifiedLMWM, count_params  # noqa: E402
 from lmwm.training import (  # noqa: E402
     append_jsonl,
+    build_param_groups,
     make_ckpt_dir,
     make_run_dir,
+    make_warmup_scheduler,
     resolve_device,
     sample_batch,
     save_checkpoint,
@@ -45,12 +47,16 @@ class Metrics:
 
 
 def compute_losses(out: dict[str, torch.Tensor], data: dict[str, torch.Tensor], b: torch.Tensor, weights: dict[str, float]) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+    # proto_beta: smooth_l1 transition point. LaWM uses 0.1 for DINO-feature
+    # regression (errors are tiny, so beta=1.0 leaves them in the weak-gradient
+    # quadratic regime); default 1.0 keeps the original LMWM behavior.
+    beta = float(weights.get("proto_beta", 1.0))
     logp = F.log_softmax(out["transition_logits"], dim=-1)
     kl = F.kl_div(logp, data["transition_target"][b], reduction="batchmean")
     greedy_ce = F.cross_entropy(out["greedy_logits"], data["greedy_target"][b])
     max_product_ce = F.cross_entropy(out["max_product_logits"], data["max_product_target"][b])
-    greedy_proto_mse = F.smooth_l1_loss(out["greedy_proto"], data["greedy_proto_target"][b])
-    max_product_proto_mse = F.smooth_l1_loss(out["max_product_proto"], data["max_product_proto_target"][b])
+    greedy_proto_mse = F.smooth_l1_loss(out["greedy_proto"], data["greedy_proto_target"][b], beta=beta)
+    max_product_proto_mse = F.smooth_l1_loss(out["max_product_proto"], data["max_product_proto_target"][b], beta=beta)
     loss = (
         weights["kl"] * kl
         + weights["greedy_ce"] * greedy_ce
@@ -103,7 +109,8 @@ def main() -> None:
 
     device = resolve_device(cfg)
     label_source = str(cfg.get("label_source", "graph_lookup"))
-    data, z, g = load_graph_policy_data(cfg, device, include_proto=True, label_source=label_source)
+    proto_target_source = str(cfg.get("proto_target_source", "centroid"))
+    data, z, g = load_graph_policy_data(cfg, device, include_proto=True, label_source=label_source, proto_target_source=proto_target_source)
     n, in_dim = data["current"].shape
     latent_dim = int(g["prototype_table"].shape[1])
     num_milestones = int(g["transition_probs"].shape[0])
@@ -113,17 +120,21 @@ def main() -> None:
 
     mc = cfg["model"]
     model = UnifiedLMWM(in_dim, latent_dim, num_milestones, int(mc.get("hidden_dim", 512)), int(mc.get("depth", 2))).to(device)
+    weight_decay = float(cfg["training"].get("weight_decay", 1e-6))
+    exclude_bias_norm = bool(cfg["training"].get("exclude_bias_norm_from_wd", False))
+    warmup_steps = int(cfg["training"].get("warmup_steps", 0))
     opt = torch.optim.AdamW(
-        model.parameters(),
+        build_param_groups(model, weight_decay, exclude_bias_norm),
         lr=float(cfg["training"].get("learning_rate", 1e-3)),
-        weight_decay=float(cfg["training"].get("weight_decay", 1e-6)),
     )
+    scheduler = make_warmup_scheduler(opt, warmup_steps)
     weights = {
         "kl": float(cfg["training"].get("kl_weight", 1.0)),
         "greedy_ce": float(cfg["training"].get("greedy_ce_weight", 1.0)),
         "max_product_ce": float(cfg["training"].get("max_product_ce_weight", 1.0)),
         "greedy_proto": float(cfg["training"].get("greedy_proto_weight", 5.0)),
         "max_product_proto": float(cfg["training"].get("max_product_proto_weight", 5.0)),
+        "proto_beta": float(cfg["training"].get("proto_smooth_l1_beta", 1.0)),
     }
     batch_size = int(cfg["training"].get("batch_size", 2048))
     max_steps = int(cfg["training"].get("max_steps", 1200))
@@ -136,6 +147,10 @@ def main() -> None:
         "dataset_npz": cfg["dataset_npz"],
         "graph_npz": cfg["graph_npz"],
         "label_source": label_source,
+        "proto_target_source": proto_target_source,
+        "weight_decay": weight_decay,
+        "exclude_bias_norm_from_wd": exclude_bias_norm,
+        "warmup_steps": warmup_steps,
         "device": str(device),
         "num_pairs": int(n),
         "input_dim": int(in_dim),
@@ -161,6 +176,8 @@ def main() -> None:
         loss.backward()
         nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
         opt.step()
+        if scheduler is not None:
+            scheduler.step()
         if step == 1 or step % eval_interval == 0 or step == max_steps:
             ev = evaluate(model, data, val_idx, batch_size, weights)
             last = Metrics(
