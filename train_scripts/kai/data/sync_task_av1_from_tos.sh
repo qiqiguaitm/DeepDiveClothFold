@@ -43,7 +43,7 @@ flock -n 9 || { echo "[$(ts)] previous run still active, skip" >>"$LOG"; exit 0;
 [ -f "$LOG" ] && [ "$(stat -c%s "$LOG" 2>/dev/null || echo 0)" -gt 5242880 ] && mv "$LOG" "$LOG.old"
 
 # depth 默认排除 (99.7% 对象, 下游不用); V1_INCLUDE_DEPTH=1 才拉
-EXC=(-exclude='*top_head_depth*')
+EXC=(-exclude='*depth*')   # 排除 depth (旧 top_head_depth + v4 新 observation.depth.top_head)
 [ "${V1_INCLUDE_DEPTH:-0}" = "1" ] && EXC=()
 
 echo "[$(ts)] sync start (tosutil cp -r -u; include_depth=${V1_INCLUDE_DEPTH:-0}) → $DST" >>"$LOG"

@@ -51,7 +51,7 @@ done
 versions=$("$TOSUTIL" ls -d "$SRC/" 2>/dev/null | grep -oE '/base/v[0-9]+(\.[0-9]+)?/' | grep -oE 'v[0-9]+(\.[0-9]+)?' | sort -u)
 if [ -z "$versions" ]; then echo "[$(ts)] ERROR: TOS base/ 下未发现版本目录 (cred/network?)" >>"$LOG"; exit 1; fi
 
-EXCLUDE='*top_head_depth*'
+EXCLUDE='*depth*'   # 排除 depth (旧 top_head_depth + v4 新 observation.depth.top_head 两种命名)
 echo "[$(ts)] sync start; TOS 版本=[$(echo $versions)] skip=[$SKIP_VERS]" >>"$LOG"
 for ver in $versions; do
   case " $SKIP_VERS " in *" $ver "*) echo "[$(ts)] SKIP $ver (本地加工/受保护)" >>"$LOG"; continue ;; esac
