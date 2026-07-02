@@ -1,0 +1,12 @@
+name: kai0base_dinov3h_stage3_hybrid_learned_uncertainty
+checkpoint: lmwm/checkpoints/stage3_unified/20260701_142850+kai0base_dinov3h_stage3_unified/best.pt
+dataset_npz: lmwm/data/crave_sequences/kai0base_dinov3h_frame2proto/pairs_next_unique.npz
+graph_npz: lmwm/data/recurrence_graphs/kai0base_dinov3h/recurrence_graph.npz
+output_dir: lmwm/outputs/runtime_smoke/20260701_learned_uncertainty
+max_samples: 4096
+device: cuda:0
+
+# No hard weak milestone list: fallback is controlled by the learned error-risk
+# policy trained from held-out neural prediction errors.
+weak_milestones: []
+uncertainty_policy_npz: lmwm/outputs/uncertainty_policy/20260701_logistic/uncertainty_policy.npz

@@ -1,0 +1,6 @@
+name: kai0base_dinov3h_recurrence_graph
+feature_dir: temp/crave_full_dinov3h
+milestone_file: temp/crave_full_dinov3h/milestones_uniform_dinov3h.npz
+output_dir: lmwm/data/recurrence_graphs/kai0base_dinov3h
+smoothing_alpha: 0.001
+max_product_horizon: 10

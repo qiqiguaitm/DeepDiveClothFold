@@ -1,0 +1,5 @@
+name: kai0bd_feature_stage1_recurrence_graph
+dataset_npz: lmwm/data/crave_sequences/kai0bd_feature_stage1/pairs_next_unique.npz
+output_dir: lmwm/data/recurrence_graphs/kai0bd_feature_stage1
+smoothing_alpha: 0.001
+max_product_horizon: 10

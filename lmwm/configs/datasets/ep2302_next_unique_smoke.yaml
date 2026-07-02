@@ -1,0 +1,7 @@
+name: ep2302_next_unique_smoke
+source_cache: temp/crave_interp_ep2302_30hz_decoded/_cache.npz
+output_dir: lmwm/data/crave_sequences/ep2302_smoke
+horizon: 30
+pair_mode: next_unique
+prototype_source: one_hot_progress_smoke
+seed: 2026

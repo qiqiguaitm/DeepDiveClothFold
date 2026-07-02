@@ -1,0 +1,25 @@
+name: kai0base_dinov3h_stage3_hybrid_validation_selected
+checkpoint: lmwm/checkpoints/stage3_unified/20260701_142850+kai0base_dinov3h_stage3_unified/best.pt
+dataset_npz: lmwm/data/crave_sequences/kai0base_dinov3h_frame2proto/pairs_next_unique.npz
+graph_npz: lmwm/data/recurrence_graphs/kai0base_dinov3h/recurrence_graph.npz
+output_dir: lmwm/outputs/stage3_unified_inference/kai0base_dinov3h_stage3_hybrid_validation_selected
+max_samples: 4096
+device: cuda:0
+weak_milestones:
+- 34
+- 30
+- 5
+- 2
+- 7
+- 21
+- 24
+- 31
+- 19
+- 23
+greedy_conf_threshold: 0.9
+max_product_conf_threshold: 0.92
+selection_policy:
+  source_csv: lmwm/outputs/stage3_unified_inference/20260701_best/error_analysis/per_milestone_metrics.csv
+  min_samples: 30
+  min_transition_support: 0
+  min_head_top1: 0.94

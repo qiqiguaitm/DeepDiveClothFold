@@ -1,0 +1,25 @@
+run_id: kai0base_dinov3h_stage3_realfuture_hist4s2
+dataset_npz: lmwm/data/crave_sequences/kai0base_dinov3h_frame2proto/pairs_next_unique_hist4s2.npz
+graph_npz: lmwm/data/recurrence_graphs/kai0base_dinov3h/recurrence_graph.npz
+run_root_dir: lmwm/logs/stage3_realfuture_hist
+checkpoint_root_dir: lmwm/checkpoints/stage3_realfuture_hist
+label_source: real_future
+seed: 2026
+device: cuda:0
+split_mode: episode
+model:
+  hidden_dim: 512
+  depth: 2
+training:
+  batch_size: 2048
+  max_steps: 1200
+  eval_interval: 100
+  learning_rate: 0.001
+  weight_decay: 0.000001
+  kl_weight: 1.0
+  greedy_ce_weight: 1.0
+  max_product_ce_weight: 1.0
+  greedy_proto_weight: 5.0
+  max_product_proto_weight: 5.0
+  grad_clip: 1.0
+  val_ratio: 0.2

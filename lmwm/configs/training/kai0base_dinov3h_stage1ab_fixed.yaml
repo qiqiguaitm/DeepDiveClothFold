@@ -1,0 +1,21 @@
+run_id: kai0base_dinov3h_stage1ab_fixed
+dataset_npz: lmwm/data/crave_sequences/kai0base_dinov3h/pairs_fixed_h3.npz
+run_root_dir: lmwm/logs/stage1ab
+checkpoint_root_dir: lmwm/checkpoints/stage1ab
+seed: 2026
+device: cuda:0
+split_mode: episode
+model:
+  code_dim: 32
+  transition_dim: 32
+  hidden_dim: 512
+  depth: 2
+training:
+  batch_size: 2048
+  max_steps: 1200
+  eval_interval: 100
+  learning_rate: 0.001
+  weight_decay: 0.000001
+  ce_weight: 0.5
+  grad_clip: 1.0
+  val_ratio: 0.2

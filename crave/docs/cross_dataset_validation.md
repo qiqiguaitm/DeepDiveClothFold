@@ -89,3 +89,31 @@ CUDA_VISIBLE_DEVICES=0 /home/tim/miniconda3/envs/srpo/bin/python \
   crave/experiments/cross_dataset_validate.py xvla   --encoder dinov3-h
   # 或 coffee。输出 corr 指标 json + corrs.npy + 验证图到 visualization/cross_dataset/
 ```
+
+---
+
+# 附录: 早期三路版泛化实证 (DINOv2 + armmask + proprio)
+
+> 以下为 V2.4 早期三路特征版本(DINOv2-large + armmask + proprio)的泛化结果,配方逐字不改,判据同 `corr(value,归一化时间)≥0.7`。
+
+## XVLA soft_fold (新本体/新相机/新布料)
+
+| 指标 | 值 |
+|---|---|
+| corr mean / median / p25 | **0.956** / 0.965 / 0.948 |
+| % corr≥0.7 | **100% (168/168)** |
+| 单调帧占比 | 98.7% |
+
+## aloha_static_coffee (互联网真实数据/新本体/全新任务)
+
+| 指标 | 值 |
+|---|---|
+| corr mean / median / p25 | **0.988** / 0.990 / (全>0.95) |
+| % corr≥0.7 | **100% (50/50)** |
+| 单调帧占比 | **100%** |
+
+## 解读
+1. **配方泛化成立,非数据过拟合**:同一冻结配方在(布料折叠新本体)与(咖啡长程任务真实ALOHA)上 corr 全部远超 0.7,证明 V2.4 学的是「跨 demo 重复结构 = 任务进度」的通用规律。
+2. **跨任务比同任务更干净**:coffee mono=100%、corr 0.988 > xvla 0.956。咖啡的强顺序子目标(胶囊→杯→按键)让 recurrence/milestone 时序更可分。
+3. **arm_prototypes 跨本体未重算仍 OK**:三路冗余(DINOv2 主导 + proprio)兜住了 → 印证多路冗余设计。
+4. **产物**:`temp/generalization_value_eval/{xvla,coffee}/` + `visualization/generalization/`。

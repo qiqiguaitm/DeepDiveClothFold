@@ -1,0 +1,26 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+
+# Upstream LaWAM reference (unmodified 3rd-party repo, has its own .git).
+# Kept on disk as reference only; never committed to this repo.
+vendor/
+
+# Process data / training artifacts / eval outputs — regenerable, kept local only.
+logs/**
+!logs/.gitkeep
+checkpoints/**
+!checkpoints/.gitkeep
+data/**
+!data/.gitkeep
+outputs/**
+!outputs/.gitkeep
+
+# Large binary artifacts anywhere under lmwm/
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+*.npz
+*.npy

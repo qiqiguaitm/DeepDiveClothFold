@@ -1,0 +1,7 @@
+checkpoint: lmwm/checkpoints/stage3_unified/20260702_041309+kai0bd_stage3_unified/best.pt
+graph_npz: lmwm/data/recurrence_graphs/kai0bd_feature_stage1/recurrence_graph.npz
+dataset_npz: lmwm/data/crave_sequences/kai0bd_feature_stage1/pairs_next_unique.npz
+device: cuda:0
+greedy_conf_threshold: 0.90
+max_product_conf_threshold: 0.92
+weak_milestones: []

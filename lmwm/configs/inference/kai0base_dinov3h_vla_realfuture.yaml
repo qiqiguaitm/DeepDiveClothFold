@@ -1,0 +1,8 @@
+# VLA-facing LMWM interface (Phase D). Recipe validated against the real observed
+# next milestone on held-out episodes (Phase A/B). See docs/vla_integration_20260702.md.
+checkpoint: lmwm/checkpoints/stage3_realfuture/20260702_045756+kai0base_dinov3h_stage3_realfuture/best.pt
+graph_npz: lmwm/data/recurrence_graphs/kai0base_dinov3h/recurrence_graph.npz
+device: cuda:0
+temperature: 1.30      # Phase B calibration optimum (ECE 0.10 -> 0.005)
+prior_weight: 0.30     # Phase B graph-as-prior fusion optimum (best real-future NLL)
+topk: 5

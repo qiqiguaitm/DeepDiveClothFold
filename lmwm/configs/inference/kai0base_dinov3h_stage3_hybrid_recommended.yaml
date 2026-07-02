@@ -1,0 +1,18 @@
+name: kai0base_dinov3h_stage3_hybrid_recommended
+checkpoint: lmwm/checkpoints/stage3_unified/20260701_142850+kai0base_dinov3h_stage3_unified/best.pt
+dataset_npz: lmwm/data/crave_sequences/kai0base_dinov3h_frame2proto/pairs_next_unique.npz
+graph_npz: lmwm/data/recurrence_graphs/kai0base_dinov3h/recurrence_graph.npz
+output_dir: lmwm/outputs/stage3_unified_inference/20260701_hybrid_recommended
+max_samples: 4096
+device: cuda:0
+weak_milestones: [2, 5, 30, 34]
+
+# Recommended gate from offline sweep:
+# mean top1 ~= 0.9976 with mean fallback rate ~= 0.196 on 4096 samples.
+greedy_conf_threshold: 0.90
+max_product_conf_threshold: 0.92
+
+# Conservative alternative:
+# greedy_conf_threshold: 0.80
+# max_product_conf_threshold: 0.80
+# mean top1 ~= 0.9935 with mean fallback rate ~= 0.146 on 4096 samples.

@@ -1,0 +1,5 @@
+policy,summary,num_samples,hybrid_greedy_top1,hybrid_max_product_top1,mean_hybrid_top1,greedy_fallback_rate,max_product_fallback_rate,mean_fallback_rate
+validation_selected_safe,lmwm/outputs/runtime_eval/20260702_validation_selected_full_summary/summary.json,200000,0.997425,0.997685,0.997555,0.32651,0.336485,0.3314975
+recommended,lmwm/outputs/runtime_eval/20260702_recommended_full_summary/summary.json,200000,0.996255,0.996655,0.996455,0.194265,0.206195,0.20023
+learned_tuned,lmwm/outputs/runtime_eval/20260702_learned_tuned_full/summary.json,200000,0.99577,0.995205,0.9954875000000001,0.222725,0.2167,0.2197125
+kai0bd_recommended,lmwm/outputs/runtime_eval/20260702_kai0bd_recommended_full_summary/summary.json,44967,1.0,1.0,1.0,0.0,0.0,0.0

@@ -1,0 +1,9 @@
+name: kai0bd_feature_stage1_next_unique
+feature_cache: temp/crave_kai0bd/feat_cache
+output_dir: lmwm/data/crave_sequences/kai0bd_feature_stage1
+pair_mode: next_unique
+horizon: 8
+num_clusters: 96
+num_milestones: 64
+seed: 2026
+prototype_source: kmeans_feature_center

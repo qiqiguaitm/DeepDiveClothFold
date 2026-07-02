@@ -1,0 +1,14 @@
+name: kai0base_dinov3h_stage3_hybrid_learned_tuned
+checkpoint: lmwm/checkpoints/stage3_unified/20260701_142850+kai0base_dinov3h_stage3_unified/best.pt
+dataset_npz: lmwm/data/crave_sequences/kai0base_dinov3h_frame2proto/pairs_next_unique.npz
+graph_npz: lmwm/data/recurrence_graphs/kai0base_dinov3h/recurrence_graph.npz
+output_dir: lmwm/outputs/runtime_smoke/20260701_learned_tuned
+max_samples: 4096
+device: cuda:0
+weak_milestones: []
+uncertainty_policy_npz: lmwm/outputs/uncertainty_policy/20260701_logistic/uncertainty_policy.npz
+
+# Tuned from runtime error-probability sweep to cover milestone #34 while
+# keeping mean fallback close to 21%.
+greedy_error_threshold: 0.25
+max_product_error_threshold: 0.30

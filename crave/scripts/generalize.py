@@ -73,7 +73,7 @@ def make_readout(C, sk, Pord):
     return readout
 
 
-def main(ds_name: str, encoder: str | None = None, novideo: bool = False):
+def main(ds_name: str, encoder: str | None = None, novideo: bool = False, dump_values: bool = False, eval_all: bool = False):
     t0 = time.time()
     cfg = resolve_dataset(ds_name)
     OUT = out_dir(f"crave_generalize_{(encoder or 'dinov2-large')}" if encoder else "crave_generalize") / ds_name
@@ -114,6 +114,27 @@ def main(ds_name: str, encoder: str | None = None, novideo: bool = False):
     de_thr = float(np.quantile(de_tr, 0.9)) * 1.3
     readout = make_readout(C, sk, Pord)
 
+    # eval-all: per-episode corr(value, normalized-time) over EVERY episode (cached features, no re-encode)
+    if eval_all:
+        corrs, monos = [], []
+        for e in eps_sorted:
+            fi = np.where(E == e)[0]; fi = fi[np.argsort(Tv[fi])]
+            if len(fi) < 5:
+                continue
+            v, _ms = readout(F[fi]); tq = Tv[fi]
+            if v.std() > 1e-6 and tq.std() > 1e-6:
+                corrs.append(float(np.corrcoef(v, tq)[0, 1]))
+            monos.append(float(np.mean(np.diff(v) >= -1e-6)))
+        corrs = np.array(corrs); monos = np.array(monos)
+        ev = {"ds": ds_name, "encoder": enc.spec.name, "n_eps": int(len(corrs)),
+              "corr_mean": float(corrs.mean()), "corr_median": float(np.median(corrs)),
+              "corr_p25": float(np.percentile(corrs, 25)), "frac_corr_ge_0.7": float(np.mean(corrs >= 0.7)),
+              "mono_mean": float(monos.mean())}
+        json.dump(ev, open(OUT / f"{ds_name}_evalall.json", "w"), indent=2)
+        np.save(OUT / f"{ds_name}_corrs.npy", corrs)
+        print(f"[{ds_name}] EVAL-ALL ({len(corrs)}ep): corr mean={corrs.mean():.3f} med={np.median(corrs):.3f} "
+              f"p25={np.percentile(corrs,25):.3f} %>=0.7={np.mean(corrs>=0.7):.1%} mono={monos.mean():.1%}", flush=True)
+
     # centroid decode + gallery
     print(f"[{ds_name}] centroid decode...", flush=True)
     NS = 20; samp = []; rng = []
@@ -148,12 +169,15 @@ def main(ds_name: str, encoder: str | None = None, novideo: bool = False):
     long2 = sorted(eplen, key=lambda e: -eplen[e])[:2]
     print(f"[{ds_name}] long eps {long2}; native-rate readout...", flush=True)
     vlast = np.array([0.0, 1.0])
+    vdump: dict[str, np.ndarray] = {}
     for e in long2:
         f224, staten, fpsd = load_ep_native(cfg, e)
         imgn = L2(enc.encode_pooled(f224))
         Pg = L2((mkp_gap(staten, cfg.stride) - PMU) / PSD)
         Fq = np.concatenate([imgn, Pg], 1); nn = len(Fq)
         v, ms = readout(Fq, fps=fpsd); vlast = v
+        if dump_values:
+            vdump[f"ep{e}_value"] = v.astype(np.float32); vdump[f"ep{e}_ms"] = np.asarray(ms, np.int16)
         de_end = float(np.linalg.norm(Fq[-3:][:, None] - ek[None], axis=2).min()); comp = de_end <= de_thr
         print(f"  ep{e}: {nn}f@{fpsd}Hz value {v.min():.2f}->{v.max():.2f}", flush=True)
         fig = plt.figure(figsize=(13, 5.5)); gs = fig.add_gridspec(2, 1, height_ratios=[2.4, 1.4])
@@ -171,6 +195,9 @@ def main(ds_name: str, encoder: str | None = None, novideo: bool = False):
     json.dump({"ds": ds_name, "encoder": enc.spec.name, "n_eps": len(eps), "N": int(len(F)), "M": M,
                "long2": long2, "value_range": [float(vlast.min()), float(vlast.max())]},
               open(OUT / f"{ds_name}_summary.json", "w"), indent=2)
+    if dump_values and vdump:
+        np.savez(OUT / f"{ds_name}_values.npz", long2=np.asarray(long2), **vdump)
+        print(f"  dumped values → {ds_name}_values.npz ({sorted(vdump)})", flush=True)
     print(f"[{ds_name}] DONE {time.time()-t0:.0f}s → {OUT}", flush=True)
 
 
@@ -179,5 +206,7 @@ if __name__ == "__main__":
     ap.add_argument("dataset", choices=["vis", "xvla", "coffee"])
     ap.add_argument("--encoder", default=None, help="encoder name (default: $CRAVE_ENC or dinov2-large)")
     ap.add_argument("--novideo", action="store_true")
+    ap.add_argument("--dump-values", action="store_true", help="save per-frame value/milestone arrays (npz) for the 2 long eps — enables cross-encoder correlation")
+    ap.add_argument("--eval-all", action="store_true", help="compute per-episode corr(value, normalized-time) over ALL episodes — cross-dataset generalization metric")
     a = ap.parse_args()
-    main(a.dataset, a.encoder, a.novideo)
+    main(a.dataset, a.encoder, a.novideo, a.dump_values, a.eval_all)

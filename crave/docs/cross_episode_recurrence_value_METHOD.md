@@ -2,7 +2,7 @@
 
 > **方法名 CRAVE** = **C**ross-episode **R**ecurrence **a**s **V**alue **E**stimation —— *training-free dense value from what demonstrations repeat*。V2.4 / "milestone-value" 为其实现代号。
 >
-> **本文档 = 最终可靠方法的方法 + 效果 + 结论(干净版)。** 完整探索过程(所有迭代、否决的死路、诊断图、文献调研)见 [cross_episode_recurrence_value_plan.md](cross_episode_recurrence_value_plan.md)(探索记录,§4.4.6-4.4.18 共 56 图)。
+> **本文档 = 最终可靠方法的方法 + 效果 + 结论(干净版)。** 完整探索过程(所有迭代、否决的死路、诊断图、文献调研)见 [archive/cross_episode_recurrence_value_plan.md](archive/cross_episode_recurrence_value_plan.md)(探索记录,§4.4.6-4.4.18 共 56 图)。
 > **状态**:✅ V2.4 验证完成,四场景全绿(2026-06-13)。可直接产 AWBC milestone-value 标签。
 > **上游**:AWBC pipeline([awbc_implementation_plan.md](../../docs/deployment/strategy/awbc_implementation_plan.md))。**用途**:零训练 milestone-value 替代/对照现有 pi0-AE 监督 value(§4.3 决策点)。
 
@@ -100,7 +100,7 @@ autonomy 真机 3 轮叠衣(轮1中途衣物被拿走、轮2叠完被弄乱):V2.
 
 ### 3.4b 跨数据集泛化(配方逐字不改,零训练)
 
-同一冻结配方套两个全新数据集:**XVLA soft_fold**(新本体/相机/布料,168ep)corr(value,时间) mean **0.956**、≥0.7 占比 **100%**;**互联网真实 ALOHA `lerobot/aloha_static_coffee`**(全新长程"做咖啡"任务,50ep)corr mean **0.988**、单调 100%。证明学的是「跨 demo 重复结构=进度」通用规律而非 kai0 过拟合。详见 [cross_episode_recurrence_value_GENERALIZATION.md](cross_episode_recurrence_value_GENERALIZATION.md)。
+同一冻结配方套两个全新数据集:**XVLA soft_fold**(新本体/相机/布料,168ep)corr(value,时间) mean **0.956**、≥0.7 占比 **100%**;**互联网真实 ALOHA `lerobot/aloha_static_coffee`**(全新长程"做咖啡"任务,50ep)corr mean **0.988**、单调 100%。证明学的是「跨 demo 重复结构=进度」通用规律而非 kai0 过拟合。详见 [cross_dataset_validation.md](cross_dataset_validation.md)。
 
 ![coffee 泛化](visualization/generalization/coffee_sync_ep30_preview.png)
 
@@ -140,7 +140,7 @@ milestone 单天挖掘应用到 8 个日期(跨月):16/16 正常 0→1(探索文
 
 **下一步**:① **全量打标 + AWBC 对照训练**(§4.3,最终用途,对照 pi0-AE 标签,真机为终判;A/B 对照执行 plan → [awbc_milestone_value_AB_plan.md](awbc_milestone_value_AB_plan.md):A=直接当 value 源/B=蒸馏训 AE,对照已跑的 C=pi0-AE);② 可选增强:外观冗余合并(后段去重)、**soft-DP(soft-DTW/Drop-DTW/GTCC)内建连续 progress**(段内细化的正解——把连续性内建进对齐而非事后插值,原生处理 idle 帧;但 GTCC 需训练→违背零训练,故备选,见 §4.4.19)、TCC 端到端学习 progress-aware 度量(根治别名)。
 
-**连续 value 形态(第二条交付路线)→ 独立文档 [CONTINUOUS](cross_episode_recurrence_value_CONTINUOUS.md)**:端到端 TCC 进度感知特征 + 细 bin DP 时序证据读出,把 milestone 间过程连续化(advantage 密度 ~24%→81-96%),跨数据集 corr 0.94-1.00。离散主线(本文)零训练、技能结构可读、单调最稳;连续形态给密集 advantage 梯度。
+**连续 value 形态(第二条交付路线)→ 独立文档 [CONTINUOUS](archive/cross_episode_recurrence_value_CONTINUOUS.md)**:端到端 TCC 进度感知特征 + 细 bin DP 时序证据读出,把 milestone 间过程连续化(advantage 密度 ~24%→81-96%),跨数据集 corr 0.94-1.00。离散主线(本文)零训练、技能结构可读、单调最稳;连续形态给密集 advantage 梯度。
 
 **TCC 互补线(非竞品,探索文档 §2.4.3)**:TCC 不比 τ,而提供聚类做不到的"逐帧连续学习对齐"。已验证 **App① 锚位消歧**——TCC 对齐-进度把聚类 rollout 唯一残留(高位误吸:f400 团布 0.92→0.26、f3100 空桌 0.94→0.36)压掉,可即接 V2.2 rollout 标注复核高位帧;近期可做 **App② 失败定位**(rollout→demo 对齐,比退步阈值更原生)、**App④ OOD 门控**(对齐残差);**端到端微调 backbone 已验证(§2.4.4,本地 A100)**:只解冻末 4 块,TCC held-out τ 0.718→**0.842**、MAE 0.137→**0.107**,**追平聚类主线**(τ 0.841/MAE 0.105,Pearson 反超)——TCC 升级为与聚类并列的第二条可交付 value 路线(连续 vs 离散)。frozen 上限假设成立并已捅破;App③(连续亚阶段)随之从远景转近期。
 
@@ -156,4 +156,4 @@ milestone 单天挖掘应用到 8 个日期(跨月):16/16 正常 0→1(探索文
 
 **效果图**(`docs/visualization/`):`vis0526_v24_milestones.png` · `vis0526_ep7_v24_value.png` · `vis0520_ep37_v24_*.png` · `rollout_v24_value.png`。
 
-**探索记录**:完整 56 图 + 18 次迭代 + 文献调研在 [cross_episode_recurrence_value_plan.md](cross_episode_recurrence_value_plan.md)。
+**探索记录**:完整 56 图 + 18 次迭代 + 文献调研在 [archive/cross_episode_recurrence_value_plan.md](archive/cross_episode_recurrence_value_plan.md)。

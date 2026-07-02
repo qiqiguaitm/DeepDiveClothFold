@@ -1,0 +1,9 @@
+name: kai0base_dinov3h_next_unique
+feature_dir: temp/crave_full_dinov3h
+milestone_file: temp/crave_full_dinov3h/milestones_uniform_dinov3h.npz
+output_dir: lmwm/data/crave_sequences/kai0base_dinov3h
+pair_mode: next_unique
+horizon: 3
+max_pairs: 200000
+seed: 2026
+prototype_source: dinov3h_milestone_center_1280d

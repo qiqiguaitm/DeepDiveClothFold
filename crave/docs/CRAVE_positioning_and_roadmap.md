@@ -36,7 +36,7 @@
 2. **离散技能结构(milestone 图),非仅标量**:milestone 比时间多解释 2× 动作方差;VIP/LIV/TOPReward/GVL 都只给连续标量。
 3. **重复性是信号而非噪声**:GVL 明确在"重复/次优轨迹"上失效;CRAVE 恰恰靠跨 episode 重复挖结构 → 大批同任务 demo 上是优势区。
 4. **确定性、可复现、可检视**:无 VLM 随机性;milestone 簇可视化/可审计(簇间流转 2D/3D)。
-5. **在线可因果化**:固定滞后 Viterbi,零训练拿到 corr 0.94 的在线 value(频率窗按 fps 标定,见 [frequency_window_params](frequency_window_params.md))。
+5. **在线可因果化**:固定滞后 Viterbi,零训练拿到 corr 0.94 的在线 value(频率窗按 fps 标定,见 [frequency_window_params](viterbi_computation.md))。
 6. **质量已逼近监督**:kai0_base ep2047 对真 stage_progress_gt corr **0.865**(监督 pi0-AE 0.897),零标注。
 
 **结构性短板(诚实)**:① 需**同任务 demo 集**(不能像 GVL 单视频/纯文本零样本);② 无结果信号(不能区分自信但错的动作,不能超越示教);③ 跨任务/跨本体零样本弱(GVL 强);④ value 是"demo 流形进度"代理,非真回报。

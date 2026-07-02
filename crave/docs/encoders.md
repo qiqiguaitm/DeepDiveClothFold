@@ -47,7 +47,7 @@ CRAVE 区分**语义**与**外观**两条互补的表征路:
 |---|---|---|
 | `dinov2-small` | 384 | **零训练 value 的历史默认**——最轻最快,milestone/value 已足够(kai0 GT MAE 0.105 即此档)。 |
 | `dinov2-base`  | 768 | 中档,质心解码画廊更清晰。 |
-| `dinov2-large` | 1024 | **质心代表图标准配置**(见 [centroid_representation_config](centroid_representation_config.md)):解码可读性最好。 |
+| `dinov2-large` | 1024 | **质心代表图标准配置**(见 [centroid_representation_config](milestone_centroid_decoding.md)):解码可读性最好。 |
 
 DINOv2 只有 1 个前缀 token(CLS),无 register token,用 fp16 即可。
 
@@ -75,6 +75,32 @@ value 早在 small 档就饱和,放大编码器主要买"图更好看",不是"va
 ![DINOv3-H+ coffee value 曲线](visualization/encoders/enc_dinov3h_coffee_value.png)
 *同一编码器读出的单调 progress value(ep1,0→0.94),验证 DINOv3 路与既有 pipeline 完全对齐。*
 
+#### 编码器阶梯实测对比:DINOv2-large vs DINOv3-L vs DINOv3-H+(2026-06-22)
+
+同一套配方,只换编码器,在三个泛化数据集上跑 `generalize.py`(`--novideo`)。每格 `M(milestone数) / value区间`,
+**代表 ep**(auto 选出的两条最长 episode)单列:
+
+| 数据集 | eps / 帧数 N | DINOv2-large | DINOv3-L | DINOv3-H+ | 代表 ep |
+|---|---|---|---|---|---|
+| coffee(真 ALOHA) | 50 / 55,000 | 15 / [0.009, 0.949] | 24 / [0.0, 0.937] | 15 / [0.0, 0.94] | [0, 1] |
+| vis | 560 / 219,350 | 32 / [0.042, 0.969] | 29 / [0.042, 0.969] | 27 / [0.054, 0.982] | **三档全 [2, 121]** |
+| xvla(新本体) | 168 / 340,853 | 53 / [0.008, 0.990] | 49 / [0.008, 0.989] | 51 / [0.008, 0.990] | **三档全 [7, 39]** |
+
+**结论(三档高度一致)**:
+- **value 质量编码器无关**:vis/xvla 上三档 value 区间几乎逐位相同,**自动选出的代表 episode 完全相同**(vis [2,121] / xvla [7,39])——pipeline 对 backbone **强鲁棒**,换编码器不破结构。
+  量化:coffee 两条长 ep 上**逐帧 `corr(DINOv2-large, DINOv3-H+) = 0.982`**(`--dump-values` 落 npz 后算),value 区间逐位相同 [0,0.94]——换编码器,value 曲线几乎重合。
+- **DINOv3 milestone 更紧凑**:大数据集上 v3 普遍比 v2 略少 milestone(vis 32→27、xvla 53→49/51),register-token 把同相位帧聚得更干净;coffee(仅 50ep)上 L 反而偏多(M=24),小样本聚类的正常波动。
+- 再次印证:**换编码器主要影响"结构紧凑度 / 质心可读性",value 质量本身持平**——value 的天花板由数据质量与 Viterbi-DP 读出决定,不由 backbone 决定。
+- 工程含义:**调试用 DINOv3-L 即可**(更轻更快,结构与 H+ 一致),要最强语义再上 H+ / 7B。
+
+![DINOv3-H+ xvla 质心画廊](visualization/encoders/enc_dinov3h_xvla_gallery.png)
+![DINOv3-H+ xvla value(ep7)](visualization/encoders/enc_dinov3h_xvla_value.png)
+*新本体 XVLA:DINOv3-H+ 自动 milestone 质心 + 单调 value(ep7,0.008→0.990),跨本体零改配方。*
+
+![DINOv3-H+ vis 质心画廊](visualization/encoders/enc_dinov3h_vis_gallery.png)
+![DINOv3-H+ vis value(ep2)](visualization/encoders/enc_dinov3h_vis_value.png)
+*vis:DINOv3-H+ 27 个 milestone + value(ep2),与 DINOv2 代表 ep 选择一致。*
+
 ### Wan2.2-VAE(外观隐空间)
 | name | dim | 角色 |
 |---|---|---|
@@ -85,7 +111,50 @@ value 早在 small 档就饱和,放大编码器主要买"图更好看",不是"va
 
 ---
 
-## 3. 怎么选
+## 3. 全量簇中心解码(FULL kai0_base @3Hz)
+
+把"编码 → 聚类 → 簇中心解码"跑到**全量数据**上,看真实任务里自动浮现的 milestone 长什么样。
+
+**配置**:`kai0_base` **全部 3055 episode @3Hz = 334,875 帧**,编码器 **DINOv3-H+**。
+流程(脚本 [`crave/experiments/crave_full_7b_centroid.py`](../experiments/crave_full_7b_centroid.py),`--encoder` 可换 H+/7B):
+1. **双卡分片编码**池化特征落盘(grid 太大 ~700GB 不存,~20min);
+2. 全量 **MiniBatchKMeans** 自适应 `K0=318` → 自适应选 milestone(覆盖率 Otsu τ=0.128 + 时间纯度 τ=0.170 + 进度去冗余)→ **45 个 milestone**;
+3. 重编码 4000 帧训 16→128 解码器;每个 milestone 取 **top-24 近邻平均 grid → 解码成簇中心图**。
+
+![FULL kai0_base DINOv3-H+ 簇中心解码](visualization/encoders/enc_full_dinov3h_kai0_centroid_decode.png)
+*45 个 milestone,每对:上=簇中心解码图(top-24 近邻平均 grid 解码),下=最近真实帧。沿 m0→m44 按任务相位(P 递增)推进。*
+
+**读图结论**:
+- **簇中心解码 ↔ 最近真实帧对得上**——布料形态/颜色/手位都还原,证明 DINOv3-H+ 的 patch-grid **可解码、可读**,自动 milestone 是真实任务相位代表而非噪声。
+- 45 个 milestone 沿叠衣流程**相位连贯**,全量(3055ep)聚类不塌缩。
+- 解码偏"软"(簇中心=类内平均的固有特性 + 4000 训练对);要更清晰可加大 `--train-imgs/--epochs`。
+
+> 跨编码器(DINOv2-large/DINOv3-L/H+/7B)的**小规模**簇中心解码对比另见
+> [`visualization/encoders/enc_centroid_decode_compare.png`](visualization/encoders/enc_centroid_decode_compare.png)(vis,K=10);
+> 结论:该任务下解码质量主要由数据视觉丰富度 + 解码器预算决定,**跨编码器差异小**(与 value 的编码器无关结论一致)。
+> DINOv3-7B(int8)全量同款图待跑(`--encoder dinov3-7b-int8`,~2.6h)。
+
+## 4. milestone 数目 ↔ 覆盖率 权衡(M≈13 甜点)
+
+milestone 数目 M(由聚类数 K + 完整筛选决定)直接换来一条**"时间分辨率 vs 复现鲁棒性"权衡**。
+在全量 kai0_base @3Hz(DINOv3-H+)上把 K 从 24 扫到 318:
+
+![milestone 数目对覆盖率与簇中心解码的影响](visualization/encoders/enc_milestone_count_vs_coverage_decode.png)
+*上=M↔覆盖率权衡曲线;下=M=6/13/23/45 四档簇中心解码图。*
+
+| milestone 数 M | 6 | **13** | 23 | 36 | 45 |
+|---|---|---|---|---|---|
+| (聚类数 K) | 24 | 64 | 160 | 256 | 318 |
+| milestone 覆盖率(中位) | 0.76 | **0.44** | 0.29 | 0.20 | 0.18 |
+
+**单调反比、前段陡降**(M 6→13 覆盖率腰斩 0.76→0.44):milestone 越多,每个越"窄",能反复出现的 episode 比例越低。
+- **少 milestone(M≈6)**:每个近乎人人经过(cov 0.69–0.80),但解码块状、步数太少、丢细节。
+- **多 milestone(M≈45)**:45 步细粒度,但每个只覆盖 13–28% episode → 偏微状态、**中段易双峰**(同一外观状态在折叠中复现两次被并进一簇,std 纯度拦不住)。
+- **甜点 M≈13(K=64)**:曲线拐点——milestone 仍覆盖 ~0.36–0.60(鲁棒),又给出干净的 13 步折叠序列。
+
+> ⚠️ 坑(诚实):milestone 选择**必须同时要"覆盖率 AND 时间纯度"**。只按覆盖率筛(`cov≥mean`)会选中"整段都在的泛状态"簇——其帧进度 T 摊平在 0.1–0.8、tpos 塌向中间、value 失真;原版 CRAVE 的 **cov-Otsu + tstd 时间纯度 + 进度去冗余** 三件套才正确(脚本默认即此)。
+
+## 5. 怎么选
 
 - **要复现 / 跑 value**:`dinov2-small`(最快)或 `dinov2-large`(出图最清)——零训练 value 早饱和,这两档够用。
 - **要最强语义 / 跨本体泛化**:`dinov3-h`(已验证)→ `dinov3-7b-int8`(下完后,旗舰)。
@@ -105,5 +174,5 @@ value 早在 small 档就饱和,放大编码器主要买"图更好看",不是"va
 ---
 **相关**:编码器注册表 [`config/encoders.py`](../src/crave/config/encoders.py) ·
 DINOv3 环境与 7B 获取 [[reference_dinov3_srpo_env]] ·
-质心解码标准配置 [centroid_representation_config](centroid_representation_config.md) ·
+质心解码标准配置 [centroid_representation_config](milestone_centroid_decoding.md) ·
 解码器规模消融 [milestone_centroid_decoding](milestone_centroid_decoding.md)
