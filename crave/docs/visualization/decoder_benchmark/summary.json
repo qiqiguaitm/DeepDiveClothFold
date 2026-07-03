@@ -1,0 +1,28 @@
+{
+  "n_queries": 120,
+  "results": {
+    "检索(最近真实帧)": {
+      "L1": 0.0839,
+      "sharpness": 940.2,
+      "reencode_cos": 0.8387
+    },
+    "patch-grid 空间解码": {
+      "L1": 0.0252,
+      "sharpness": 191.6,
+      "reencode_cos": 0.4191
+    },
+    "pooled-L1": {
+      "L1": 0.061,
+      "sharpness": 149.0,
+      "reencode_cos": 0.3221
+    },
+    "pooled-GAN": {
+      "L1": 0.07,
+      "sharpness": 833.2,
+      "reencode_cos": 0.4709
+    },
+    "_real_frames": {
+      "sharpness": 954.6
+    }
+  }
+}

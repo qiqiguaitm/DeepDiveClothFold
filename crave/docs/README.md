@@ -41,6 +41,7 @@
 | 文档 | 作用 |
 |---|---|
 | **[STATUS](STATUS.md)** | 单页 TODO:已收口 / 已否决 / 未做可做 |
+| **[decoder_benchmark](decoder_benchmark.md)** | 🏆 解码器统一基准(最优解码方案):检索(最近真实帧)语义保真+锐度双赢 cos0.84/940;合成保真封顶 ~0.47 |
 | **[greedy_vs_maxprod_aliasing](greedy_vs_maxprod_aliasing.md)** | 🔬 诊断:成功数据下 greedy≠max-product(43% 一致)= milestone 混叠指纹;rollout 的 "milestone +1" 贴合 greedy |
 | **[em_hmm_negative_result](em_hmm_negative_result.md)** | ❌ 已否决:EM-HMM 统一概率框架(hmm-cluster collapsed in 768D) |
 | **[archive/](archive/)** | 历史归档:探索记录索引 · 网站大纲 · 连续 value 路线 |

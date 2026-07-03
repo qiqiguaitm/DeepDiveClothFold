@@ -51,6 +51,8 @@ milestone 代表图原来用"离簇心最近的真实帧(medoid)"。本线探索
 ## 4. 标准配置(定稿)
 **DINOv2-large 编码器 + small(0.92M)空间解码器 + patch-grid 输入 + L1 + 9k + 自适应 milestone + 自适应 value bins**。详见 [`centroid_representation_config.md`](centroid_representation_config.md)。
 
+> **⚑ 2026-07-03 统一基准更新 → 最优"latent→图"方案 = 检索(最近真实帧)**:120 帧自重建、同一套指标横评检索/patch/pooled-L1/pooled-GAN。**检索在语义保真(再编码 cos 0.84)+ 锐度(940≈真实)双赢**,合成解码器语义保真**结构性封顶 ~0.47**(GAN 锐 833 但幻觉、cos 仅 0.47;patch L1 最低但软、cos 0.42;L1 指标偏爱模糊会骗人)。合成只在"必须造 demo 集外新状态"时用 patch-grid。完整表 + 图 + 决策矩阵见 **[`decoder_benchmark.md`](decoder_benchmark.md)**。
+
 ## 5. 图集清单(`centroid_decoder/`)
 - 解码器对比:`crave_center_decoder_*` / `crave_patch_decoder_*` / `crave_aligned_centroid` / `crave_patch_gan_*`
 - 规模/选型:`crave_scale_ablation_AtoI`(A–I 总图)+ 各 per-config tag / `crave_large_decoder_ladder` / `crave_readable_centroid_candidates`
