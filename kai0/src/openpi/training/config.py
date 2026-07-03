@@ -2210,6 +2210,38 @@ _CONFIGS = [
         inline_eval_every=4,
     ),
 
+    # from-PaliGemma warm14k 续训 (2026-07-03): 原 pi05_v4_awbc_from_paligemma 跑到 step 14000 后,
+    # cnbj vePFS 满盘清理时 train_state 被删 → 无法 orbax --resume (缺优化器状态). params(含已训 action
+    # expert)完好, 故用 CheckpointWeightLoader 全量 warm-start 14000/params 继续朝 100k 跑. 权重血统仍纯
+    # 由 PaliGemma init 派生(不注入任何外部机器人预训练)→ "冷启动"实验语义不污染; 唯一非理想 = 优化器/LR
+    # 在 14k 处一次重启(fresh warmup3k+cosine). 除 weight_loader 外与 from_paligemma 逐字段一致.
+    TrainConfig(
+        name="pi05_v4_awbc_from_paligemma_warm14k",
+        model=pi0_config.Pi0Config(pi05=True),
+        data=LerobotAgilexDataConfig(
+            repo_id="/vePFS-North-E/vis_robot/workspace/deepdive_kai0/kai0/data/Task_A/self_built/A_v4_base_dagger",
+            default_prompt=None,
+            base_config=DataConfig(prompt_from_task=True),
+            use_delta_joint_actions=False,
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader(
+            "/vePFS-North-E/vis_robot/workspace/deepdive_kai0/kai0/checkpoints/pi05_v4_awbc_from_paligemma/v4_awbc_from_paligemma_cnbj/14000/params"
+        ),
+        lr_schedule=_optimizer.CosineDecaySchedule(
+            warmup_steps=3_000, peak_lr=3e-5, decay_steps=100_000, decay_lr=3e-6,
+        ),
+        ema_decay=0.9999,
+        num_train_steps=100_000,
+        keep_period=10_000,
+        save_interval=2_000,
+        num_workers=16,
+        batch_size=128,
+        fsdp_devices=8,
+        inline_eval_val_root="/vePFS-North-E/vis_robot/workspace/deepdive_kai0/kai0/data/Task_A/self_built/vis_v2_merged_val",
+        inline_eval_n_frames=200,
+        inline_eval_every=4,
+    ),
+
     # AWBC milestone-value A臂 (awbc_milestone_value_AB_plan.md §3): V2.4 零训练 value 直接当 advantage 源.
     # clone of pi05_flatten_fold_awbc (C臂), 唯一变量 = 数据 (ds_A=dagger_all_mvA, V2.4-mv discretized
     # quantile-matched 25.2%neg). 同 warm-start / config / eval → 单变量隔离 "value 来源".
