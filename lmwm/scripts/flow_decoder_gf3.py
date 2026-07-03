@@ -111,7 +111,8 @@ def main() -> None:
     ap.add_argument("--base", type=int, default=96)
     ap.add_argument("--steps", type=int, default=40000)
     ap.add_argument("--bs", type=int, default=64)
-    ap.add_argument("--ode_steps", type=int, default=20)
+    ap.add_argument("--ode_steps", type=int, default=25)
+    ap.add_argument("--save_every", type=int, default=4000)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--out", default="temp/lmwm_p0/flow_decoder.pt")
     ap.add_argument("--device", default="cuda:0")
@@ -119,14 +120,36 @@ def main() -> None:
     dev = torch.device(args.device if torch.cuda.is_available() else "cpu")
     torch.manual_seed(args.seed)
 
-    enc = DINOv3HGated(args.dino_path, device=str(dev))                 # pure-torch gated DINOv3-H
-    def encode_pooled(imgs):
-        return _batched_pooled(enc, imgs)
-
-    print("building (latent, frame) pairs ...", flush=True)
-    lat, tgt = build_pairs_enc(args.dataset_root, args.camera, encode_pooled, args.n, args.res)
+    cache = Path(f"temp/lmwm_p0/flow_pairs_n{args.n}_r{args.res}.npz")
+    if cache.exists():
+        d = np.load(cache); lat, tgt = d["lat"], d["tgt"]; print(f"loaded cached pairs {cache}", flush=True)
+    else:
+        enc = DINOv3HGated(args.dino_path, device=str(dev))             # pure-torch gated DINOv3-H
+        print("building (latent, frame) pairs ...", flush=True)
+        lat, tgt = build_pairs_enc(args.dataset_root, args.camera, lambda im: _batched_pooled(enc, im), args.n, args.res)
+        cache.parent.mkdir(parents=True, exist_ok=True); np.savez(cache, lat=lat, tgt=tgt); del enc; torch.cuda.empty_cache()
     X = torch.from_numpy(lat); Y = torch.from_numpy(tgt.astype(np.float32) / 127.5 - 1).permute(0, 3, 1, 2).contiguous()
     ntr = max(1, len(X) - min(512, len(X) // 5))
+    vsel = np.arange(ntr, len(X))[:8]
+
+    @torch.no_grad()
+    def sample(latents):
+        x = torch.randn(len(latents), 3, args.res, args.res, device=dev)
+        for k in range(args.ode_steps):
+            t = torch.full((len(latents),), k / args.ode_steps, device=dev)
+            with torch.autocast("cuda", dtype=torch.bfloat16):
+                v = net(x, t, latents)
+            x = x + (1.0 / args.ode_steps) * v.float()
+        return np.clip((x.cpu().numpy().transpose(0, 2, 3, 1) + 1) * 127.5, 0, 255).astype(np.uint8)
+
+    def save_viz(tag):
+        import matplotlib; matplotlib.use("Agg"); import matplotlib.pyplot as plt
+        samp = sample(X[vsel].to(dev)); real = np.clip((Y[vsel].numpy().transpose(0, 2, 3, 1) + 1) * 127.5, 0, 255).astype(np.uint8)
+        fig, ax = plt.subplots(2, len(vsel), figsize=(len(vsel) * 1.5, 3.2))
+        for j in range(len(vsel)):
+            ax[0, j].imshow(real[j]); ax[0, j].axis("off"); ax[1, j].imshow(samp[j]); ax[1, j].axis("off")
+        fig.suptitle(f"flow decoder {tag} | top real, bottom flow-sample", fontsize=10); fig.tight_layout()
+        fig.savefig(str(Path(args.out).with_suffix("")) + f"_sample.png", dpi=110); plt.close(fig)
     print(f"{len(X)} pairs", flush=True)
 
     net = UNet(1280, args.base).to(dev)
@@ -140,10 +163,16 @@ def main() -> None:
         with torch.autocast("cuda", dtype=torch.bfloat16):
             v = net(xt, t, lb); loss = F.mse_loss(v, x1 - x0)
         opt.zero_grad(); loss.backward(); opt.step(); sch.step()
-        if s % 2000 == 0:
+        if s % 1000 == 0:
             print(f"step {s} loss {loss.item():.4f}", flush=True)
+        if s > 0 and s % args.save_every == 0:
+            net.eval()
+            torch.save({"model": net.state_dict(), "base": args.base, "res": args.res, "step": s}, args.out)
+            save_viz(f"step{s}")
+            print(f"[save+viz @ step {s}]", flush=True); net.train()
 
-    torch.save({"model": net.state_dict(), "base": args.base, "res": args.res}, args.out)
+    net.eval(); torch.save({"model": net.state_dict(), "base": args.base, "res": args.res, "step": args.steps}, args.out)
+    save_viz("final")
     print(f"saved {args.out}", flush=True)
 
 
