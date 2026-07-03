@@ -59,6 +59,11 @@
 - **证据**:LaWM 训练 fp32 ~0.85s/步 → 8000步 110分钟。
 - **解**:**训练/评估都套 `torch.autocast("cuda", bfloat16)`**(bf16 无需 GradScaler)。已加。
 
+### B8. 编码空间必须**训练=部署=可视化统一**(否则 OOD)
+- **现象**:可视化视频里连"真实帧解码"都很差。排查:现场 `cv2+encode_pooled` 与缓存特征库 **cos 仅 0.86**(库当初用了不同的视频解码/预处理)。→ 解码器 + prod 模型(都在库空间训)拿到 OOD 输入 → 解码烂、预测被拖累。
+- **解**:**统一到唯一编码入口 `crave.encoders.encode_pooled`(DINOv3-H)+ cv2 读帧(= 部署路径)**,重编码全部帧(`reencode_pooled_unified.py`)→ 新空间 cos 自洽 1.0;`rebuild_derived.py` 保里程碑语义(与原标注 100% 匹配)重算 prototype/medoid/pairs;重训 prod + 解码器。结果:离散持平、subgoal cos 0.882→0.909、train==deploy 一致。
+- **教训**:**特征缓存 = 训练契约**;任何"现场编码"必须与建库时**逐比特同路径**(同解码器/分辨率/预处理),否则静默 OOD。缓存里最好存 build 配置(编码器/reader/res)以便复现。
+
 ### B7. 本地 vePFS **96% 满**;长训练走集群/gf3
 - 本地 /vePFS 仅 2.5TB free,131GB 本地缓存要谨慎;长训练不压本地 2 卡(本地只跑短任务/特征/评估/可视化)。
 
