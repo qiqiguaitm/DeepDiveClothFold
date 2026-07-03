@@ -2,7 +2,7 @@
 
 > 2026-06-18/19。把 milestone 簇中心从"取最近真实帧"扩展为"**解码出合成质心图**",并系统对比各编码器/解码器。
 > **图集统一放** `docs/visualization/centroid_decoder/`(本文件所有图引用均在该子目录)。
-> 选型结论(标准配置)单列见 [`centroid_representation_config.md`](centroid_representation_config.md);完整实验留痕见 [`center_representative_research.md`](visualization/center_representative_research.md)。
+> 选型结论(标准配置)见本文 §4 + 附录 与 [`decoder_benchmark.md`](decoder_benchmark.md)(2026-07-03 统一横评:最优 = 检索最近真实帧)。
 
 ---
 
@@ -42,16 +42,18 @@ milestone 代表图原来用"离簇心最近的真实帧(medoid)"。本线探索
 - 复现:`crave.encoders.load_encoder("dinov3-h").encode_grid(imgs)` → (N,1280,16,16);`crave.decoding.decoder.train_dec` 训 small 空间解码器。脚本 `lmwm/scripts/train_patch_decoder.py`;数据 `lmwm/outputs/patch_decoder/{summary.json,patch_recon_compare.png}`。
 - 数值:DINOv3-H patch-grid recon L1 2.7%,与 §2.2/§2.4 早先 DINOv2 patch 版 recon L1 ~2.9% 同量级 —— 换编码器到 DINOv3-H 结论不变。
 
-## 3. ep2302 30Hz 端到端演示(本标准配置)
-脚本 `train_scripts/kai/data/crave_ep2302_30hz_decoded.py`。全程 DINOv2-large 编码 + small 解码器:
+## 3. ep2302 30Hz 端到端演示(DINOv2-large 时期演示,编码器现默认 DINOv3-H)
+脚本 `train_scripts/kai/data/crave_ep2302_30hz_decoded.py`。该演示全程 DINOv2-large 编码 + small 解码器(合成质心);当前代表图默认改为检索最近真实帧(§4):
 
 - **自适应 milestone**(KMeans-96→覆盖率→Otsu)+ **自适应 value bins**(bins=milestone 位置,value↔milestone 精确对应)+ **报告式平滑**(`smooth_monotone`,fps 标定移动平均)。
 - 产物:`crave_ep2302_30hz_decoded.png`(value 曲线 + milestone 变化 + 每 milestone 簇中心解码图)、`crave_ep2302_30hz_decoded.mp4`(左相机 / 右上 value 游标 / 右下解码质心,**并行 compose + libx264** 编码,**逐帧 2960 全验证 ALL_PASS**)、`crave_ep2302_transition_3row.png`(跳变帧四行:原始 / encode-decode 重建 / 簇中心解码 / 最近真实 medoid)。
 
-## 4. 标准配置(定稿)
-**DINOv2-large 编码器 + small(0.92M)空间解码器 + patch-grid 输入 + L1 + 9k + 自适应 milestone + 自适应 value bins**。详见 [`centroid_representation_config.md`](centroid_representation_config.md)。
+## 4. 标准配置(定稿,2026-07-03 更新)
+**DINOv3-H 编码器 + 检索(最近真实帧)最佳解码器 + 自适应 milestone + 自适应 value bins**。
 
-> **⚑ 2026-07-03 统一基准更新 → 最优"latent→图"方案 = 检索(最近真实帧)**:120 帧自重建、同一套指标横评检索/patch/pooled-L1/pooled-GAN。**检索在语义保真(再编码 cos 0.84)+ 锐度(940≈真实)双赢**,合成解码器语义保真**结构性封顶 ~0.47**(GAN 锐 833 但幻觉、cos 仅 0.47;patch L1 最低但软、cos 0.42;L1 指标偏爱模糊会骗人)。合成只在"必须造 demo 集外新状态"时用 patch-grid。完整表 + 图 + 决策矩阵见 **[`decoder_benchmark.md`](decoder_benchmark.md)**。
+- **编码器 DINOv2-large → DINOv3-H**:当前最优编码器架构选择(LMWM / 跨数据集泛化均用它)。
+- **代表图 / latent→图 = 检索(最近真实帧)**,规范组件 `lmwm.LatentRetrievalDecoder`。**[`decoder_benchmark.md`](decoder_benchmark.md)** 的 120 帧统一横评证明:检索在**语义保真(再编码 cos 0.84)+ 锐度(940≈真实)双赢**,而所有**合成**解码器(patch/pooled/GAN)语义保真**结构性封顶 ~0.47**(GAN 锐 833 但幻觉;patch L1 最低但软 cos 0.42;L1 指标偏爱模糊会骗人)。
+- **合成小解码器降级为可选**:只在"必须造 demo 集里没有的新状态"时用 patch-grid(软),不再作代表图默认(见附录)。
 
 ## 5. 图集清单(`centroid_decoder/`)
 - 解码器对比:`crave_center_decoder_*` / `crave_patch_decoder_*` / `crave_aligned_centroid` / `crave_patch_gan_*`
@@ -63,7 +65,9 @@ milestone 代表图原来用"离簇心最近的真实帧(medoid)"。本线探索
 
 ## 6. milestone 聚类 / 排序 / value 方法定稿(2026-06-20)
 
-> **最终架构(TL;DR)**:**DINOv2-large 图像 ⊕ proprio 聚类(语义 milestone + 起末消歧)→ precedence 定序 + isotonic 度量 value(排序正确、保信息)→ Wan2.2-VAE 渲染 medoid(锐利代表)**。Wan 只做渲染,不做编码器/聚类。
+> **⚑ 编码器/渲染已更新(2026-07)**:下文 §6.1–6.3 是 **DINOv2-large 时期**的调查记录;**当前默认编码器 = DINOv3-H**(value 编码器无关,corr 0.982,见 [encoders](encoders.md)),**代表图 = 检索最近真实帧**(统一基准最优,见 §4 / [decoder_benchmark](decoder_benchmark.md))。结论(proprio 消起末别名、precedence+isotonic 定序 value、medoid/检索作锐利代表)**不变**,编码器可无缝替换。
+>
+> **最终架构(TL;DR)**:**DINOv3-H 图像 ⊕ proprio 聚类(语义 milestone + 起末消歧)→ precedence 定序 + isotonic 度量 value(排序正确、保信息)→ 检索最近真实帧作代表(可选 Wan2.2-VAE 照片级渲染)**。编码器/渲染可插拔,不改 value。
 
 ### 6.1 特征:DINOv2-large 图像 ⊕ proprio(消起末别名)
 **问题**:纯图像特征(DINOv2-large)有**起末视觉别名** —— 折好的布(紧凑平整方块)≈ 摊平的布,DINOv2 难分 → 折好态被吸到早期 milestone,value 到不了 1.0(实测 ep763 0.15、ep1527 0.32,均为标准完整折)。
@@ -124,7 +128,7 @@ milestone 代表图原来用"离簇心最近的真实帧(medoid)"。本线探索
 
 - **Design 1 · goal-image(解码 milestone+1 簇中心 → 目标图喂 VLA)** —— **首选、范式最成熟、最低风险**。
   - ⚠️ **关键风险**:我们的解码质心是**平滑软原型**(非写实),生成子目标带伪影/非真进度会**拖垮**低层策略(已证 3-0)。→ **必须配 GHIL-Glue 式子目标过滤器**(过滤"无进度/有害"子目标),否则适得其反。
-- **Design 2 · latent(milestone+1 簇中心 latent 作子目标 embedding 注入 VLA)** —— 更省(无需解码),但**前提是 milestone latent 在 VLA 编码器空间**。我们 milestone 用 DINOv2-large,pi0/pi05 用别的视觉编码器 → **不共享** → 需让 **milestone 聚类改用 VLA 同款编码器** 或 **训一个对齐投影**(额外工程)。
+- **Design 2 · latent(milestone+1 簇中心 latent 作子目标 embedding 注入 VLA)** —— 更省(无需解码),但**前提是 milestone latent 在 VLA 编码器空间**。我们 milestone 用 DINOv3-H,pi0/pi05 用别的视觉编码器 → **不共享** → 需让 **milestone 聚类改用 VLA 同款编码器** 或 **训一个对齐投影**(额外工程)。
 - **诚实红线**:"子目标图条件 > 语言/纯 BC"被**否决(0-3)** → milestone 条件化**不一定**优于我们现有的**稠密 value(优势加权 BC)** → 定位为**补充**(尤其长程/多模态 cloth fold),先验证有无增量,别当替代。
 
 **便宜首验(各设计)**:
@@ -154,26 +158,26 @@ milestone 代表图原来用"离簇心最近的真实帧(medoid)"。本线探索
 
 # 附录: 簇中心代表图 · 标准配置
 
-> 2026-06-18 定稿。经编码器扫 + 解码器倒 U 阶梯 + 数据/频率消融后,**确定簇中心可视化(解码质心)的标准 enc/dec 配置**。
+> 2026-07-03 更新。代表图默认从"合成解码质心"改为"**检索(最近真实帧)**"(统一基准定论);旧合成质心配置降级为可选。
 
 ## 标准配置(当前最优)
 
-| 组件 | 选择 | 参数 | 理由 |
-|---|---|---|---|
-| **编码器** | **DINOv2-large** | 1024d / ~300M | 簇中心语义结构最丰富(112 vs base 89 / small 92) |
-| **解码器** | **small**(空间卷积) | **0.92M** | 解码器倒 U 的**峰值**(tiny 52 / **small 112** / medium 107 / big 79 / xl 88) |
-| **解码器输入** | DINOv2-large **patch grid**(16×16×1024,非池化) | — | 保空间才不糊;池化向量解码必鬼影(已证) |
-| **解码器损失** | L1 + 0.5·MSE(纯 L1 即可) | — | 对抗(GAN)会掉色/幻觉高频,可读性反降 |
-| **训练数据** | ~9k 帧(挖矿 ~200 ep)| — | 9k > 24k(small 解码器吃 24k 会过度平滑) |
-| **milestone 选择** | **自适应**:KMeans-96 → 覆盖率 → Otsu 自动阈值 | 数据自适应 | 不固定 K;V2.4 思路 |
-| **value bins** | **自适应**:bins = milestone 进度位置 `Pord` + 端点{0,1} | NB = #milestone + 2(无超参) | value↔milestone 构造上精确一一对应 |
-| **value 读出频率** | 30Hz,DP 窗 `lam=80, medw=45` | — | 频率窗按 fps 标定(挖矿仍 3Hz 即够) |
-| **代表图本身** | **簇中心 = 簇内 large-grid 平均 → small 解码器解码** | — | 平滑、去具体化的"可读质心原型" |
+| 组件 | 选择 | 理由 |
+|---|---|---|
+| **编码器** | **DINOv3-H** | 当前最优编码器架构(替代 DINOv2-large);LMWM / 跨数据集泛化均用它 |
+| **代表图 / latent→图** | **检索(最近真实帧)** `LatentRetrievalDecoder` | 统一基准语义保真 cos 0.84 + 锐度 940≈真实**双赢**、零幻觉;合成封顶 0.47([decoder_benchmark](decoder_benchmark.md)) |
+| **milestone 选择** | **自适应**:KMeans → 覆盖率 → Otsu 自动阈值 | 不固定 K;V2.4 思路 |
+| **value bins** | **自适应**:bins = milestone 进度位置 `Pord` + 端点{0,1} | value↔milestone 精确一一对应 |
+| **value 读出** | 30Hz,DP 窗按 fps 标定;或 Viterbi-free 在线 [sym-adaptive-vote](sym_adaptive_vote.md) | — |
 
-**一句话**:`DINOv2-large 编码器 + small(0.92M)空间解码器 + patch-grid 输入 + L1 + 9k 数据 + 自适应 milestone`。
+**一句话**:`DINOv3-H 编码器 + 检索(最近真实帧)最佳解码器 + 自适应 milestone + 自适应 value bins`。
+
+## 可选:合成"可读质心"(已被检索取代为默认)
+
+需要**去具体化的合成原型图**(不绑某条 demo 的布料颜色)时,用 small(0.92M)空间解码器解码簇中心 **patch-grid**(非池化)+ L1 + ~9k 帧(历史最优合成配置,DINOv2/DINOv3-H patch-grid 通用)。注意其**天生软**(cos ~0.42、锐度 ~112 vs 真实 ~950)、且**平均质心 ill-posed**(加规模/换损失救不动,§2.4)。**默认代表图请用检索**;合成仅用于"必须造 demo 集外新状态"或"刻意抽象的示意图"。
 
 ## 适用范围与诚实边界
 
-- **用途**:整洁、去具体化的"可读质心原型"——做 milestone 词表/示意、不绑某条 demo 的布料颜色。
-- **不替代最近真实帧**:要**最清晰**的代表图,仍用 **最近真实帧(medoid)**(锐度 476 vs 解码质心 ~112)。
+- **默认代表图 = 检索最近真实帧**:最清晰(真实照片级)+ 阶段语义对齐(cos 中位 ~0.90,跨布料颜色泛化);唯**完成态偏弱**(进度≈0.95 时 cos ~0.80,折好态视觉混叠 + 样本少)。效果画廊 `visualization/decoder_benchmark/retrieval_decode_gallery.png`。
+- **合成质心**:仅"可读原型/示意"用途,天生软,不追其高锐度(可形变布料"平均" ill-posed)。
 - **不要追"合成平均质心的高锐度"**:可形变布料的"平均"数学上 ill-posed,加规模/换损失都救不动;small 解码器给的是**平滑可读原型**,这已是该路线的最优点。

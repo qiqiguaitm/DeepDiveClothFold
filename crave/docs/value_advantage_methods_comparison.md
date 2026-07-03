@@ -63,7 +63,7 @@ min_θ E[ −log π_θ(a|o,ℓ) − α log π_θ(a|I_t,o,ℓ) ]   (30% dropout I
 
 ## 3. CRAVE(本工作,零训练离散 milestone-value)
 
-跨 episode 重复态 = milestone → Viterbi-DP 在离散 bin(NB=21)上读出 0→1 单调阶梯 value。**零训练、零标签**(frozen DINOv2 + KMeans + DP)。advantage = value 的窗口差分(同 kai0 的 absolute_advantage 定义)。详见 [METHOD](cross_episode_recurrence_value_METHOD.md)。
+跨 episode 重复态 = milestone → Viterbi-DP 在离散 bin(NB=21)上读出 0→1 单调阶梯 value。**零训练、零标签**(frozen DINO,默认 DINOv3-H + KMeans + DP)。advantage = value 的窗口差分(同 kai0 的 absolute_advantage 定义)。详见 [METHOD](cross_episode_recurrence_value_METHOD.md)。
 
 ---
 

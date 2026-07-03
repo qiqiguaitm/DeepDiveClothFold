@@ -12,9 +12,11 @@
 
 **CRAVE 假说**(已验证):同任务多条 demo 中**反复出现的状态 = 任务必经 milestone**;把跨 episode 的统计重复性当作监督信号,**零训练**地估计稠密 progress value,替代 AWBC 的逐帧监督回归(pi0-AE)。
 
-**三支柱**:① **跨 episode 统计重复性**揭示任务结构(无标签);② 反复出现的态 = **自动浮现的 milestone**(非人工标);③ 经 Viterbi-DP 把离散 milestone 读出为**稠密单调 progress value**(frozen 特征,零梯度更新)。"零训练"贯穿全链:DINOv2-small 冻结 + KMeans + DP,没有任何可学习参数被更新。
+**三支柱**:① **跨 episode 统计重复性**揭示任务结构(无标签);② 反复出现的态 = **自动浮现的 milestone**(非人工标);③ 经 Viterbi-DP 把离散 milestone 读出为**稠密单调 progress value**(frozen 特征,零梯度更新)。"零训练"贯穿全链:**DINO 编码器冻结**(默认 DINOv3-H)+ KMeans + DP,没有任何可学习参数被更新。
 
 **V2.4(CRAVE 当前实现)= 三路特征 + 增分子 coverage 修正 + 进度均匀分桶 + GMM 多模式别名 + 端点锚 + 连续性 Viterbi DP**。每个组件都是被实验逼出来的(对应一个失败/发现,见探索文档)。
+
+> **⚑ 架构现状(2026-07,以 [CRAVE_overview](CRAVE_overview.md) 为准)**:当前默认**编码器 = DINOv3-H**(ViT-H/16+,1280-D pooled),特征 = **DINOv3-H 1280 ⊕ proprio 28 → 1308D**(单视觉路,替代下表 V2.4 的 raw⊕armmask 三路 DINOv2-small);代表图 / latent→图 = **检索最近真实帧**(统一基准最优,见 [decoder_benchmark](decoder_benchmark.md))。**value 质量编码器无关**(DINOv2-large↔DINOv3-H+ 逐帧 corr 0.982,见 [encoders](encoders.md))—— 下表 V2.4 的 DINOv2-small 三路是**早期等效配方**,结论不变;可无缝换 DINOv3-H。
 
 ---
 

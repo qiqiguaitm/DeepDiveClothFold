@@ -32,7 +32,7 @@
 
 ### 1.2 CRAVE 的结构性优势(别人都没同时具备的组合)
 
-1. **零训练 + 零标签 + 零 VLM/API**:frozen DINOv2 + KMeans + Viterbi-DP,纯 CPU 可跑,可扩百万级离线数据。
+1. **零训练 + 零标签 + 零 VLM/API**:frozen DINO(默认 DINOv3-H)+ KMeans + Viterbi-DP,纯 CPU 可跑,可扩百万级离线数据。
 2. **离散技能结构(milestone 图),非仅标量**:milestone 比时间多解释 2× 动作方差;VIP/LIV/TOPReward/GVL 都只给连续标量。
 3. **重复性是信号而非噪声**:GVL 明确在"重复/次优轨迹"上失效;CRAVE 恰恰靠跨 episode 重复挖结构 → 大批同任务 demo 上是优势区。
 4. **确定性、可复现、可检视**:无 VLM 随机性;milestone 簇可视化/可审计(簇间流转 2D/3D)。
