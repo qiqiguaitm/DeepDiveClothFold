@@ -30,7 +30,10 @@ See `docs/recurrence_state_world_model_plan.md` for the current plan.
 
 | 文档 | 内容 |
 |---|---|
-| [docs/lmwm_architecture_20260703.md](docs/lmwm_architecture_20260703.md) | **★架构框架(收紧版,单一事实源)** — augin 输入、UnifiedLMWM、subgoal 双损失框架、集成/蒸馏部署、解码旁路 |
+| [docs/lmwm_final_architecture_20260703.md](docs/lmwm_final_architecture_20260703.md) | **★★最终架构(定稿,单一事实源)** — 感知/milestone预测器/VLA subgoal接口、参数量IO、指标vs baseline、收紧决策、跨外观泛化 |
+| [docs/pitfalls_and_lessons_20260703.md](docs/pitfalls_and_lessons_20260703.md) | **试错与踩坑记录** — 建模负结果 + gf3 工程坑 + 验证方法库(防重复踩坑) |
+| [docs/architecture_research_20260703.md](docs/architecture_research_20260703.md) | milestone+1 架构调研(JEPA/层级/LaWM/扩散)+ 起步方案 |
+| [docs/lmwm_architecture_20260703.md](docs/lmwm_architecture_20260703.md) | 架构框架(前一版收紧) — augin 输入、UnifiedLMWM、subgoal 双损失、集成/蒸馏 |
 | [docs/lmwm_technical_report.md](docs/lmwm_technical_report.md) | **技术报告** — 方法 + 配图结果 + 解码预测可视化 |
 | [docs/lmwm_stage_overview.md](docs/lmwm_stage_overview.md) | 阶段总览 — 所有阶段、结果和诚实局限的单页导览 |
 | [docs/phase_a_real_future_20260702.md](docs/phase_a_real_future_20260702.md) | Phase A — 真实未来标签 + 图无关评估(0.94→0.23 诚实重塑) |
