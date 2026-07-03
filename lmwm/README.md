@@ -37,6 +37,7 @@ See `docs/recurrence_state_world_model_plan.md` for the current plan.
 | [docs/phase_b_calibration_prior_20260702.md](docs/phase_b_calibration_prior_20260702.md) | Phase B — 校准(ECE 0.10→0.005)+ 图作软先验融合(λ=0.3) |
 | [docs/phase_c_history_20260702.md](docs/phase_c_history_20260702.md) | Phase C — 帧历史条件(负结果:无增益) |
 | [docs/vla_integration_20260702.md](docs/vla_integration_20260702.md) | Phase D — VLA 集成接口(`lmwm.vla_interface.VLALMWMPredictor`) |
+| [docs/next_milestone_vla_validation_plan.md](docs/next_milestone_vla_validation_plan.md) | **Phase E plan** — next-milestone 提示对 VLA 是否有效:调研+决定性验证(GT 子目标先行, kill criteria) |
 | [docs/lawm_reference_20260702.md](docs/lawm_reference_20260702.md) | LaWM/LAM 训练配方参考 + 在 LMWM 数据上的损失测试 + 优化建议 |
 | [docs/ceiling_analysis_20260702.md](docs/ceiling_analysis_20260702.md) | 是否到瓶颈?深度分析(kNN 上界 + 标签/混叠诊断)+ 突破方法 |
 | [docs/mean_variance_research_20260702.md](docs/mean_variance_research_20260702.md) | 均值+方差双降研究(7B否决;ensemble+CVaR+code因子化 → top1 0.453/std −40%) |
