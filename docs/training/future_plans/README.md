@@ -20,10 +20,12 @@
 | 优先级 | 计划 | 状态 | 资源 | ETA | 目的 |
 |---|---|---|---|---|---|
 | ⭐⭐⭐ P0 | [**v4 数据可用性验证 (AE AWBC)**](plans/pi05_v4_awbc_validation_plan.md) | 📋 配置定档(待集群) | 8× GPU | — | 全 v4 base(1207ep)+dagger(789ep) 跑 KAI0 AE AWBC, 验证 v4 新框架(前裁+尾裁+夹爪取主臂 action≠state)可用性, 重点真机夹持稳定性 vs 旧 AWBC |
+| ⭐⭐⭐ P0 | [**v4 AWBC × from-PaliGemma base (100k)**](plans/pi05_v4_awbc_from_paligemma_plan.md) | 📋 配置定档(待 discretize 阈值) | cnbj Robot-North-H20 8 卡闲时 | — | 同 v4 AWBC 流程,但 **从 PaliGemma VLM base 冷启动(非 warm-start)、100k step、cnbj H20 闲时**;from_paligemma 已实证收敛(§7.5)→ 验证"自有 v4 + AWBC + 自训 from base" |
 | ⭐⭐⭐ P0 | [**叠衣 SOP 范式基线小实验**](plans/pi05_fold_sop_paradigm_baselines.md) | 📋 配方定档, 逐范式推进 | 8× GPU | — | 同一训练配方在不同折法 SOP 各做 pi05 基线: Vertical Fold v1(Task_AV1 200ep)+ Horizontal Fold v1(Task_AH1 200ep已落地), 跨范式对比哪种更易学 |
 | ⭐⭐⭐ P0 | [**Task_A + Task_AV1 混合 1:1 co-train**](plans/pi05_task_a_av1_mixed_1to1_plan.md) | 📋 定稿待实施 | BJ 8× H20 | — | 横向折(1033ep)+竖向折新SOP(304ep冻结)pre-merge + domain_weights=(1,3.256) frame-1:1 过采样, JAX, 50k, warm-start mixed_1_clean |
 | ⭐⭐⭐ P0 | [**AWBC 完整流程 on vis Task_A**](plans/awbc_vis_task_a_full_pipeline_plan.md) | 📝 待确认 | 8× GPU | ~1 周 | vis-native 重建打标走完整 Stage 0→4(标注→estimator→打标→discretize→AWBC),对照复用版/SFT |
 | ⭐⭐⭐ P0 | [**AWBC × ViVa value model 对比**](plans/awbc_viva_value_comparison_plan.md) | 📝 待评审 | (见 plan) | (见 plan) | 只换 advantage label 来源 (pi0-AdvEst → ViVa) 的受控 A/B |
+| ⭐⭐ P1 | [**CRAVE→KAI0-AE 蒸馏(两标签对照)**](plans/crave_ae_distill_plan.md) | 📋 数据就绪(两数据集已写, 待集群训) | 8× GPU | — | 用 CRAVE 逐帧 value 替代人工 `stage_progress_gt`;两标签法(anchor-linear / viterbi+时间先验)各训一 AE,离线比 P/N 干净度/单调/advantage 稳定度(暂不做 VLA/rollout)。数据集 `crave_stage_A` / `crave_stage_B` 已就绪 |
 | ⭐⭐ P1 | [**A_mirror200_pi05_pytorch** (pure_200 PyTorch 对照)](plans/A_mirror200_pi05_pytorch.md) | ✅ done (见 §8 results + postmortem) | 8× GPU | — | 已完成: PyTorch 同协议比 JAX 差 4.1× (@50), EMA 假说证伪 |
 | ~~A_0423_0527 双 init~~ | [(plan)](plans/A_0423_0527_excl_calibration_drift.md) | ❌ 取消 | — | — | 用户 2026-05-31 决定不做 |
 | ~~PyTorch EMA patch + 重训~~ | [(plan)](plans/pytorch_ema_patch_and_retrain.md) | ❌ 作废 | — | — | EMA 假说被 model-soup 证伪, 见 postmortem |
