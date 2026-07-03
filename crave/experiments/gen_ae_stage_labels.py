@@ -73,11 +73,13 @@ def method_anchor(sim, assign, pord, t3):
     return np.clip(np.interp(t3, at, av), 0, 1)
 
 
-def method_viterbi(sim, pord, lam=8.0, medw=5):
-    """Viterbi-DP:bins=milestone(按 Pord 升序), emit=1-sim, 转移 λ|Δbin|; value=Pord[path], 中值平滑。"""
+def method_viterbi(sim, pord, lam=8.0, medw=5, alpha=0.6):
+    """Viterbi-DP:bins=milestone(按 Pord 升序), emit=(1-sim)+α|tn-Pord| 时间先验(破起末别名),
+    转移 λ|Δbin|; value=Pord[path], 中值平滑。α 时间先验 = sym-adaptive-vote 的 distance-correction 思路。"""
     order = np.argsort(pord); Pv = pord[order]; K = len(order)
-    emit = 1.0 - sim[:, order]                              # (n,K) 越小越像
-    n = len(emit); pen = lam * np.abs(np.arange(K)[:, None] - np.arange(K)[None]) / max(1, K - 1)
+    n = len(sim); tn = np.linspace(0, 1, n)
+    emit = (1.0 - sim[:, order]) + alpha * np.abs(tn[:, None] - Pv[None, :])   # +时间先验:t 处偏好 Pord≈tn 的态
+    pen = lam * np.abs(np.arange(K)[:, None] - np.arange(K)[None]) / max(1, K - 1)
     cost = emit[0].copy(); bp = np.zeros((n, K), int)
     for t in range(1, n):
         tr = cost[None, :] + pen                            # to k from j
@@ -110,6 +112,11 @@ def gen_ep(e, feat, E, FR, C, pord):
     xa = np.clip(fr, 0, nl - 1)                              # 3Hz 帧的 native 索引
     natA = np.clip(np.interp(xi, xa, vA), 0, 1)
     natB = np.clip(np.interp(xi, xa, vB), 0, 1)
+
+    def norm01(v):                                           # 端点归一到 0→1(kai0_base 全成功完整折;单调曲线 min=首/max=末)
+        lo, hi = float(v.min()), float(v.max())
+        return np.clip((v - lo) / (hi - lo + 1e-6), 0, 1) if hi - lo > 1e-3 else v
+    natA, natB = norm01(natA), norm01(natB)
     return {"vA3": vA, "vB3": vB, "natA": natA, "natB": natB, "t3": t3, "nl": nl}
 
 
@@ -162,18 +169,19 @@ def main():
         fig.savefig(VIZ / "stage_label_compare.png", dpi=120); print("SAVED", VIZ / "stage_label_compare.png", flush=True)
 
     if a.full:
-        # 只出 A(anchor-linear, 鲁棒); B(viterbi)走 crave_value.py 生产读出(见 plan),不用 naive 版
-        (OUTL / "anchor").mkdir(parents=True, exist_ok=True)
+        for nm in ("anchor", "viterbi"):
+            (OUTL / nm).mkdir(parents=True, exist_ok=True)
         done = 0
         for e in eps:
             r = gen_ep(e, feat, E, FR, C, pord)
             if r is None:
                 continue
-            np.save(OUTL / "anchor" / f"ep{e}.npy", r["natA"].astype(np.float32))
+            np.save(OUTL / "anchor" / f"ep{e}.npy", r["natA"].astype(np.float32))   # A: anchor-linear
+            np.save(OUTL / "viterbi" / f"ep{e}.npy", r["natB"].astype(np.float32))  # B: viterbi + 时间先验
             done += 1
-            if done % 300 == 0:
+            if done % 500 == 0:
                 print(f"  {done}/{len(eps)}", flush=True)
-        print(f"FULL_DONE_A {done} eps -> {OUTL}/anchor (B via crave_value.py, see plan)", flush=True)
+        print(f"FULL_DONE {done} eps -> {OUTL}/{{anchor,viterbi}}", flush=True)
 
 
 if __name__ == "__main__":
