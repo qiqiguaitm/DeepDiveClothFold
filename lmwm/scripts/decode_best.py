@@ -39,12 +39,23 @@ class BestDecoder:
         self.step = ck.get("step")
 
     @torch.no_grad()
-    def __call__(self, latents, ode_steps: int | None = None) -> np.ndarray:
+    def __call__(self, latents, ode_steps: int | None = None,
+                 fixed_noise: "torch.Tensor | None" = None, seed: int | None = None) -> np.ndarray:
+        """Decode latents. For TEMPORALLY STABLE / DETERMINISTIC output (e.g. per-frame milestone
+        hints where consecutive latents are ~equal), pass seed=<int> (or fixed_noise): the ODE
+        starts from ONE shared noise so identical latents -> identical images and nearby latents ->
+        nearby images (no per-frame flicker). Default (both None) = fresh noise per row = generative."""
         n_steps = ode_steps or self.ode_steps
         lat = latents if torch.is_tensor(latents) else torch.from_numpy(np.asarray(latents, np.float32))
         lat = lat.float().to(self.dev)
         lat = lat / (lat.norm(dim=-1, keepdim=True) + 1e-8)
-        x = torch.randn(len(lat), 3, self.res, self.res, device=self.dev)
+        if fixed_noise is not None:
+            x = fixed_noise.to(self.dev).reshape(1, 3, self.res, self.res).expand(len(lat), -1, -1, -1).clone()
+        elif seed is not None:
+            g = torch.Generator(device=self.dev).manual_seed(int(seed))
+            x = torch.randn(1, 3, self.res, self.res, device=self.dev, generator=g).expand(len(lat), -1, -1, -1).clone()
+        else:
+            x = torch.randn(len(lat), 3, self.res, self.res, device=self.dev)
         for k in range(n_steps):
             t = torch.full((len(lat),), k / n_steps, device=self.dev)
             with torch.autocast("cuda", dtype=torch.bfloat16):
