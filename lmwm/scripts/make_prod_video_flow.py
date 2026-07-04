@@ -38,6 +38,7 @@ def main() -> None:
     ap.add_argument("--graph_npz", default="lmwm/data/recurrence_graphs/kai0base_dinov3h/recurrence_graph_v2.npz")
     ap.add_argument("--members", default="lmwm/checkpoints/prod_milestone_v2/member_*.pt")
     ap.add_argument("--decoder", default="lmwm/checkpoints/dinov3h_decoder/dec_best.pt")
+    ap.add_argument("--tag", default="flow", help="decoder label shown in panels (e.g. flow, L1)")
     ap.add_argument("--dataset_root", default="kai0/data/Task_A/kai0_base", type=Path)
     ap.add_argument("--camera", default="observation.images.top_head")
     ap.add_argument("--ode_steps", type=int, default=25)
@@ -47,8 +48,20 @@ def main() -> None:
     args = ap.parse_args()
     dev = torch.device(args.device if torch.cuda.is_available() else "cpu")
 
-    dec = load_best_decoder(args.decoder, str(dev), ode_steps=args.ode_steps)   # flow-matching decoder
-    R = dec.res
+    # unified decoder: flow (dec_best, key 'base') or pooled L1/GAN (key 'din'). Same layout/labels
+    # for every decoder -> the archived videos differ ONLY in the decoder + its tag (consistency req).
+    _ck = torch.load(args.decoder, map_location="cpu")
+    if "base" in _ck:
+        dec = load_best_decoder(args.decoder, str(dev), ode_steps=args.ode_steps)   # flow-matching
+        R = dec.res
+    else:
+        from train_dinov3h_decoder import PooledDecoder, l2 as _l2                   # pooled L1/GAN
+        R = int(_ck["res"]); _D = PooledDecoder(din=int(_ck["din"]), res=R).to(dev)
+        _D.load_state_dict(_ck["model"]); _D.eval()
+        def dec(lats):
+            with torch.no_grad():
+                o = _D(torch.from_numpy(_l2(np.atleast_2d(np.asarray(lats, np.float32)))).to(dev)).cpu().numpy()
+            return np.clip((o.transpose(0, 2, 3, 1) + 1) * 127.5, 0, 255).astype(np.uint8)
 
     z = np.load(args.pairs); proto = np.load(args.graph_npz)["prototype_table"].astype(np.float32)
     feat = build_feat(z, proto); din = feat.shape[1]
@@ -84,13 +97,13 @@ def main() -> None:
             break
         k = int(np.searchsorted(ts, f, side="right") - 1); k = max(0, min(k, len(idx) - 1))
         left = label(cv2.resize(im[:, :, ::-1], (BIG, BIG)), f"ep{args.episode} frame {f} (real, native)")
-        rt = rlabel(pred_dec[k], "PRED milestone+1 -> flow decode")
-        rb = rlabel(true_dec[k], "TRUE milestone+1 -> flow decode")
+        rt = rlabel(pred_dec[k], f"PRED milestone+1 -> {args.tag} decode")
+        rb = rlabel(true_dec[k], f"TRUE milestone+1 -> {args.tag} decode")
         right = cv2.resize(np.vstack([rt, rb]), (RW, left.shape[0]))
         canvas = np.hstack([left, np.full((left.shape[0], 8, 3), 20, np.uint8), right])
         vw.write(cv2.cvtColor(canvas[:H, :W], cv2.COLOR_RGB2BGR)); f += 1
     cap.release(); vw.release()
-    print(f"saved {args.out} | {f} frames @ {out_fps}fps | {len(idx)} pair-frames (bank-space v2, flow decoder ODE{args.ode_steps})")
+    print(f"saved {args.out} | {f} frames @ {out_fps}fps | {len(idx)} pair-frames (bank-space v2, {args.tag} decoder)")
 
 
 if __name__ == "__main__":

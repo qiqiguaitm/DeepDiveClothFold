@@ -399,6 +399,28 @@ a.link{color:var(--accent3);text-decoration:none;border-bottom:1px dashed var(--
   <figcaption><b>Latent milestone 预测能力</b>:这里只抽取 #8/#13/#17 三个 milestone 示意流程。当前真实帧与当前簇中心拆开展示:先由 real frame 编码并聚类得到 current milestone center,再基于该簇中心在 Recurrence Latent Milestone Graph 上分别得到 Greedy Milestone 与 Max-Probability Milestone。两个 next-milestone 候选只展示 decoded center,表示可直接作为可审查的 latent prototype。</figcaption>
 </figure>
 
+<h3>6.2.1 下一 milestone 的可审查解码 — 归档两套解码方案</h3>
+<p>预测出的下一 milestone 是一个 <b>latent prototype</b>,可解码成图像供人审查。我们在多种解码器中<b>只保留两套忠实(非幻觉)方案做归档</b>,其余已淘汰(GAN 会凭空编造细节 / GDL 与再编码一致性损失训练失败或产生对抗噪声 / 检索式不展示模型自身预测):</p>
+<ul style="margin-top:8px">
+  <li><b>L1(高一致性)</b>:确定性回归到条件均值——同一 latent 永远解出同一张图、绝不幻觉,但偏软(re-encode cos 0.33 / sharpness 194)。</li>
+  <li><b>flow(最好效果)★</b>:条件 flow-matching 像素解码器,在真实图像分布内采样——<b>锐利且忠实</b>(re-encode cos <b>0.69</b> / sharpness 493),结构上无法产生对抗垃圾;gf3 八卡扫参(base 96/128/160)胜出。</li>
+</ul>
+<figure>
+  <img src="assets/selfrecon_decoder_compare.png" alt="同一原始帧的两套归档解码方案对比">
+  <figcaption><b>同一原始帧 → DINOv3-H 编码 → 解码</b>(自重建上界):上=真实帧,中=L1(确定均值,高一致但软),下=flow(生成,锐+忠实)。两套归档方案在<b>同一批帧</b>上直接对照 —— flow 明显复现衣物形状/颜色/褶皱与夹爪位置;GAN 及其他方案已淘汰。</figcaption>
+</figure>
+<div class="latent-decoder-videos" style="display:flex;gap:14px;flex-wrap:wrap">
+  <figure style="flex:1;min-width:300px">
+    <video src="assets/prod_milestone_l1.mp4" controls preload="metadata"></video>
+    <figcaption><b>方案① L1 解码(高一致性)· ep1819</b>:左=真实帧;右上=PRED milestone+1 → L1 decode,右下=TRUE milestone+1 → L1 decode。确定均值、稳定不幻觉,但偏软。</figcaption>
+  </figure>
+  <figure style="flex:1;min-width:300px">
+    <video src="assets/prod_milestone_flow.mp4" controls preload="metadata"></video>
+    <figcaption><b>方案② flow 解码(最好效果)★ · ep1819</b>:同一 episode、同一 PRED/TRUE milestone+1 布局,<b>仅解码器不同</b> —— flow 明显更锐利、更忠实。</figcaption>
+  </figure>
+</div>
+<p style="color:var(--text3);font-size:12.5px">两段视频<b>逐字保持同一提示与布局(同一 episode、同一 milestone+1 语义、同一面板文字)</b>,只替换解码器,便于把差异直接归因到解码方案本身。归档到此为止:<b>仅 L1 与 flow 两套</b>,其余淘汰。</p>
+
 <h3>6.3 与 VLA 架构结合: CRAVE + VLA → LMWAM</h3>
 <p>CRAVE 可以和通用 VLA 策略结合成 <b>LMWAM (Latent Milestone World Action Model)</b>:CRAVE 负责从真实 demo 中发现 latent milestone、预测下一 milestone 并给出转移概率,VLA 负责在语言、视觉历史与机器人状态条件下完成动作生成。这样把“世界模型的 milestone 预测”和“策略模型的动作执行”解耦,避免把未来目标强行生成成像素图。</p>
 <figure>
