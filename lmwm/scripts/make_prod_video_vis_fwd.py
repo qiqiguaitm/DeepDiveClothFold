@@ -119,9 +119,10 @@ def main() -> None:
     ap.add_argument("--graph_npz", default="lmwm/data/recurrence_graphs/kai0base_dinov3h/recurrence_graph_v2.npz")
     ap.add_argument("--pairs", default="lmwm/data/crave_sequences/kai0base_dinov3h_frame2proto/pairs_next_unique_augin_v2.npz")
     ap.add_argument("--members", default="lmwm/checkpoints/prod_milestone_v2/member_*.pt")
-    ap.add_argument("--decoder", default="lmwm/checkpoints/dinov3h_decoder/dec_gan_v2.pt",
-                    help="best HUMAN-VIEWABLE non-generative decoder (deterministic single forward, sharp garment "
-                         "structure). NB: dec_reencode_v2 games reencode_cos with noise texture; dec_v2/gdl are blurry.")
+    ap.add_argument("--decoder", default="lmwm/checkpoints/dinov3h_decoder/dec_v2.pt",
+                    help="non-generative deterministic decoder (single forward, no sampling). dec_v2=L1 (faithful, no "
+                         "hallucination, softer). Alternatives: dec_gan_v2 (sharper, may hallucinate); NB dec_reencode_v2 "
+                         "games reencode_cos with noise texture.")
     ap.add_argument("--fwd_ckpt", default="lmwm/checkpoints/fwd_from_current/fwd_predm_v2.pt", type=Path)
     ap.add_argument("--code_dim", type=int, default=64)
     ap.add_argument("--fwd_steps", type=int, default=8000)
