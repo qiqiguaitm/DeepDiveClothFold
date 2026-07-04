@@ -1,6 +1,6 @@
 # LMWAM v2 整体规划 — 接 kai0 π0.5 VLA(以终为始,2026-07-04)
 
-> v1(pooled subgoal + milestone 预测 + 3 解码器)已快照备份:git tag `lmwm-v1-pooled-20260704`;模型 tar 于 `/home/tim/workspace/lmwm_v1_backup_20260704/`。本文规划 v2:把 LMWM 作为**冻结的 world-model provider**接进 kai0 的 π0.5 VLA,对齐 LaWAM 的 action-expert 注入范式,**最终产出下游 SR**(补上与 LaWAM 唯一不可比的 L2 缺口)。
+> v1(pooled subgoal + milestone 预测 + 3 解码器)已快照备份:git tag `lmwm-v1-pooled-20260704`;模型 tar 于 `/vePFS/tim/lmwm_v1_backup_20260704/`。本文规划 v2:把 LMWM 作为**冻结的 world-model provider**接进 kai0 的 π0.5 VLA,对齐 LaWAM 的 action-expert 注入范式,**最终产出下游 SR**(补上与 LaWAM 唯一不可比的 L2 缺口)。
 
 ## 0. 终点(以终为始)
 
