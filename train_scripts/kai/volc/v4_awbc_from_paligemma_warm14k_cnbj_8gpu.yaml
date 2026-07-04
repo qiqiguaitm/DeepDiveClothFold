@@ -4,13 +4,13 @@
 #   血统仍纯由 PaliGemma init 派生, 冷启动语义不污染; 唯一非理想 = 优化器/LR 在14k处一次重启. 见 config.py 注释.
 # Submit: source ~/.volc_creds && kai0/.venv/bin/python train_scripts/kai/volc/submit_yaml.py train_scripts/kai/volc/v4_awbc_from_paligemma_warm14k_cnbj_8gpu.yaml
 TaskName: "pi05-v4-awbc-from-paligemma-warm14k-cnbj-8gpu"
-Description: "v4 AWBC from-PaliGemma warm14k 续训 (14000/params 全量warm-start, train_state被删无法resume): JAX 1-host 8 H20, 100k, 闲时+resume"
+Description: "v4 AWBC from-PaliGemma warm14k 续训 (14000/params 全量warm-start, train_state被删无法resume): JAX 1-host 8 H20, 100k, 独占+resume"
 Tags: []
 
 ImageUrl: "dvs-cr-cn-beijing.cr.volces.com/vis_robot/kai:kai0-gf1"
 ResourceQueueName: "Robot-North-H20"
 Framework: "PyTorch"
-Preemptible: true               # 闲时任务: 借空闲资源, 可被抢占 → 入口自动 resume (新 ckpt 路径 train_state 会正常保存)
+Preemptible: false              # 独占 8 H20 不被抢占 (2026-07-04 用户改: 闲时在 step5700 被抢丢1700步 → 独占一口气跑完100k). 入口仍自动 resume (从 step4000 续)
 
 TaskRoleSpecs:
   - RoleName: "worker"
@@ -57,7 +57,7 @@ Entrypoint: |
   mkdir -p "$LOG_DIR"
   LOG="$LOG_DIR/v4_awbc_from_paligemma_warm14k_${STAMP}_node${NODE}.log"
   exec >> "$LOG" 2>&1
-  echo "=== entrypoint start $(date) (1-host 8 H20, 闲时任务, warm14k 续训) ==="
+  echo "=== entrypoint start $(date) (1-host 8 H20, 独占任务, warm14k 续训) ==="
   set -x
   nvidia-smi -L
   REPO=/vePFS-North-E/vis_robot/workspace/deepdive_kai0
