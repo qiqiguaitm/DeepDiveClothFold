@@ -1,0 +1,99 @@
+# freshdagger 续训微调 — pi05_v4_awbc_dct_freshft (克隆 DCT → finetune-from-49999 + 最新dagger)
+#   plan: pi05_v4_awbc_dct_freshdagger_finetune_plan.md §3. robot-task 1-host 8 A100, 30k, 低LR.
+#   Data: A_v4_freshdagger_ft (973ep: 506 dagger[06-29~07-03] + 467 base, AE打标+discretize top-30%)
+#   Init: CheckpointWeightLoader(pi05_v4_awbc_dct/49999/params) [config内]; 保留 use_dct_loss=True.
+#   目的: 修真机夹爪"微微张开" (最新100%新语义dagger续训). 推理喂 positive prompt.
+# Submit: source ~/.volc_creds && kai0/.venv/bin/python train_scripts/kai/volc/submit_yaml.py train_scripts/kai/volc/pi05_v4_awbc_dct_freshft_cnsh_8gpu.yaml
+TaskName: "pi05-v4-awbc-dct-freshft-cnsh-8gpu"
+Description: "freshdagger 续训: DCT v4 AWBC finetune-from-49999 on A_v4_freshdagger_ft (973ep), robot-task 8 A100 30k 低LR"
+Tags: []
+
+ImageUrl: "visincept-cn-shanghai.cr.volces.com/grasp/h2r:1.0"
+ResourceQueueName: "robot-task"
+Framework: "PyTorch"
+
+TaskRoleSpecs:
+  - RoleName: "worker"
+    RoleReplicas: 1
+    Flavor: "ml.hpcpni2.28xlarge"   # 8× A100-80G single node
+
+ActiveDeadlineSeconds: 259200  # 3d (30k 续训远够)
+EnableTensorBoard: false
+
+Storages:
+  - Type: "Vepfs"
+    VepfsId: "vepfs-cnsh075262e1f815"
+    SubPath: ""
+    MountPath: "/vePFS"
+
+CacheType: "Cloudfs"
+
+Envs:
+  - Name: HF_HUB_OFFLINE
+    Value: "1"
+  - Name: TRANSFORMERS_OFFLINE
+    Value: "1"
+  - Name: TOKENIZERS_PARALLELISM
+    Value: "false"
+  - Name: NCCL_DEBUG
+    Value: "WARN"
+  - Name: OMP_NUM_THREADS
+    Value: "8"
+  - Name: XLA_PYTHON_CLIENT_MEM_FRACTION
+    Value: "0.85"
+  - Name: JAX_COMPILATION_CACHE_MIN_ENTRY_SIZE_BYTES
+    Value: "-1"
+  - Name: JAX_COMPILATION_CACHE_MIN_COMPILE_TIME_SECS
+    Value: "1"
+  - Name: JAX_ENABLE_EMPTY_ARRAYS
+    Value: "true"
+
+Entrypoint: |
+  STAMP=$(date -u +%Y%m%d_%H%M%S)
+  NODE=${MLP_ROLE_INDEX:-0}
+  LOG_DIR=/vePFS/tim/workspace/deepdive_kai0/logs
+  mkdir -p "$LOG_DIR"
+  LOG="$LOG_DIR/pi05_v4_awbc_dct_freshft_${STAMP}_node${NODE}.log"
+  exec >> "$LOG" 2>&1
+  echo "=== entrypoint start $(date) node=$NODE (1-host 8 A100, freshdagger 续训) ==="
+  set -ex
+  nvidia-smi -L
+
+  KAI0=/vePFS/tim/workspace/deepdive_kai0/kai0
+  if [ ! -x "$HOME/.local/bin/uv" ]; then curl -LsSf https://astral.sh/uv/install.sh | sh; fi
+  export PATH="$HOME/.local/bin:$PATH"
+  uv python install 3.11.15 2>&1 | tail -2
+  mkdir -p /home/tim/.local/share && ln -sfn /root/.local/share/uv /home/tim/.local/share/uv
+  cd "$KAI0"
+  source .venv/bin/activate
+  python -c "import jax; print(f'jax {jax.__version__} devs={len(jax.devices())}')"
+
+  # PRE-FLIGHT
+  TRAIN=/vePFS/tim/workspace/deepdive_kai0/kai0/data/Task_A/self_built/A_v4_freshdagger_ft
+  INIT=/vePFS/tim/workspace/deepdive_kai0/kai0/checkpoints/pi05_v4_awbc_dct/pi05_v4_awbc_dct/49999/params
+  [ -f "$TRAIN/meta/episodes.jsonl" ] || { echo "FATAL: freshft data missing $TRAIN" >&2; exit 13; }
+  [ -f "$TRAIN/norm_stats.json" ]     || { echo "FATAL: norm_stats missing" >&2; exit 13; }
+  [ -f "$TRAIN/meta/tasks.jsonl" ]    || { echo "FATAL: tasks.jsonl missing (需 discretize 后)" >&2; exit 13; }
+  grep -q "Advantage: positive" "$TRAIN/meta/tasks.jsonl" || { echo "FATAL: tasks.jsonl 无 advantage prompt (discretize 未跑?)" >&2; exit 13; }
+  [ -f "$INIT/_METADATA" ]            || { echo "FATAL: init ckpt (dct/49999/params) missing $INIT" >&2; exit 13; }
+  echo "[$(date)] preflight OK (freshft data + norm + discretized tasks + DCT-49999 init verified)"
+
+  # 自动 resume: 有 step 目录 → --resume, 否则新建 (init 由 config CheckpointWeightLoader 加载 49999/params).
+  EXP=pi05_v4_awbc_dct_freshft
+  CKPT_DIR=$KAI0/checkpoints/pi05_v4_awbc_dct_freshft/$EXP
+  if ls -d "$CKPT_DIR"/[0-9]*/ >/dev/null 2>&1; then
+    RESUME_FLAG="--resume"; echo "[resume] found ckpt -> --resume"
+  else
+    RESUME_FLAG="--overwrite"; echo "[resume] no ckpt -> fresh --overwrite (finetune from dct/49999/params)"
+  fi
+
+  exec python -u scripts/train.py pi05_v4_awbc_dct_freshft \
+    --exp-name pi05_v4_awbc_dct_freshft \
+    --no-wandb-enabled \
+    $RESUME_FLAG
+
+RetryOptions:
+    EnableRetry: true
+    MaxRetryTimes: 2
+
+AccessType: "Public"

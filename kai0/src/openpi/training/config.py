@@ -2220,6 +2220,38 @@ _CONFIGS = [
         inline_eval_every=4,
     ),
 
+    # freshdagger 续训微调 (pi05_v4_awbc_dct_freshdagger_finetune_plan §3): 在已收敛的 DCT-loss v4 AWBC
+    # ckpt(49999)上, 用最新5天 dagger(506ep,100%新语义 gripper-from-master)+ 配平最新 base(467ep)续训 30k,
+    # 修真机夹爪"微微张开". 唯一非理想=base 里旧语义 (仅夹爪维 idx6/13 不一致, 其余12维一致, 用户判定可忽略).
+    # 保留 use_dct_loss=True (继承抗抖); init=finetune-from-ckpt(49999/params, 非base); 低 LR (warmup500/peak1e-5)
+    # 避免破坏已收敛权重; norm 已对新 merged 集重算. 推理喂 positive prompt (train==deploy).
+    TrainConfig(
+        name="pi05_v4_awbc_dct_freshft",
+        model=pi0_config.Pi0Config(pi05=True, use_dct_loss=True),  # 保留 DCT 平滑
+        data=LerobotAgilexDataConfig(
+            repo_id="/vePFS/tim/workspace/deepdive_kai0/kai0/data/Task_A/self_built/A_v4_freshdagger_ft",
+            default_prompt=None,
+            base_config=DataConfig(prompt_from_task=True),
+            use_delta_joint_actions=False,
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader(
+            "/vePFS/tim/workspace/deepdive_kai0/kai0/checkpoints/pi05_v4_awbc_dct/pi05_v4_awbc_dct/49999/params"
+        ),
+        lr_schedule=_optimizer.CosineDecaySchedule(
+            warmup_steps=500, peak_lr=1e-5, decay_steps=30_000, decay_lr=1e-6,   # 低 LR 续训收敛 ckpt
+        ),
+        ema_decay=0.9999,
+        num_train_steps=30_000,
+        keep_period=2_000,       # save 每 2k / keep 全程 (finetune 短, 保留所有 ckpt 供 eval 选)
+        save_interval=2_000,
+        num_workers=16,
+        batch_size=128,
+        fsdp_devices=8,
+        inline_eval_val_root="/vePFS/tim/workspace/deepdive_kai0/kai0/data/Task_A/self_built/vis_v2_merged_val",
+        inline_eval_n_frames=200,
+        inline_eval_every=4,
+    ),
+
     # AWBC v4 × from-PaliGemma-base (pi05_v4_awbc_from_paligemma_plan.md §3/§7): 同 pi05_v4_awbc 的全 v4
     # labeled 数据 (A_v4_base_dagger, AE adv_est_v1 打标 + discretize top-30%), 但 init 从 PaliGemma VLM base
     # 冷启动 (action expert 随机) + 冷启动 LR (warmup3k/peak3e-5/decay100k/end3e-6) + 100k step.
