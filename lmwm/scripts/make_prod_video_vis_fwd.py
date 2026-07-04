@@ -29,10 +29,29 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "crave/src"))
 from lmwm.data import split_indices  # noqa: E402
 from train_prod_milestone import ProdNet  # noqa: E402
+from train_dinov3h_decoder import PooledDecoder  # noqa: E402
 from make_prod_video_vis import viterbi_assign  # noqa: E402
 from crave.encoders import load_encoder  # noqa: E402
 from decode_best import load_best_decoder  # noqa: E402
 from make_episode_native_video import label  # noqa: E402
+
+
+def load_any_decoder(path, dev):
+    """Return (decode_fn: (N,1280)->uint8 imgs, res, tag). Detects flow (generative, has 'base')
+    vs a deterministic PooledDecoder (single forward pass)."""
+    ck = torch.load(path, map_location="cpu")
+    if "base" in ck:                                                # flow-matching (generative sampler)
+        f = load_best_decoder(path, str(dev))
+        return (lambda a: np.concatenate([f(a[s:s + 64]) for s in range(0, len(a), 64)])), f.res, "flow (generative)"
+    R = int(ck["res"]); D = PooledDecoder(din=int(ck["din"]), res=R).to(dev); D.load_state_dict(ck["model"]); D.eval()
+    def dec(a):
+        out = []
+        for s in range(0, len(a), 128):
+            with torch.no_grad():
+                o = D(torch.from_numpy(a[s:s + 128]).to(dev)).cpu().numpy()
+            out.append(np.clip((o.transpose(0, 2, 3, 1) + 1) * 127.5, 0, 255).astype(np.uint8))
+        return np.concatenate(out)
+    return dec, R, "deterministic"
 
 
 class MLP(nn.Module):
@@ -100,7 +119,9 @@ def main() -> None:
     ap.add_argument("--graph_npz", default="lmwm/data/recurrence_graphs/kai0base_dinov3h/recurrence_graph_v2.npz")
     ap.add_argument("--pairs", default="lmwm/data/crave_sequences/kai0base_dinov3h_frame2proto/pairs_next_unique_augin_v2.npz")
     ap.add_argument("--members", default="lmwm/checkpoints/prod_milestone_v2/member_*.pt")
-    ap.add_argument("--flow", default="lmwm/checkpoints/dinov3h_decoder/dec_best.pt")
+    ap.add_argument("--decoder", default="lmwm/checkpoints/dinov3h_decoder/dec_gan_v2.pt",
+                    help="best HUMAN-VIEWABLE non-generative decoder (deterministic single forward, sharp garment "
+                         "structure). NB: dec_reencode_v2 games reencode_cos with noise texture; dec_v2/gdl are blurry.")
     ap.add_argument("--fwd_ckpt", default="lmwm/checkpoints/fwd_from_current/fwd_predm_v2.pt", type=Path)
     ap.add_argument("--code_dim", type=int, default=64)
     ap.add_argument("--fwd_steps", type=int, default=8000)
@@ -108,7 +129,7 @@ def main() -> None:
     ap.add_argument("--beta", type=float, default=30.0)
     ap.add_argument("--stay", type=float, default=0.9)
     ap.add_argument("--max_frames", type=int, default=3000)
-    ap.add_argument("--out", default="lmwm/docs/assets/visbase_milestone_pred_fwd.mp4", type=Path)
+    ap.add_argument("--out", default="lmwm/docs/assets/visbase_milestone_pred_fwd_det.mp4", type=Path)
     ap.add_argument("--device", default="cuda:0")
     args = ap.parse_args()
     dev = torch.device(args.device if torch.cuda.is_available() else "cpu")
@@ -119,7 +140,8 @@ def main() -> None:
     trans = g["transition_probs"].astype(np.float64); trans = trans / trans.sum(1, keepdims=True).clip(1e-12)
 
     fwd, predm = train_forward(args.pairs, dev, args.code_dim, args.fwd_steps, args.fwd_ckpt)
-    flow = load_best_decoder(args.flow, str(dev))
+    decode_fn, R, dec_tag = load_any_decoder(args.decoder, dev)
+    print(f"decoder: {Path(args.decoder).name} ({dec_tag})", flush=True)
 
     vids = ([args.video] if args.video else
             sorted(glob.glob(str(Path(args.root) / f"videos/chunk-*/{args.camera}/episode_*.mp4")))
@@ -173,20 +195,19 @@ def main() -> None:
         pred_fwd = fwd(torch.cat([Xf, predm(feat_fwd)], -1)).float().cpu().numpy()
     pred_fwd /= (np.linalg.norm(pred_fwd, axis=1, keepdims=True) + 1e-8)
 
-    def dec(a):
-        return np.concatenate([flow(a[s:s + 64]) for s in range(0, len(a), 64)])
-    d_abs, d_fwd, d_true = dec(pred_abs), dec(pred_fwd), dec(true_next)
-    print("decoded absolute + forward + true (flow)", flush=True)
+    d_abs, d_fwd, d_true = decode_fn(pred_abs), decode_fn(pred_fwd), decode_fn(true_next)
+    dname = Path(args.decoder).stem
+    print(f"decoded absolute + forward + true ({dname}, {dec_tag})", flush=True)
 
-    R = flow.res; P = 256
+    P = 256
     def lab(img, t): return label(cv2.resize(img, (P, P)), t)
     args.out.parent.mkdir(parents=True, exist_ok=True)
     def compose(f):
         k = int(np.searchsorted(kt, f, side="right") - 1); k = max(0, min(k, len(kt) - 1))
         p0 = lab(frames[f], f"vis_base real | milestone {stage_m[stage_of[k]]}")
-        p1 = lab(d_abs[k], "PRED absolute -> flow")
-        p2 = lab(d_fwd[k], "PRED forward-from-current -> flow")
-        p3 = lab(d_true[k], "TRUE milestone+1 -> flow")
+        p1 = lab(d_abs[k], f"PRED absolute -> {dname}")
+        p2 = lab(d_fwd[k], f"PRED forward-from-current -> {dname}")
+        p3 = lab(d_true[k], f"TRUE milestone+1 -> {dname}")
         gap = np.full((p0.shape[0], 8, 3), 20, np.uint8)
         return np.ascontiguousarray(np.hstack([p0, gap, p1, gap, p2, gap, p3]))
     c0 = compose(0); Hc, Wc = c0.shape[:2]; Hc -= Hc % 2; Wc -= Wc % 2
