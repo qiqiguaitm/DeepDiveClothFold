@@ -1,4 +1,36 @@
-# LMWM 最优解码器交付 — flow-matching 像素解码器 (2026-07-03)
+# LMWM 像素解码器交付 — 最终收敛 (2026-07-04)
+
+## ✅ 最终决定：两个可选解码方案（milestone 提示场景）
+
+经两条硬性要求（**R1 确定性**：同 latent→同图；**R2 连续性**：近 latent→近图，无跳变）筛选 + 三 episode 实测（见下），**收敛为两个可选方案**，均满足 R1+R2：
+
+| 方案 | ckpt | 特性 | 何时用 |
+|---|---|---|---|
+| **① flow fixed-noise（首选）** | `dec_best.pt` + `seed=0` | 确定性+连续+**锐利保真**（sharp 510–661），帧间跳变 ≈L1 | 要看清结构（褶皱/夹爪/细节）的提示与展示 |
+| **② dec_v2（L1，兜底）** | `dec_v2.pt` | 确定性+连续，绝对稳但**糊**（sharp 97–510） | 只需稳定色块、不在意细节、算力吃紧（前馈单次比 ODE 快） |
+
+**用法**：`make_prod_video_vis_fwd.py --decoder dec_best.pt`（flow 分支已默认 `seed=0` 固定噪声）或 `--decoder dec_v2.pt`。库调用 `decode_best.py: BestDecoder.__call__(..., seed=0)`。
+
+**已排除**：逐帧重采样 flow（违反 R1+R2，闪烁）；裸检索 NN（违反 R2，Voronoi 边界跳变）；`dec_gan_v2`（幻觉）；`dec_reencode_v2`（噪声纹理，游戏度量）。
+
+**已知边界（decoder OOD）**：两个解码器都在 kai0（米/黑衣物）上训练；对**训练未见的颜色**（如橙色 T 恤 vis_base/2026-06-28）会**串色**（自重建即错色，证明是解码器 OOD 非预测错）。修复须用含目标颜色的帧重训/微调解码器。
+
+**最终证据资产**（保留）：
+- `assets/decoder_compare_kai0base_testep8.{png,mp4}` — kai0_base 留出测试集(ep8)：域内两方案对照，颜色正确、flow-fixed 更锐。
+- `assets/decoder_temporal_stability.png` — R1/R2 四方案实测胶片（含被否的 fresh-flow / 检索 NN）。
+- `assets/selfrecon_orange_ood_0628.png` — 橙色 OOD 串色诊断（自重建证明是解码器域外）。
+
+三 episode 实测汇总：
+
+| episode | 域 | dec_v2 跳变/锐 | flow-fixed 跳变/锐 | 颜色 |
+|---|---|---|---|---|
+| kai0_base ep8（测试集） | 域内 | 0.030 / 510 | 0.029 / **661** | ✅ 正确 |
+| vis 2026-04-23（黑衣） | 近域 | 0.080 / 97 | 0.085 / **619** | ✅ 大致对 |
+| vis 2026-06-28（橙 T 恤） | 域外 | — | — | ❌ 串色(OOD) |
+
+---
+
+# （背景）LMWM 最优解码器交付 — flow-matching 像素解码器 (2026-07-03)
 
 ## 结论：`dec_best.pt` = 条件 flow-matching 像素解码器（原 `flow_b160`）
 
