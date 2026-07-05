@@ -61,10 +61,15 @@ def _stub_heavy_deps():
             if name.startswith("__") and name.endswith("__"):
                 raise AttributeError(name)          # let dunders (__file__/__path__/...) behave normally
             return type(name, (), {})
-    for name in ["lightning", "lightning.pytorch", "lightning.pytorch.callbacks",
-                 "lightning.pytorch.loggers", "lightning.pytorch.utilities", "wandb"]:
+    names = ["lightning", "lightning.pytorch", "lightning.pytorch.callbacks",
+             "lightning.pytorch.loggers", "lightning.pytorch.utilities", "wandb"]
+    for name in names:
         if name not in sys.modules:
             sys.modules[name] = _AnyMod(name)
+    for name in names:                              # link parent.child so `import a.b as c` binds the module
+        if "." in name:
+            parent, child = name.rsplit(".", 1)
+            setattr(sys.modules[parent], child, sys.modules[name])
     sys.modules["lightning"].LightningModule = object
 
 
