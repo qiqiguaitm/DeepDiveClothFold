@@ -75,6 +75,20 @@ def build_pairs(E, FR, Fn, proto, mode, horizon, val_eps, seed, pord=None, delta
                 if i < jj < len(order):
                     tgt.append((int(order[i]), int(order[jj])))
             continue
+        if mode == "milestone_viterbi":                                  # V3.1: discrete progress-next milestone,
+            from crave.utils import viterbi_forward                       # Viterbi-monotone -> clean medoid, temporally forward
+            Fq = Fn[order]
+            emit = np.linalg.norm(Fq[:, None] - protoL[None], axis=2)
+            ms = viterbi_forward(emit, pord, up=3.0, down=25.0, hard_start=True)  # monotone in progress+time
+            ch = np.where(np.diff(ms) != 0)[0] + 1
+            st = np.concatenate([[0], ch]); en = np.concatenate([ch, [len(ms)]])
+            seg_med, seg_last = [], []
+            for s, e in zip(st, en):
+                m = int(ms[s]); sub = order[s:e]
+                seg_med.append(int(sub[(Fq[s:e] @ protoL[m]).argmax()])); seg_last.append(int(order[e - 1]))
+            for i in range(len(seg_med) - 1):
+                tgt.append((seg_last[i], seg_med[i + 1]))                 # next Viterbi-segment medoid = progress-next, forward
+            continue
         # milestone / milestone_value share the SAME stage segmentation + medoids; only target differs
         seq = (Fn[order] @ proto.T).argmax(1)
         ch = np.where(np.diff(seq) != 0)[0] + 1
@@ -102,7 +116,7 @@ def build_pairs(E, FR, Fn, proto, mode, horizon, val_eps, seed, pord=None, delta
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--mode", choices=["nearfuture", "milestone", "milestone_value", "progress_delta"], required=True)
+    ap.add_argument("--mode", choices=["nearfuture", "milestone", "milestone_value", "progress_delta", "milestone_viterbi"], required=True)
     ap.add_argument("--horizon", type=int, default=5, help="nearfuture: steps ahead in 3Hz index (5≈1.7s)")
     ap.add_argument("--progress_delta", type=float, default=0.15, help="progress_delta: CRAVE-progress increment for target")
     ap.add_argument("--code_dim", type=int, default=64)
