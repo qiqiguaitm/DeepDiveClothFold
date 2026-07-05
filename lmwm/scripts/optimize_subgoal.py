@@ -73,6 +73,9 @@ def main() -> None:
     ap.add_argument("--mode", choices=["nearfuture", "milestone"], required=True)
     ap.add_argument("--horizon", type=int, default=5, help="nearfuture: steps ahead in 3Hz index (5≈1.7s)")
     ap.add_argument("--code_dim", type=int, default=64)
+    ap.add_argument("--arch", choices=["cnn", "convattn", "transformer"], default="cnn")
+    ap.add_argument("--width", type=int, default=512)
+    ap.add_argument("--depth", type=int, default=8)
     ap.add_argument("--feature_dir", default="temp/crave_full_dinov3h", type=Path)
     ap.add_argument("--dataset_root", default="kai0/data/Task_A/kai0_base", type=Path)
     ap.add_argument("--camera", default="observation.images.top_head")
@@ -84,7 +87,8 @@ def main() -> None:
     ap.add_argument("--device", default="cuda")
     args = ap.parse_args()
     dev = args.device
-    tag = f"{args.mode}{'_h'+str(args.horizon) if args.mode=='nearfuture' else ''}_cd{args.code_dim}"
+    szt = f"_{args.arch}" + (f"_w{args.width}d{args.depth}" if args.arch != "cnn" else "")
+    tag = f"{args.mode}{'_h'+str(args.horizon) if args.mode=='nearfuture' else ''}_cd{args.code_dim}{szt}"
     out = Path(args.out) if args.out else Path(f"lmwm/outputs/subgoal_opt/{tag}.json")
 
     E, FR, Fn = load_index(args.feature_dir)
@@ -106,8 +110,11 @@ def main() -> None:
     tra = torch.from_numpy(np.array([u2k[c] for c, _ in tr])); trb = torch.from_numpy(np.array([u2k[n] for _, n in tr]))
     vaa = np.array([u2k[c] for c, _ in va]); vab = np.array([u2k[n] for _, n in va])
 
-    inv = InverseEnc(din, args.code_dim).to(dev); fwd = ForwardDec(din, args.code_dim).to(dev)
-    predm = PredM(din, args.code_dim).to(dev)
+    from lam_arch import build_lam, nparams
+    inv, fwd, predm = build_lam(args.arch, din, args.code_dim, args.width, args.depth)
+    inv, fwd, predm = inv.to(dev), fwd.to(dev), predm.to(dev)
+    n_params = nparams(inv) + nparams(fwd) + nparams(predm); n_deploy = nparams(predm) + nparams(fwd)
+    print(f"[{tag}] arch={args.arch} params total={n_params/1e6:.1f}M deploy(predm+fwd)={n_deploy/1e6:.1f}M", flush=True)
     o1 = torch.optim.AdamW(list(inv.parameters()) + list(fwd.parameters()), lr=2e-4, weight_decay=1e-5)
     o2 = torch.optim.AdamW(predm.parameters(), lr=2e-4, weight_decay=1e-5)
     print(f"[{tag}] training inverse/forward + deploy predm ...", flush=True)
@@ -132,7 +139,9 @@ def main() -> None:
             gtr = f(gf)
             co.append(cos(f(oracle), gtr)); cd_.append(cos(f(deploy), gtr)); cp.append(cos(f(gt), gtr))
     res = {"mode": args.mode, "horizon": args.horizon if args.mode == "nearfuture" else None,
-           "code_dim": args.code_dim, "n_train": len(tr), "n_val": len(va),
+           "code_dim": args.code_dim, "arch": args.arch, "width": args.width, "depth": args.depth,
+           "params_M": round(n_params / 1e6, 1), "deploy_params_M": round(n_deploy / 1e6, 1),
+           "n_train": len(tr), "n_val": len(va),
            "oracle_grid_cos": round(float(np.concatenate(co).mean()), 4),
            "deploy_grid_cos": round(float(np.concatenate(cd_).mean()), 4),
            "persistence_grid_cos": round(float(np.concatenate(cp).mean()), 4),
@@ -141,7 +150,8 @@ def main() -> None:
     out.write_text(json.dumps(res, indent=2), encoding="utf-8")
     torch.save({"inv": inv.state_dict(), "fwd": fwd.state_dict(), "predm": predm.state_dict(),
                 "code_dim": args.code_dim, "din": din, "gmu": float(gmu), "gsd": float(gsd),
-                "mode": args.mode, "horizon": args.horizon}, out.with_suffix(".pt"))
+                "mode": args.mode, "horizon": args.horizon,
+                "arch": args.arch, "width": args.width, "depth": args.depth}, out.with_suffix(".pt"))
     print(json.dumps(res, indent=2), flush=True)
 
 
