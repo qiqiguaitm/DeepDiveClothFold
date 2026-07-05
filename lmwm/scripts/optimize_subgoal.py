@@ -44,8 +44,14 @@ class PredM(nn.Module):
         return self.ln(self.head(self.conv(gt).mean((2, 3))))
 
 
-def build_pairs(E, FR, Fn, proto, mode, horizon, val_eps, seed):
-    """Return train/val lists of (cur_gidx, future_gidx)."""
+def build_pairs(E, FR, Fn, proto, mode, horizon, val_eps, seed, pord=None):
+    """Return train/val lists of (cur_gidx, target_gidx). Target term per mode:
+      nearfuture      - fixed-horizon frame (frame h steps ahead).
+      milestone       - V1 "temporal-next milestone": medoid of the NEXT stage in temporal frame order.
+      milestone_value - V2 "progress-next milestone": medoid of the episode-library milestone with the
+                        smallest CRAVE value strictly greater than the current stage's value (monotone
+                        in progress; never regresses). Needs pord (per-prototype CRAVE value).
+    """
     rng = np.random.default_rng(seed)
     tr, va = [], []
     for ep in np.unique(E):
@@ -54,23 +60,35 @@ def build_pairs(E, FR, Fn, proto, mode, horizon, val_eps, seed):
         if mode == "nearfuture":
             for i in range(len(order) - horizon):
                 tgt.append((int(order[i]), int(order[i + horizon])))
-        else:  # milestone: (cur-stage last frame, next-stage medoid)
-            seq = (Fn[order] @ proto.T).argmax(1)
-            ch = np.where(np.diff(seq) != 0)[0] + 1
-            st = np.concatenate([[0], ch]); en = np.concatenate([ch, [len(seq)]])
-            reps = []
-            for s, e in zip(st, en):
-                m = int(seq[s]); sub = order[s:e]; med = sub[(Fn[sub] @ proto[m]).argmax()]
-                reps.append((int(order[e - 1]), int(med)))
-            for i in range(len(reps) - 1):
-                tgt.append((reps[i][0], reps[i + 1][1]))
+            continue
+        # milestone / milestone_value share the SAME stage segmentation + medoids; only target differs
+        seq = (Fn[order] @ proto.T).argmax(1)
+        ch = np.where(np.diff(seq) != 0)[0] + 1
+        st = np.concatenate([[0], ch]); en = np.concatenate([ch, [len(seq)]])
+        seg_m, seg_med, seg_last = [], [], []
+        for s, e in zip(st, en):
+            m = int(seq[s]); sub = order[s:e]; med = int(sub[(Fn[sub] @ proto[m]).argmax()])
+            seg_m.append(m); seg_med.append(med); seg_last.append(int(order[e - 1]))
+        if mode == "milestone":                                          # V1: temporal-next
+            for i in range(len(seg_m) - 1):
+                tgt.append((seg_last[i], seg_med[i + 1]))
+        else:                                                            # V2: progress(value)-next
+            lib = {}                                                     # distinct milestone -> (value, medoid)
+            for m, med in zip(seg_m, seg_med):
+                lib.setdefault(m, (float(pord[m]), med))
+            libsorted = sorted(lib.values())                             # ascending CRAVE value
+            for i, m in enumerate(seg_m):
+                v = float(pord[m])
+                nxt = [med for (val, med) in libsorted if val > v + 1e-6]
+                if nxt:
+                    tgt.append((seg_last[i], nxt[0]))
     rng.shuffle(tr); rng.shuffle(va)
     return tr, va
 
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--mode", choices=["nearfuture", "milestone"], required=True)
+    ap.add_argument("--mode", choices=["nearfuture", "milestone", "milestone_value"], required=True)
     ap.add_argument("--horizon", type=int, default=5, help="nearfuture: steps ahead in 3Hz index (5≈1.7s)")
     ap.add_argument("--code_dim", type=int, default=64)
     ap.add_argument("--arch", choices=["cnn", "convattn", "transformer"], default="cnn")
@@ -94,11 +112,12 @@ def main() -> None:
     out = Path(args.out) if args.out else Path(f"lmwm/outputs/subgoal_opt/{tag}.json")
 
     E, FR, Fn = load_index(args.feature_dir)
-    proto = np.load("lmwm/data/recurrence_graphs/kai0base_dinov3h/recurrence_graph.npz")["prototype_table"].astype(np.float32)
+    _rg = np.load("lmwm/data/recurrence_graphs/kai0base_dinov3h/recurrence_graph.npz")
+    proto = _rg["prototype_table"].astype(np.float32); pord = _rg["pord"].astype(np.float32)
     rng = np.random.default_rng(args.seed); eps = np.unique(E); rng.shuffle(eps)
     val_eps = set(eps[:max(1, int(round(len(eps) * 0.2)))].tolist())
 
-    tr, va = build_pairs(E, FR, Fn, proto, args.mode, args.horizon, val_eps, args.seed)
+    tr, va = build_pairs(E, FR, Fn, proto, args.mode, args.horizon, val_eps, args.seed, pord=pord)
     tr = tr[:args.n_train]; va = va[:args.n_val]
     uniq = sorted(set([g for p in tr + va for g in p])); u2k = {g: k for k, g in enumerate(uniq)}
     print(f"[{tag}] {len(tr)} train + {len(va)} val pairs, {len(uniq)} unique frames", flush=True)
