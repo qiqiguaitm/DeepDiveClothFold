@@ -123,15 +123,22 @@ def main() -> None:
     cd, gmu, gsd = ck["code_dim"], ck["gmu"], ck["gsd"]
     fwd = ForwardDec(din, cd).to(dev); fwd.load_state_dict(ck["fwd"]); fwd.eval()
     predm = PredM(din, cd).to(dev); predm.load_state_dict(ck["predm"]); predm.eval()
+    vae_pm = None
+    if "vae_pm" in ck:
+        import torch.nn as nn
+        vae_pm = nn.Linear(cd, 2 * cd).to(dev); vae_pm.load_state_dict(ck["vae_pm"]); vae_pm.eval()
     decode, dec_label = load_decoder(args.decoder, dev)
-    print(f"predictor code_dim={cd} ({ck['mode']}, trained on kai0); decoder={dec_label}", flush=True)
+    print(f"predictor code_dim={cd} ({ck['mode']}, head={ck.get('code_head','det')}, trained on kai0); decoder={dec_label}", flush=True)
 
     gz = torch.from_numpy(((grids - gmu) / gsd).astype(np.float32))
     preds_raw = np.zeros_like(grids)
     with torch.no_grad():
         for b in range(0, len(grids), 128):
             gt = gz[b:b + 128].to(dev)
-            preds_raw[b:b + 128] = (fwd(gt, predm(gt)).cpu().numpy() * gsd + gmu)
+            code = predm(gt)
+            if vae_pm is not None:
+                code = vae_pm(code).chunk(2, -1)[0]                # deploy = posterior mean (mu)
+            preds_raw[b:b + 128] = (fwd(gt, code).cpu().numpy() * gsd + gmu)
     pred_imgs = decode(preds_raw)
     self_dec_imgs = decode(grids)
 
