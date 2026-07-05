@@ -32,7 +32,11 @@ def link_shared(dst: Path):
 
 
 def main():
-    for method, dsname in [("anchor", "crave_stage_A"), ("viterbi", "crave_stage_B")]:
+    only = os.environ.get("CRAVE_ONLY")   # 'anchor'|'viterbi'|None(both) — 只重建一个数据集(避开正在训练的另一个)
+    jobs = [("anchor", "crave_stage_A"), ("viterbi", "crave_stage_B")]
+    if only:
+        jobs = [j for j in jobs if j[0] == only]
+    for method, dsname in jobs:
         dst = OUT / dsname
         link_shared(dst)
         (dst / "data").mkdir(parents=True, exist_ok=True)

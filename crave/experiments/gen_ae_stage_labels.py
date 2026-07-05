@@ -52,30 +52,31 @@ def isotonic(v):
     return IsotonicRegression(increasing=True).fit_transform(np.arange(len(v)), v)
 
 
-def method_anchor(sim, assign, pord, t3):
-    """anchor-linear:段内峰值相似帧=锚,+start0/end1,isotonic,线性插值。sim:(n,K), t3:(n,)归一时间"""
-    n = len(assign)
-    # 连续段
-    segs = []; s0 = 0
-    for i in range(1, n + 1):
-        if i == n or assign[i] != assign[s0]:
-            segs.append((s0, i - 1, assign[s0])); s0 = i
-    at, av = [0.0], [0.0]                                   # start 锚
-    for (a, b, m) in segs:
-        j = a + int(np.argmax(sim[a:b + 1, m]))            # 段内离簇心最相似帧
-        at.append(t3[j]); av.append(float(pord[m]))
-    at.append(1.0); av.append(1.0)                          # end 锚
-    at, av = np.array(at), np.array(av)
-    # 同一时间去重(保后者), 时间排序
-    o = np.argsort(at, kind="stable"); at, av = at[o], av[o]
+def method_anchor(sim, pord, t3, min_frames=2):
+    """anchor-linear (FIXED 2026-07-05):每个**访问到的 milestone** 取一个锚(全 ep 最相似帧=峰值成员),
+    value=Pord;按 Pord(进度序)排;对锚**时间**做单调投影(**不是对值** → 避免 isotonic 把非单调锚值
+    pool 成等值平台);+ start(0,0)/end(末,1.0);distinct 值线性连接 → 连续折线,无平台。sim:(n,K)。
+
+    旧版 bug:按 argmax 逐帧连续段建锚(噪声→几十微段,锚值乱跳)+ isotonic 对**值**投影 →
+    把值 pool 成长平台(ep3033: 69 锚里 59 对等值)→ 87% 平台标签 → AE value 塌缩到 0。"""
+    K = sim.shape[1]
+    counts = np.bincount(sim.argmax(1), minlength=K)
+    cand = [(int(np.argmax(sim[:, k])), float(pord[k])) for k in range(K) if counts[k] >= min_frames]
+    if not cand:
+        return np.clip(t3, 0, 1)
+    cand.sort(key=lambda x: x[1])                          # 按 Pord 进度序(value 天然 distinct 递增)
+    at = np.array([t3[j] for j, _ in cand], float)
+    av = np.array([v for _, v in cand], float)
+    at = isotonic(at)                                      # 单调投影 TIME(保持 value distinct,不产生平台)
+    at = np.concatenate([[0.0], at, [1.0]]); av = np.concatenate([[0.0], av, [1.0]])
     keep = np.concatenate([[True], np.diff(at) > 1e-6]); at, av = at[keep], av[keep]
-    av = isotonic(av)                                       # 兜单调
     return np.clip(np.interp(t3, at, av), 0, 1)
 
 
-def method_viterbi(sim, pord, lam=8.0, medw=5, alpha=0.6):
-    """Viterbi-DP:bins=milestone(按 Pord 升序), emit=(1-sim)+α|tn-Pord| 时间先验(破起末别名),
-    转移 λ|Δbin|; value=Pord[path], 中值平滑。α 时间先验 = sym-adaptive-vote 的 distance-correction 思路。"""
+def method_viterbi(sim, pord, t3, lam=8.0, alpha=0.6):
+    """Viterbi-DP (FIXED 2026-07-05):bins=milestone(按 Pord 升序), emit=(1-sim)+α|tn-Pord| 时间先验
+    (破起末别名), 转移 λ|Δbin| → 读出 milestone 路径。在 milestone **转移点**设锚(time=t3,value=Pord[path]),
+    start(0,0)/end(末,1.0),线性连接 → **连续折线**(替代旧版离散 `Pv[path]` 阶梯 → 90%+ 平台 → value 塌缩)。"""
     order = np.argsort(pord); Pv = pord[order]; K = len(order)
     n = len(sim); tn = np.linspace(0, 1, n)
     emit = (1.0 - sim[:, order]) + alpha * np.abs(tn[:, None] - Pv[None, :])   # +时间先验:t 处偏好 Pord≈tn 的态
@@ -87,10 +88,12 @@ def method_viterbi(sim, pord, lam=8.0, medw=5, alpha=0.6):
     path = np.zeros(n, int); path[-1] = cost.argmin()
     for t in range(n - 2, -1, -1):
         path[t] = bp[t + 1, path[t + 1]]
-    v = Pv[path]
-    if medw > 1:                                            # 中值平滑
-        v = np.array([np.median(v[max(0, i - medw): i + medw + 1]) for i in range(n)])
-    return np.clip(v, 0, 1)
+    vp = Pv[path]
+    ch = np.concatenate([[0], np.where(np.abs(np.diff(vp)) > 1e-9)[0] + 1])   # milestone 转移点=锚
+    at = np.concatenate([[0.0], t3[ch], [1.0]]); av = np.concatenate([[0.0], vp[ch], [1.0]])
+    av = isotonic(av)                                       # 兜单调(path 已近单调)
+    keep = np.concatenate([[True], np.diff(at) > 1e-6]); at, av = at[keep], av[keep]
+    return np.clip(np.interp(t3, at, av), 0, 1)
 
 
 def native_len(e):
@@ -105,8 +108,8 @@ def gen_ep(e, feat, E, FR, C, pord):
     o = np.argsort(FR[m]); gi = m[o]; fr = FR[gi]
     f = feat[gi]; sim = f @ C.T; assign = sim.argmax(1)
     t3 = np.linspace(0, 1, len(gi))
-    vA = method_anchor(sim, assign, pord, t3)
-    vB = method_viterbi(sim, pord)
+    vA = method_anchor(sim, pord, t3)
+    vB = method_viterbi(sim, pord, t3)
     nl = native_len(e)
     xi = np.arange(nl)
     xa = np.clip(fr, 0, nl - 1)                              # 3Hz 帧的 native 索引
