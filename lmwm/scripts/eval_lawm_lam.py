@@ -67,7 +67,9 @@ def _stub_heavy_deps():
 
 
 def _patch_automodel():
-    import latent_action_model.core.vjepa_encoder as ve
+    """gf3's patched transformers has a broken AutoModel (GenerationMixin ImportError), so we inject
+    fakes into the transformers module BEFORE the vendored `from transformers import AutoModel` runs.
+    AutoModel.from_pretrained(dinov3...) -> our pure-torch standalone."""
     vitb = next((d for d in VITB_DIRS if Path(d).exists()), None)
     if vitb is None:
         raise SystemExit("DINOv3 ViT-B/16 weights not found in VITB_DIRS")
@@ -76,7 +78,14 @@ def _patch_automodel():
         @staticmethod
         def from_pretrained(model_id, **kw):
             return StandaloneDinoAM(vitb)
-    ve.AutoModel = FakeAM
+
+    class FakeAC:
+        @staticmethod
+        def from_pretrained(*a, **k):
+            return SimpleNamespace()
+    import transformers
+    transformers.AutoModel = FakeAM
+    transformers.AutoConfig = FakeAC
     return vitb
 
 
