@@ -30,6 +30,8 @@ import matplotlib.pyplot as plt  # noqa: E402
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--predictor", default="lmwm/outputs/subgoal_opt/milestone_cd128.pt")
+    ap.add_argument("--mode", choices=["milestone", "nearfuture"], default="milestone")
+    ap.add_argument("--horizon", type=int, default=3, help="nearfuture: fixed steps ahead in the 3Hz index")
     ap.add_argument("--graph", default="lmwm/data/recurrence_graphs/kai0base_dinov3h/recurrence_graph.npz")
     ap.add_argument("--feature_dir", default="temp/crave_full_dinov3h", type=Path)
     ap.add_argument("--dataset_root", default="kai0/data/Task_A/kai0_base", type=Path)
@@ -85,10 +87,16 @@ def main():
         Pf = pred.reshape(len(fi), -1); Pf /= (np.linalg.norm(Pf, axis=1, keepdims=True) + 1e-8)
         sims = Pf @ Gf.T                                                     # (n,n) predicted-vs-frame cos
         for j in range(len(fi)):
-            ni = seg_of[j] + 1
-            if ni >= len(seg_med):
-                continue
-            ds_lags.append((fr[seg_med[ni]] - fr[j]) / args.fps)
+            if args.mode == "milestone":
+                ni = seg_of[j] + 1
+                if ni >= len(seg_med):
+                    continue
+                tgt = seg_med[ni]
+            else:                                                # nearfuture: fixed horizon h steps ahead
+                tgt = j + args.horizon
+                if tgt >= len(fi):
+                    continue
+            ds_lags.append((fr[tgt] - fr[j]) / args.fps)
             row = sims[j].copy()
             if args.future_only:
                 row[:j] = -1
@@ -96,9 +104,11 @@ def main():
         if (ei + 1) % 30 == 0:
             print(f"  {ei+1}/{len(eps)} eps", flush=True)
     ds = np.array(ds_lags); md = np.array(md_lags)
-    res = {"predictor": Path(args.predictor).name, "future_only": args.future_only, "n_frames": len(ds),
+    res = {"predictor": Path(args.predictor).name, "mode": args.mode, "future_only": args.future_only, "n_frames": len(ds),
            "dataset_lag_s_mean": round(float(ds.mean()), 3), "dataset_lag_s_median": round(float(np.median(ds)), 3),
+           "dataset_lag_s_std": round(float(ds.std()), 3),
            "model_lag_s_mean": round(float(md.mean()), 3), "model_lag_s_median": round(float(np.median(md)), 3),
+           "model_lag_s_std": round(float(md.std()), 3),
            "model/dataset_ratio_mean": round(float(md.mean() / (ds.mean() + 1e-9)), 3)}
     (args.out / "lag.json").write_text(json.dumps(res, indent=2))
     print(json.dumps(res, indent=2), flush=True)
