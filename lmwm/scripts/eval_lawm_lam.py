@@ -58,6 +58,8 @@ def _stub_heavy_deps():
 
     class _AnyMod(types.ModuleType):
         def __getattr__(self, name):
+            if name.startswith("__") and name.endswith("__"):
+                raise AttributeError(name)          # let dunders (__file__/__path__/...) behave normally
             return type(name, (), {})
     for name in ["lightning", "lightning.pytorch", "lightning.pytorch.callbacks",
                  "lightning.pytorch.loggers", "lightning.pytorch.utilities", "wandb"]:
