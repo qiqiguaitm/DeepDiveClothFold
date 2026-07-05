@@ -51,6 +51,21 @@ class StandaloneDinoAM(nn.Module):
         return _HFOut(last, hs)
 
 
+def _stub_heavy_deps():
+    """Stub lightning/wandb so `latent_action_model.core.__init__` (imports the Lightning trainer
+    module) resolves. We only need LatentLAMModel for inference, never the LightningModule."""
+    import types
+
+    class _AnyMod(types.ModuleType):
+        def __getattr__(self, name):
+            return type(name, (), {})
+    for name in ["lightning", "lightning.pytorch", "lightning.pytorch.callbacks",
+                 "lightning.pytorch.loggers", "lightning.pytorch.utilities", "wandb"]:
+        if name not in sys.modules:
+            sys.modules[name] = _AnyMod(name)
+    sys.modules["lightning"].LightningModule = object
+
+
 def _patch_automodel():
     import latent_action_model.core.vjepa_encoder as ve
     vitb = next((d for d in VITB_DIRS if Path(d).exists()), None)
@@ -139,6 +154,7 @@ def main():
     args = ap.parse_args()
     dev = args.device
 
+    _stub_heavy_deps()
     _patch_automodel()
     lam = load_lam(args.ckpt, args.yaml, dev)
 
