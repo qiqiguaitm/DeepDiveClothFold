@@ -45,6 +45,11 @@ def main():
         for p in parts:
             e = int(p.stem.split("_")[1])
             df = pd.read_parquet(p)
+            # 只保留标准 lerobot 列 → schema 逐 ep 一致 (kai0_base 个别 ep 如 ep104 残留
+            # prediction/model_prediction 列 → HF CastError → cluster 崩, 见 lerobot schema 教训)
+            _STD = ["observation.state", "action", "timestamp", "frame_index",
+                    "episode_index", "index", "task_index"]
+            df = df[[c for c in _STD if c in df.columns]]
             lab_f = LAB / method / f"ep{e}.npy"
             if lab_f.exists():
                 v = np.load(lab_f)
