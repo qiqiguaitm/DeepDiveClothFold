@@ -32,6 +32,7 @@ from optimize_subgoal import build_pairs, PredM  # noqa: E402  (build_pairs is t
 SIGLIP_DIRS = {
     "siglip2-so400m": "/vePFS/tim/workspace/hf_cache/hub_default/models--google--siglip2-so400m-patch14-384",
 }
+PI05_NPZ = "/vePFS/tim/workspace/openpi_cache/paligemma_weights/pt_224.npz"  # faithful π0.5 SigLIP tower
 
 
 def find_snapshot(hub_dir):
@@ -69,7 +70,7 @@ class SiglipGrid:
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--encoder", default="siglip2-so400m", choices=list(SIGLIP_DIRS))
+    ap.add_argument("--encoder", default="siglip2-so400m", choices=list(SIGLIP_DIRS) + ["pi05"])
     ap.add_argument("--res", type=int, default=224, help="224->16x16 (paligemma-like), 384->27x27 native")
     ap.add_argument("--code_dim", type=int, default=128)
     ap.add_argument("--feature_dir", default="temp/crave_full_dinov3h", type=Path)
@@ -94,8 +95,13 @@ def main():
     uniq = sorted(set([g for p in tr + va for g in p])); u2k = {g: k for k, g in enumerate(uniq)}
     print(f"[siglip:{args.encoder}@{args.res}] {len(tr)} train + {len(va)} val, {len(uniq)} frames", flush=True)
 
-    enc_imgs, _ = read_imgs(args.dataset_root, args.camera, E, FR, np.array(uniq), args.res, 128)
-    enc = SiglipGrid(SIGLIP_DIRS[args.encoder], dev, res=args.res)
+    res = 224 if args.encoder == "pi05" else args.res                        # faithful tower is native 224
+    enc_imgs, _ = read_imgs(args.dataset_root, args.camera, E, FR, np.array(uniq), res, 128)
+    if args.encoder == "pi05":
+        from _siglip_bigvision import SiglipBigVision
+        enc = SiglipBigVision(PI05_NPZ, device=dev)
+    else:
+        enc = SiglipGrid(SIGLIP_DIRS[args.encoder], dev, res=res)
     grids = enc.encode_grid(enc_imgs); din = grids.shape[1]
     print(f"[siglip] grid {grids.shape} din={din}", flush=True)
     gmu, gsd = grids.mean(), grids.std() + 1e-6
@@ -133,7 +139,8 @@ def main():
            "deploy_grid_cos": round(float(np.concatenate(cd_).mean()), 4),
            "persistence_grid_cos": round(float(np.concatenate(cp).mean()), 4),
            "lift": round(float(np.concatenate(cd_).mean() - np.concatenate(cp).mean()), 4),
-           "note": "PROXY siglip2 (not pi0.5 tuned tower); compare to DINOv3-H oracle 0.789/deploy 0.694"}
+           "note": ("FAITHFUL pi0.5 SigLIP tower (pt_224.npz)" if args.encoder == "pi05"
+                    else "PROXY siglip2 (not pi0.5 tuned tower)") + "; compare DINOv3-H oracle 0.789/deploy 0.694/lift 0.128"}
     outp = REPO / f"lmwm/outputs/siglip_oracle_{args.encoder}_{args.res}.json"
     outp.write_text(json.dumps(res, indent=2))
     print(json.dumps(res, indent=2), flush=True)

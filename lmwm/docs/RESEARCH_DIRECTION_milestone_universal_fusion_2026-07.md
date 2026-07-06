@@ -99,5 +99,42 @@ SuSIE(2310.10639 子目标图)、VPP(2412.14803 预测 latent)、LAPA(2410.11758
 - temporal-distance 目标是否值得替换 CRAVE,还是 CRAVE 作离线 label、在线换 VLA 空间即可?
 - 部署单次编码的融合改造依赖 π0.5 训练侧改动(embed_prefix + mask + RoPE),要不要先在 `lewm` 旁路上做最小 PoC?
 
+---
+
+## 6. 实测结果(2026-07,数据说话)
+
+### 6.1 milestone+1 单峰/多峰(实验 C, `analyze_milestone_multimodality.py`)
+**多峰是真的,但在"身份"层不在"外观"层——修正了本文早期"多峰住 Stage-2"的说法。**
+- **身份**(下一个是哪个 milestone):有效分支 **4.08**,top 只 52%,97% 有分支 → **强多峰**。
+- **外观**(那个 milestone 长什么样):同转移内紧致度 0.865,仅 8% 双峰,条件在当前帧后还剩 69% spread → **弥散但单峰**。
+- **→ 解释了 best-of-8 只 +0.02**:VAE 头挂 code 上、每 pair 锁死一个分支,只能回收外观那点(本就小);身份分支从没被考。**+0.02 测错了轴。**
+
+### 6.2 身份多峰对两候选都成立(`analyze_identity_branching_bymode.py` + `analyze_identity_conditioning.py`)
+| 构造 | index-cond | **frame-cond** | frame 解掉 | 粗粒 K=8 | 质地 |
+|---|---|---|---|---|---|
+| V2 milestone_value | 2.81 | 2.11 | 25% | 1.20 | 细粒噪声(宏观近确定) |
+| **V3.1 milestone_viterbi** | 4.08 | 2.46 | 40% | 2.06 | **真分支(宏观~2 峰)** |
+| (V1 argmax / V3 progress_delta) | 14.8 / 16.4 | — | — | — | 假高=argmax 抖动,不可信 |
+
+- **给了完整帧也塌不掉**(V2 2.8→2.1,V3.1 4.1→2.5)→ **Stage-1 必须分布式**(基石)。
+- 但峰数不多(~2–2.5)→ Stage-1 只需 **~2–3 分量小混合 / 低熵 categorical**。
+- **V3.1 的 ~2 峰是真任务分叉**(粗粒 K=8 仍 2.06);V2 是细粒抖动(K=8 塌到 1.20)。→ **主候选 V3.1**。
+
+### 6.3 SigLIP 同空间当目标(实验 A+E2, `eval_siglip_oracle.py` + `_siglip_bigvision.py`)
+| 目标空间 | oracle | **deploy** | persistence | **lift(公平)** |
+|---|---|---|---|---|
+| DINOv3-H(现用) | 0.789 | 0.694 | 0.566 | 0.128 |
+| SigLIP2 代理@224 | 0.684 | 0.631 | 0.492 | 0.139 |
+| **π0.5 忠实塔@224**(E2) | **0.755** | **0.716** | 0.599 | **0.117** |
+
+**决策点 A 定案:走 VLA(SigLIP)同空间。** 忠实塔(pt_224.npz 纯 torch 移植 So400m/14)deploy 0.716 **> DINOv3-H 0.694**,lift 0.117 vs 0.128 基本平手 → **同空间预测几乎零质量损失**,换来 KV 原生融合 + 部署砍掉第二编码器。代理(0.684)低估了忠实塔(0.755),幸好做了 E2。→ DINOv3-H+CRAVE 降级为**离线 label 工厂**,在线预测活在 π0.5 SigLIP 空间。
+
+### 6.4 进行中
+- **E1**(`train_stage1_identity.py`):分布式 Stage-1 的 top-N 身份命中率(重做 B 的正确口径)。
+- **E4**:SigLIP res=384 消融。
+- **E2**(gf3,待拍板):忠实 SigLIP 塔转换 + 重测 oracle。
+
+---
+
 ### 核心必读
 LaWAM 2606.15768(孪生)· WorldVLA 2506.21539(KV/mask)· Being-H0.7 2605.00078(单前向无二编码器)· VLA-JEPA 2602.10098(特征张力)· UVD 2310.08581(去 hack milestone)· KI 2505.23705(π0.5 prefix-KV 机制)· survey 2510.16732(grid-vs-pool 分类学)
