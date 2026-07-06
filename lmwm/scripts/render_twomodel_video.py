@@ -84,8 +84,15 @@ def main():
     # --- two-model + decoder ---
     tm = torch.load(args.tm_ckpt, map_location="cpu", weights_only=False)
     din, cd, gmu, gsd = tm["din"], tm["code_dim"], tm["gmu"], tm["gsd"]
-    mdn = MDN(din, tm["K"]).to(dev); mdn.load_state_dict(tm["mdn"]); mdn.eval()
-    fwd = ForwardDec(din, cd).to(dev); fwd.load_state_dict(tm["fwd"]); fwd.eval()
+    if tm.get("arch") == "v2":                                               # inverse-teacher + AdaLN + MDN-code
+        from train_twomodel_v2 import PredMDN, ForwardAdaLN
+        predm = PredMDN(din, cd, tm["K"]).to(dev); predm.load_state_dict(tm["predm"]); predm.eval()
+        fwd = ForwardAdaLN(din, cd).to(dev); fwd.load_state_dict(tm["fwd"]); fwd.eval()
+        deploy_code = predm.deploy_mean
+    else:                                                                    # v1: MDN-over-gist + concat ForwardDec
+        mdn = MDN(din, tm["K"]).to(dev); mdn.load_state_dict(tm["mdn"]); mdn.eval()
+        fwd = ForwardDec(din, cd).to(dev); fwd.load_state_dict(tm["fwd"]); fwd.eval()
+        deploy_code = mdn.deploy_mean
     dc = torch.load(args.dec_ckpt, map_location="cpu", weights_only=False)
     dec = GridDecoder(dc["din"], dc["res"]).to(dev); dec.load_state_dict(dc["model"]); dec.eval()
     print(f"loaded two-model K={tm['K']} + SigLIP decoder (val_L1={dc.get('val_L1')})", flush=True)
@@ -103,7 +110,7 @@ def main():
     with torch.no_grad():
         for s in range(0, T, 64):
             sl = slice(s, min(s + 64, T))
-            zt = mdn.deploy_mean(gist[sl])                                   # Stage-1 deploy identity
+            zt = deploy_code(gist[sl])                                       # Stage-1 deploy identity (v1 gist / v2 code)
             Ghat_n = fwd(Gn[sl], zt)                                         # Stage-2 grounding (normalized)
             Ghat_raw = Ghat_n * float(gsd) + float(gmu)
             pred = decode_raw(Ghat_raw)                                      # predicted m+1 decoded
