@@ -190,7 +190,11 @@ def main():
            "ref_E2_singlestage_deploy": 0.716}
     outp = REPO / f"lmwm/outputs/twomodel_poc_{args.mode}_K{args.K}.json"
     outp.write_text(json.dumps(res, indent=2))
-    print(json.dumps(res, indent=2), flush=True)
+    ckp = REPO / f"lmwm/checkpoints/twomodel/{args.mode}_K{args.K}.pt"
+    ckp.parent.mkdir(parents=True, exist_ok=True)
+    torch.save({"mdn": mdn.state_dict(), "fwd": fwd.state_dict(), "K": args.K, "din": din,
+                "code_dim": args.code_dim, "gmu": float(gmu), "gsd": float(gsd), "mode": args.mode}, ckp)
+    print(json.dumps(res, indent=2), flush=True); print(f"saved ckpt -> {ckp}", flush=True)
 
 
 if __name__ == "__main__":
