@@ -12,6 +12,8 @@ Run: kai0/.venv/bin/python train_scripts/kai/data/build_v4_base_dagger_plus_fres
 import json, os, shutil, sys
 from pathlib import Path
 import numpy as np, pandas as pd, pyarrow as pa, pyarrow.parquet as pq
+sys.path.insert(0, str(Path(__file__).parent))
+from build_no_release import per_episode_stats   # lerobot episodes_stats 'stats' dict
 
 ROOT = Path("/vePFS/tim/workspace/deepdive_kai0/kai0/data/Task_A/self_built")
 BASE = ROOT / "A_v4_base_dagger"            # 2017ep, labeled (absolute_advantage/task_index)
@@ -49,7 +51,7 @@ def videos_ok(src_root, old_ep):
             return False
     return True
 
-new_eps_meta = []
+new_eps_meta = []; eps_stats = []
 gidx = 0; total_frames = 0; new_ep = 0; skipped = []
 for src_root, old_ep in sources:
     if not videos_ok(src_root, old_ep):          # 跳过断链 ep(cnsh 源视频被清理, 见 v4 源视频侵蚀教训)
@@ -70,6 +72,7 @@ for src_root, old_ep in sources:
         dv.parent.mkdir(parents=True, exist_ok=True)
         os.symlink(str(sv), dv)
     new_eps_meta.append({"episode_index": new_ep, "tasks": ["Flatten and fold the cloth."], "length": n})
+    eps_stats.append({"episode_index": new_ep, "stats": per_episode_stats(df)})
     new_ep += 1
     if new_ep % 500 == 0:
         print(f"  {new_ep} written", flush=True)
@@ -85,6 +88,9 @@ info["chunks_size"] = new_ep
 with (OUT / "meta" / "episodes.jsonl").open("w") as f:
     for e in new_eps_meta:
         f.write(json.dumps(e) + "\n")
+with (OUT / "meta" / "episodes_stats.jsonl").open("w") as f:   # lerobot 必需, 否则 FileNotFound→OfflineModeIsEnabled 崩
+    for s in eps_stats:
+        f.write(json.dumps(s) + "\n")
 # tasks.jsonl: 沿用 base_dagger 的 pos/neg(不重 discretize)
 shutil.copy(BASE / "meta" / "tasks.jsonl", OUT / "meta" / "tasks.jsonl")
 print(f"merged {new_ep}ep / {total_frames}frames (skipped {len(skipped)}) -> {OUT}", flush=True)
