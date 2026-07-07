@@ -31,6 +31,8 @@
 
 **数据集(训练就绪,统一以 `kai0_base` 为底)**:`kai0/data/Task_A/self_built/crave_stage_{A,B}/`(kai0_base 原列 + `stage_progress_gt`=CRAVE,0→1)。脚本 `crave/experiments/gen_ae_stage_labels.py --full` + `write_crave_stage_datasets.py`。
 
+**鲁棒性已验(全 3055 ep)**:`crave_value_robustness.py` —— corr(CRAVE-viterbi, 人工) 均值 **0.957**、**100% ep ≥0.7**(viterbi 100% ≥0.8);最差 6 个 ep 仍 0.89–0.90、单调干净、无塌缩/别名/非单调。24 随机 ep 画廊 + 最差 6 见 `visualization/ae_distill/crave_value_robustness_{gallery,summary}.png`。→ 两套标签作 AE 监督在全量上稳。
+
 ---
 
 ## Phase 1(= **CRAVE_a 任务**,数据就绪待集群):回归蒸馏 AE-A/B vs AE-C
