@@ -176,3 +176,18 @@ grid-cos 掩盖了一个部署级问题:预测时间滞后。逐版实测(120/60
 
 ### 核心必读
 LaWAM 2606.15768(孪生)· WorldVLA 2506.21539(KV/mask)· Being-H0.7 2605.00078(单前向无二编码器)· VLA-JEPA 2602.10098(特征张力)· UVD 2310.08581(去 hack milestone)· KI 2505.23705(π0.5 prefix-KV 机制)· survey 2510.16732(grid-vs-pool 分类学)
+
+---
+
+## 8. 最终命名与模块(2026-07 统一)
+LMWM = **Milestone 预测器(Predictor)+ 生成器(Generator)**,π0.5 SigLIP 空间。
+
+| 概念模块 | 代码类 | 输入→输出 | 作用 |
+|---|---|---|---|
+| **预测器·teacher** | `MilestonePredictorTeacher`(=`InverseEnc`) | (g_t, g_future)→码 z(128) | 看未来出理想转移/身份码(仅训练) |
+| **预测器·部署** | `MilestonePredictor`(MDN) | g_t→K 高斯混合 over z | 只看当前预测码,deploy 取 mode(平滑) |
+| **生成器** | `MilestoneGenerator`(AdaLN) | (g_t, 码)→下一 milestone grid ĝ | 当前 grid 当画布,码 shift/scale/gate 调制 |
+
+分工:**预测器答"去哪个价值 milestone"(码),生成器答"它在当前场景长什么样"(grid)**。
+训练:teacher 出理想码→生成器学重建(+lift 反持久+簇中心 CE 锚);部署:预测器出码→生成器画子目标注入 π0.5。
+旧类名 `ForwardAdaLN`/`PredMDN` 保留为 alias(不破坏已有 ckpt/引用)。定案 = `twomodel_final.pt`(center_w=0.1)。

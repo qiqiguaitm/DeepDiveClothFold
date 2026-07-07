@@ -26,7 +26,7 @@ sys.path.insert(0, str(REPO / "crave/src"))
 from train_lawm_patch import load_index, read_imgs  # noqa: E402
 from crave.utils.dp import viterbi_forward  # noqa: E402
 from _siglip_bigvision import SiglipBigVision  # noqa: E402
-from train_twomodel_v2 import PredMDN, ForwardAdaLN, PI05_NPZ, PI05_NPZ_GF3
+from train_twomodel_v2 import MilestonePredictor, MilestoneGenerator, PI05_NPZ, PI05_NPZ_GF3
 from train_lawm_patch import InverseEnc  # noqa: E402
 
 
@@ -53,12 +53,12 @@ def main():
     E, FR, Fn = load_index(args.feature_dir)
     tm = torch.load(args.tm_ckpt, map_location="cpu", weights_only=False)
     din, cd, gmu, gsd = tm["din"], tm["code_dim"], tm["gmu"], tm["gsd"]
-    predm = PredMDN(din, cd, tm["K"]).to(dev); predm.load_state_dict(tm["predm"]); predm.eval()
+    predm = MilestonePredictor(din, cd, tm["K"]).to(dev); predm.load_state_dict(tm["predm"]); predm.eval()
     if tm.get("fwd_arch") == "concat":                                     # ablation concat variant
         from train_lawm_patch import ForwardDec
         fwd = ForwardDec(din, cd).to(dev)
     else:
-        fwd = ForwardAdaLN(din, cd).to(dev)
+        fwd = MilestoneGenerator(din, cd).to(dev)
     fwd.load_state_dict(tm["fwd"]); fwd.eval()
     enc = SiglipBigVision(npz, device=dev)
     print(f"two-model V2 K={tm['K']}; measuring lag over {args.n_eps} eps", flush=True)

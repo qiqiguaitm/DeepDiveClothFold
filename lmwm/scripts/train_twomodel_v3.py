@@ -36,7 +36,7 @@ PI05_NPZ = "/vePFS/tim/workspace/openpi_cache/paligemma_weights/pt_224.npz"
 PI05_NPZ_GF3 = "/vePFS-North-E/vis_robot/openpi_cache/paligemma_weights/pt_224.npz"
 
 
-class ForwardAdaLN(nn.Module):
+class MilestoneGenerator(nn.Module):
     """g_t grid substrate + code z modulating via shift/scale/gate (zero-init gate = starts from g_t)."""
     def __init__(self, din, code_dim, hid=512, nblk=4):
         super().__init__()
@@ -59,7 +59,7 @@ class ForwardAdaLN(nn.Module):
         return self.out(h)
 
 
-class PredMDN(nn.Module):
+class MilestonePredictor(nn.Module):
     """current gist -> mixture of K diagonal Gaussians over the CODE z (dim C)."""
     def __init__(self, in_dim, C, K, hid=1024):
         super().__init__()
@@ -152,8 +152,8 @@ def main():
     vaa = np.array([u2k[c] for c, _ in va]); vab = np.array([u2k[n] for _, n in va])
 
     inv = InverseEnc(din, args.code_dim).to(dev)
-    fwd = ForwardAdaLN(din, args.code_dim).to(dev)
-    predm = PredMDN(din, args.code_dim, args.K).to(dev)
+    fwd = MilestoneGenerator(din, args.code_dim).to(dev)
+    predm = MilestonePredictor(din, args.code_dim, args.K).to(dev)
     Dnet = FeatureD(din).to(dev)                                           # feature-manifold discriminator
     o1 = torch.optim.AdamW(list(inv.parameters()) + list(fwd.parameters()), lr=2e-4, weight_decay=1e-5)
     o2 = torch.optim.AdamW(predm.parameters(), lr=2e-4, weight_decay=1e-5)

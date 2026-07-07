@@ -32,7 +32,7 @@ sys.path.insert(0, str(REPO / "crave/src"))
 from train_lawm_patch import load_index, read_imgs, InverseEnc, ForwardDec  # noqa: E402
 from crave.utils.dp import viterbi_forward  # noqa: E402
 from _siglip_bigvision import SiglipBigVision  # noqa: E402
-from train_twomodel_v2 import ForwardAdaLN, PredMDN, PI05_NPZ, PI05_NPZ_GF3, cosr  # noqa: E402
+from train_twomodel_v2 import MilestoneGenerator, MilestonePredictor, PI05_NPZ, PI05_NPZ_GF3, cosr  # noqa: E402
 
 
 def build_pairs_abl(E, FR, Fn, proto, protoL, pord, mode, val_eps, seed):
@@ -112,8 +112,8 @@ def main():
     vaa = np.array([u2k[p[0]] for p in va]); vab = np.array([u2k[p[1]] for p in va]); vbn = np.array([p[3] for p in va]); vcm = np.array([p[2] for p in va])
 
     inv = InverseEnc(din, cd).to(dev) if args.teacher != "none" else None
-    fwd = (ForwardAdaLN(din, cd) if args.fwd_arch == "adaln" else ForwardDec(din, cd)).to(dev)
-    predm = PredMDN(din, cd, args.K).to(dev)
+    fwd = (MilestoneGenerator(din, cd) if args.fwd_arch == "adaln" else ForwardDec(din, cd)).to(dev)
+    predm = MilestonePredictor(din, cd, args.K).to(dev)
     cen_head = nn.Linear(cd, Mn).to(dev) if args.teacher == "center" else None
     p1 = list(fwd.parameters()) + (list(inv.parameters()) if inv else []) + (list(cen_head.parameters()) if cen_head else [])
     o1 = torch.optim.AdamW(p1, lr=2e-4, weight_decay=1e-5)

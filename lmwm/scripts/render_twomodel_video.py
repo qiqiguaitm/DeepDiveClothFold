@@ -86,9 +86,9 @@ def main():
     tm = torch.load(args.tm_ckpt, map_location="cpu", weights_only=False)
     din, cd, gmu, gsd = tm["din"], tm["code_dim"], tm["gmu"], tm["gsd"]
     if tm.get("arch") == "v2":                                               # inverse-teacher + AdaLN + MDN-code
-        from train_twomodel_v2 import PredMDN, ForwardAdaLN
-        predm = PredMDN(din, cd, tm["K"]).to(dev); predm.load_state_dict(tm["predm"]); predm.eval()
-        fwd = ForwardAdaLN(din, cd).to(dev); fwd.load_state_dict(tm["fwd"]); fwd.eval()
+        from train_twomodel_v2 import MilestonePredictor, MilestoneGenerator
+        predm = MilestonePredictor(din, cd, tm["K"]).to(dev); predm.load_state_dict(tm["predm"]); predm.eval()
+        fwd = MilestoneGenerator(din, cd).to(dev); fwd.load_state_dict(tm["fwd"]); fwd.eval()
         deploy_code = predm.deploy_mean
     else:                                                                    # v1: MDN-over-gist + concat ForwardDec
         mdn = MDN(din, tm["K"]).to(dev); mdn.load_state_dict(tm["mdn"]); mdn.eval()

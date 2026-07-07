@@ -1,17 +1,19 @@
 #!/usr/bin/env python
-"""Two-model v2 — LaWM/old-LMWM inverse-TEACHER structure (fixes the 77% persistence collapse the lag
-diagnostic exposed in v1). v1 dropped the teacher, used code_dim=1152 (no bottleneck) + concat, so
-Stage-2 could copy the current grid. v2:
+"""LMWM = Milestone PREDICTOR + GENERATOR (π0.5 SigLIP space). Naming:
 
-  inverse(g_t, g_milestone) -> z        TEACHER (sees future milestone) -> compact code (~128)  [train only]
-  forward_AdaLN(g_t, z)     -> ĝ         g_t = spatial substrate, z modulates via shift/scale/gate (zero-init)
-  predm_MDN(g_t)            -> mix(z)    DEPLOY: multimodal distribution over the CODE (identity MM), best-of-N
-  L = smooth_l1(fwd(g_t, inv(g_t,g_f)), g_f)  + lift·relu(cos(ĝ,g_t)-cos(ĝ,g_f))   [recon + anti-persistence]
-      + MDN.nll(g_t, z_teacher.detach())                                           [distill teacher code]
+  PREDICTOR  — predicts "which value-milestone next" as a compact code z (~128d):
+     · teacher form  MilestonePredictorTeacher (= InverseEnc): (g_t, g_future) -> z   [train only, sees future]
+     · deploy form   MilestonePredictor (MDN):  g_t -> K-Gaussian mixture over z      [deploy takes mode: smooth]
+  GENERATOR  — MilestoneGenerator (AdaLN): (current grid g_t, code) -> next-milestone grid ĝ
+     · g_t is the spatial canvas; code modulates via shift/scale/gate (zero-init gate = starts from g_t)
 
-Compact bottleneck (forward NEEDS z) + AdaLN (current not copyable) + teacher (clean distill target) +
-lift (penalize predicting-closer-to-current) all fight the collapse. π0.5 SigLIP space, generalizes
-(learned continuous code, no retrieval).
+  L = smooth_l1(Generator(g_t, teacher_z), g_f) + lift·relu(cos(ĝ,g_t)-cos(ĝ,g_f))   [recon + anti-persistence]
+      + MilestonePredictor.nll(g_t, teacher_z.detach())                              [distill teacher code]
+      (+ center_w·CE(cen_head(z), next_milestone_id)  cluster-center identity anchor, in train_ablation)
+
+Compact bottleneck (Generator NEEDS the code) + AdaLN (current not copyable) + teacher (clean distill
+target) + lift fight the v1 persistence collapse. Generalizes (learned continuous code, no retrieval).
+[legacy class names ForwardAdaLN/PredMDN kept as aliases]
 """
 from __future__ import annotations
 
@@ -29,6 +31,9 @@ REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(REPO / "crave/src"))
 from train_lawm_patch import load_index, read_imgs, InverseEnc  # noqa: E402
+
+# --- naming: Predictor(teacher=inverse, deploy=MilestonePredictor) + Generator(MilestoneGenerator) ---
+MilestonePredictorTeacher = InverseEnc  # PREDICTOR (teacher form): (g_t, g_future)->code, training only
 from optimize_subgoal import build_pairs  # noqa: E402
 from _siglip_bigvision import SiglipBigVision  # noqa: E402
 
@@ -36,8 +41,8 @@ PI05_NPZ = "/vePFS/tim/workspace/openpi_cache/paligemma_weights/pt_224.npz"
 PI05_NPZ_GF3 = "/vePFS-North-E/vis_robot/openpi_cache/paligemma_weights/pt_224.npz"
 
 
-class ForwardAdaLN(nn.Module):
-    """g_t grid substrate + code z modulating via shift/scale/gate (zero-init gate = starts from g_t)."""
+class MilestoneGenerator(nn.Module):  # GENERATOR: (current grid, milestone code) -> next-milestone grid
+    """生成器: 当前 grid 当画布, 码经 AdaLN(shift/scale/gate, zero-init) 逐层调制成下一 milestone grid."""
     def __init__(self, din, code_dim, hid=512, nblk=4):
         super().__init__()
         self.nblk, self.hid = nblk, hid
@@ -59,8 +64,8 @@ class ForwardAdaLN(nn.Module):
         return self.out(h)
 
 
-class PredMDN(nn.Module):
-    """current gist -> mixture of K diagonal Gaussians over the CODE z (dim C)."""
+class MilestonePredictor(nn.Module):  # PREDICTOR (deploy head): current gist -> multimodal milestone code
+    """预测器(部署头): 当前 gist -> K 个高斯混合 over 码 z; deploy 取 mode(平滑单点)."""
     def __init__(self, in_dim, C, K, hid=1024):
         super().__init__()
         self.K, self.C = K, C
@@ -132,8 +137,8 @@ def main():
     vaa = np.array([u2k[c] for c, _ in va]); vab = np.array([u2k[n] for _, n in va])
 
     inv = InverseEnc(din, args.code_dim).to(dev)
-    fwd = ForwardAdaLN(din, args.code_dim).to(dev)
-    predm = PredMDN(din, args.code_dim, args.K).to(dev)
+    fwd = MilestoneGenerator(din, args.code_dim).to(dev)
+    predm = MilestonePredictor(din, args.code_dim, args.K).to(dev)
     o1 = torch.optim.AdamW(list(inv.parameters()) + list(fwd.parameters()), lr=2e-4, weight_decay=1e-5)
     o2 = torch.optim.AdamW(predm.parameters(), lr=2e-4, weight_decay=1e-5)
     npar = lambda m: sum(p.numel() for p in m.parameters())
@@ -179,6 +184,9 @@ def main():
                 "mode": args.mode, "arch": "v2"}, ckp)
     print(json.dumps(res, indent=2), flush=True); print(f"saved -> {ckp}", flush=True)
 
+
+ForwardAdaLN = MilestoneGenerator      # back-compat alias
+PredMDN = MilestonePredictor            # back-compat alias
 
 if __name__ == "__main__":
     main()
