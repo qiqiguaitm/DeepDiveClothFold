@@ -352,27 +352,116 @@
     <h2>未来计划:LMWM × VLA 融合 → LMVLA / LMWAM</h2>
     <p class="sub">当前 intrinsic 预测指标已达/超 LaWM 同级,两条硬指标(①保真 ②价值前向)达标。唯一短板是 extrinsic 的下游 SR。下一步把生成器子目标 <b>Ĝ</b> + 预测器码 <b>ẑ</b> 注入 kai0 π0.5 action expert,做效果与指标对比。</p>
     <div class="diagram">
-      <svg viewBox="0 0 1000 200" role="img" aria-label="LMVLA 融合路线图">
-        <defs><marker id="ah4" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#a78bfa"/></marker></defs>
+      <svg viewBox="0 0 1000 712" role="img" aria-label="LMWAM 两阶段整体架构:LMWM 世界模型 + 与 π0.5 VLA 的融合">
+        <defs>
+          <marker id="a4" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#a78bfa"/></marker>
+          <marker id="a4g" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#22c55e"/></marker>
+          <marker id="a4d" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#eab308"/></marker>
+        </defs>
         <style>
-          .fbx{fill:#1a0b3e;stroke:#a78bfa;stroke-width:2}
-          .ffz{fill:#2a1065;stroke:#7c3aed;stroke-width:1.8}
-          .fhi{fill:#0f2e1a;stroke:#22c55e;stroke-width:1.8}
-          .ft{fill:#e8eaf6;font:600 13px sans-serif;text-anchor:middle}
-          .fs{fill:#8892c8;font:10px monospace;text-anchor:middle}
-          .far{stroke:#a78bfa;stroke-width:1.8;fill:none}
+          .sc{fill:rgba(124,58,237,.04);stroke:#3730a3;stroke-width:1.4;stroke-dasharray:7 5}
+          .sbx{fill:#0f002e;stroke:#3730a3;stroke-width:1.4}
+          .sfz{fill:#2a1065;stroke:#7c3aed;stroke-width:1.7}
+          .ssh{fill:#2a1065;stroke:#eab308;stroke-width:2.2}
+          .str{fill:#1a0b3e;stroke:#a78bfa;stroke-width:1.9}
+          .soff{fill:rgba(124,58,237,.05);stroke:#3730a3;stroke-width:1.3;stroke-dasharray:5 4}
+          .sact{fill:#0f2e1a;stroke:#22c55e;stroke-width:2}
+          .st{fill:#e8eaf6;font:600 12px sans-serif;text-anchor:middle}
+          .ss{fill:#9aa2d0;font:9.5px monospace;text-anchor:middle}
+          .sstage{fill:#a78bfa;font:800 15px sans-serif}
+          .slb{fill:#818cf8;font:9.5px monospace;text-anchor:middle}
+          .sar{stroke:#a78bfa;stroke-width:1.7;fill:none}
+          .sarg{stroke:#22c55e;stroke-width:1.9;fill:none}
+          .sard{stroke:#eab308;stroke-width:1.5;fill:none;stroke-dasharray:5 4}
         </style>
-        <rect class="fbx" x="30" y="66" width="190" height="66" rx="10"/><text class="ft" x="125" y="92">LMWM 输出</text><text class="fs" x="125" y="112">子目标 Ĝ + 码 ẑ</text>
-        <rect class="ffz" x="300" y="66" width="220" height="66" rx="10"/><text class="ft" x="410" y="90">π0.5 action expert</text><text class="fs" x="410" y="110">注入 · KI + RoPE 偏移 + mask</text>
-        <rect class="fbx" x="600" y="66" width="180" height="66" rx="10"/><text class="ft" x="690" y="92">LMVLA / LMWAM</text><text class="fs" x="690" y="112">融合模型</text>
-        <rect class="fhi" x="836" y="66" width="150" height="66" rx="10"/><text class="ft" x="911" y="90">评测对比</text><text class="fs" x="911" y="110">action-MAE → SR</text>
-        <line class="far" x1="220" y1="99" x2="300" y2="99" marker-end="url(#ah4)"/>
-        <line class="far" x1="520" y1="99" x2="600" y2="99" marker-end="url(#ah4)"/>
-        <line class="far" x1="780" y1="99" x2="836" y2="99" marker-end="url(#ah4)"/>
-        <text x="500" y="34" style="fill:#a78bfa;font:600 12px monospace;text-anchor:middle">Phase 1 融合接线(本地)→ Phase 2 簇微调(集群)→ Phase 3 真机 SR</text>
-        <text x="911" y="160" style="fill:#86efac;font:10px sans-serif;text-anchor:middle">对齐 LaWM LIBERO 98.6%</text>
+
+        <!-- ================= STAGE 1 ================= -->
+        <rect class="sc" x="6" y="34" width="988" height="270" rx="14"/>
+        <text class="sstage" x="26" y="62">Stage 1 · LMWM 世界模型训练</text>
+        <!-- frames -->
+        <rect class="sbx" x="26" y="108" width="66" height="40" rx="7"/><text class="st" x="59" y="132">当前 o_t</text>
+        <rect class="sbx" x="26" y="160" width="66" height="40" rx="7"/><text class="st" x="59" y="184">未来 o_T</text>
+        <!-- shared siglip -->
+        <rect class="ssh" x="112" y="108" width="104" height="92" rx="9"/><text class="st" x="164" y="146">π0.5 SigLIP</text><text class="ss" x="164" y="164">冻结 · 共享塔</text><text class="ss" x="164" y="180">❄ 与策略同塔</text>
+        <!-- grids -->
+        <rect class="sbx" x="240" y="108" width="64" height="40" rx="7"/><text class="st" x="272" y="132">grid G_t</text>
+        <rect class="sbx" x="240" y="160" width="64" height="40" rx="7"/><text class="st" x="272" y="184">grid G_T</text>
+        <!-- predictor teacher -->
+        <rect class="str" x="338" y="104" width="176" height="56" rx="9"/><text class="st" x="426" y="126">预测器 · 逆向 teacher</text><text class="ss" x="426" y="144">inv(G_t,G_T) → 码 z(128)</text>
+        <rect class="str" x="338" y="168" width="176" height="34" rx="8"/><text class="ss" x="426" y="189" style="fill:#c7cbf0">＋ 簇中心 CE 身份锚</text>
+        <rect class="sbx" x="538" y="112" width="42" height="40" rx="7"/><text class="st" x="559" y="137">z</text>
+        <!-- generator -->
+        <rect class="str" x="606" y="106" width="158" height="58" rx="9"/><text class="st" x="685" y="128">生成器 · AdaLN(4块)</text><text class="ss" x="685" y="146">(G_t 画布, z) → 下一 grid</text>
+        <rect class="sbx" x="788" y="108" width="82" height="54" rx="8"/><text class="st" x="829" y="132">子目标 Ĝ</text><text class="ss" x="829" y="150">≈ G_T</text>
+        <rect class="sbx" x="892" y="108" width="90" height="54" rx="8"/><text class="st" x="937" y="130">真 G_T</text><text class="ss" x="937" y="148">smooth-L1 监督</text>
+        <!-- crave offline -->
+        <rect class="soff" x="240" y="232" width="640" height="42" rx="9"/><text class="st" x="560" y="252" style="fill:#c7cbf0">CRAVE 离线 label 工厂(DINOv3-H + Viterbi 单调)</text><text class="ss" x="560" y="267">→ milestone+1 medoid 目标 · 提供簇中心身份 id(仅离线,不上线)</text>
+        <!-- arrows S1 -->
+        <path class="sar" d="M92,128 L112,138" marker-end="url(#a4)"/>
+        <path class="sar" d="M92,180 L112,170" marker-end="url(#a4)"/>
+        <path class="sar" d="M216,132 L240,128" marker-end="url(#a4)"/>
+        <path class="sar" d="M216,176 L240,180" marker-end="url(#a4)"/>
+        <path class="sar" d="M304,128 L338,130" marker-end="url(#a4)"/>
+        <path class="sar" d="M304,180 C322,180 322,148 338,146" marker-end="url(#a4)"/>
+        <path class="sar" d="M514,132 L538,132" marker-end="url(#a4)"/>
+        <path class="sar" d="M580,132 L606,134" marker-end="url(#a4)"/>
+        <path class="sar" d="M272,148 C272,210 560,210 606,158" marker-end="url(#a4)"/><text class="slb" x="360" y="206">G_t 当画布</text>
+        <path class="sar" d="M764,135 L788,135" marker-end="url(#a4)"/>
+        <path class="sar" d="M870,135 L892,135" marker-end="url(#a4)"/>
+        <path class="sard" d="M620,232 C560,214 470,208 440,202" marker-end="url(#a4d)"/><text class="slb" x="560" y="226" style="fill:#eab308">身份 id 锚</text>
+        <path class="sard" d="M840,232 C900,210 937,190 937,162" marker-end="url(#a4d)"/>
+
+        <!-- ================= STAGE 2 ================= -->
+        <rect class="sc" x="6" y="322" width="988" height="376" rx="14"/>
+        <text class="sstage" x="26" y="350">Stage 2 · LMWAM = LMWM × π0.5 VLA(下游融合)</text>
+        <!-- inputs -->
+        <rect class="sbx" x="24" y="392" width="72" height="38" rx="7"/><text class="st" x="60" y="415">其他视角</text>
+        <rect class="sbx" x="24" y="440" width="72" height="38" rx="7"/><text class="st" x="60" y="463">主视图 o_1</text>
+        <rect class="sbx" x="24" y="488" width="72" height="34" rx="7"/><text class="ss" x="60" y="509" style="fill:#c7cbf0">“叠衣”指令</text>
+        <!-- VLM shared -->
+        <rect class="ssh" x="118" y="392" width="150" height="130" rx="10"/><text class="st" x="193" y="446">π0.5 VLM</text><text class="ss" x="193" y="464">SigLIP 共享塔</text><text class="ss" x="193" y="480">+ 语言</text><text class="ss" x="193" y="500">prefix · KV 复用</text>
+        <!-- upper LMWM branch -->
+        <rect class="sbx" x="300" y="360" width="70" height="38" rx="7"/><text class="st" x="335" y="383">grid G_t</text>
+        <rect class="str" x="300" y="418" width="176" height="54" rx="9"/><text class="st" x="388" y="440">预测器 · MDN 部署</text><text class="ss" x="388" y="458">g_t → 多峰码 ẑ(K=4)</text>
+        <rect class="sbx" x="498" y="424" width="42" height="42" rx="7"/><text class="st" x="519" y="450">ẑ</text>
+        <rect class="str" x="566" y="418" width="158" height="54" rx="9"/><text class="st" x="645" y="440">生成器 · AdaLN</text><text class="ss" x="645" y="458">(G_t, ẑ) → 子目标 Ĝ</text>
+        <rect class="sbx" x="748" y="424" width="58" height="42" rx="7"/><text class="st" x="777" y="450">Ĝ</text>
+        <!-- KI injection -->
+        <rect class="str" x="566" y="540" width="240" height="48" rx="9"/><text class="st" x="686" y="562">Knowledge Insulation(KI)</text><text class="ss" x="686" y="579">+ RoPE 偏移 + mask 重设计</text>
+        <!-- action expert -->
+        <rect class="sact" x="838" y="398" width="146" height="210" rx="10"/><text class="st" x="911" y="470" style="fill:#dcfce7">π0.5</text><text class="st" x="911" y="490" style="fill:#dcfce7">action expert</text><text class="ss" x="911" y="510" style="fill:#a7f3d0">flow matching · ×N</text>
+        <rect class="sact" x="866" y="352" width="90" height="34" rx="7"/><text class="st" x="911" y="374" style="fill:#dcfce7">Actions</text>
+        <rect class="sbx" x="866" y="620" width="90" height="30" rx="7"/><text class="ss" x="911" y="640" style="fill:#c7cbf0">Noise</text>
+        <!-- distill -->
+        <path class="sard" d="M519,424 C519,300 519,300 559,164" marker-end="url(#a4d)"/><text class="slb" x="470" y="330" style="fill:#eab308">蒸馏 ‖ẑ−z‖²(对齐 Stage-1 teacher 码)</text>
+        <!-- arrows S2 -->
+        <path class="sar" d="M96,411 L118,430" marker-end="url(#a4)"/>
+        <path class="sar" d="M96,459 L118,460" marker-end="url(#a4)"/>
+        <path class="sar" d="M96,505 L118,490" marker-end="url(#a4)"/>
+        <path class="sar" d="M268,420 C286,414 286,390 300,382" marker-end="url(#a4)"/>
+        <path class="sar" d="M268,458 C286,458 286,446 300,444" marker-end="url(#a4)"/><text class="slb" x="292" y="500">同塔 grid/gist</text>
+        <path class="sar" d="M370,392 C420,404 420,416 430,418" marker-end="url(#a4)"/>
+        <path class="sar" d="M476,446 L498,446" marker-end="url(#a4)"/>
+        <path class="sar" d="M540,446 L566,446" marker-end="url(#a4)"/>
+        <path class="sar" d="M724,446 L748,446" marker-end="url(#a4)"/>
+        <path class="sar" d="M777,466 C777,510 700,520 686,540" marker-end="url(#a4)"/>
+        <path class="sar" d="M519,466 C519,520 600,520 640,540" marker-end="url(#a4)"/><text class="slb" x="560" y="516">Ĝ + ẑ 一起注入</text>
+        <path class="sar" d="M806,564 C824,564 824,556 838,548" marker-end="url(#a4)"/>
+        <path class="sar" d="M268,500 C520,700 700,640 838,580" marker-end="url(#a4)"/><text class="slb" x="470" y="640">VLM prefix 条件</text>
+        <path class="sarg" d="M911,398 L911,386" marker-end="url(#a4g)"/>
+        <path class="sar" d="M911,620 L911,608" marker-end="url(#a4)"/>
+
+        <text x="500" y="20" style="fill:#a78bfa;font:800 13px sans-serif;text-anchor:middle">LMWAM 整体架构 —— 与 LaWM 关键区别:SigLIP 共享塔(非独立 DINO)· 内置 MDN 预测器 · 价值单调 milestone 目标</text>
       </svg>
+      <div class="legend">
+        <span><i style="background:#2a1065;border:2px solid #eab308"></i>共享塔(π0.5 SigLIP,与 LaWM 独立 DINO 的关键区别)</span>
+        <span><i style="background:#1a0b3e;border:1px solid #a78bfa"></i>LMWM 可训练</span>
+        <span><i style="background:#0f2e1a;border:1px solid #22c55e"></i>π0.5 action expert / 输出</span>
+        <span><i style="background:transparent;border:1px dashed #3730a3"></i>CRAVE 离线</span>
+        <span><i style="background:transparent;border:1px dashed #eab308"></i>蒸馏 / 身份锚</span>
+      </div>
     </div>
+    <p class="ref" style="margin-top:8px">对照 LaWM 两阶段图(§01):我们把 <b>Stage-1 世界模型</b>(预测器+生成器)与 <b>Stage-2 VLA 融合</b>(KI + RoPE 偏移 + mask 注入 π0.5 action expert)画到同一流程。<b>三点关键区别</b>:① 编码器是<b>与策略共享的 π0.5 SigLIP</b>(LaWM 用独立 DINO,融合有隔阂);② 预测器内置 MDN、世界模型自包含(LaWM 把预测码甩给策略);③ 目标是 CRAVE <b>价值单调 milestone+1</b>(LaWM 固定 1.6s 未来)。</p>
     <div class="scroll"><table>
       <thead><tr><th>阶段</th><th>动作</th><th>裁决指标</th></tr></thead>
       <tbody>
