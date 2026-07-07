@@ -1,110 +1,158 @@
-# LMWM 最终报告:子目标预测器(milestone prediction)
+# LMWM 最终报告:Latent Milestone World Model
 
-面向 kai0 π0.5 VLA 的冻结 world-model 子目标模块。本文汇总最终网络结构、各指标含义(本科生级讲解)、
-与 LaWM(arXiv 2606.15768)的对比,以及 V1→V3.1 目标构建的演进结论。
+> 面向 kai0 π0.5 VLA 的 milestone+1 **价值层宏观引导**世界模型。本文是**完整数据记录 + 过程迭代**的报告(网站 `web/showcase/reports/lmwm_final/` 是精简可视化 showcase,深度细节以本文为准)。
+> 更新 2026-07-07 · 最终 = **预测器 Predictor + 生成器 Generator**,π0.5 SigLIP 空间,`center_w=0.1`(`lmwm/checkpoints/twomodel_final.pt`)。
 
 ---
 
-## 1. 各指标是什么、有什么用(本科生级)
+## 0. 核心目标与两条硬指标
 
-我们预测的是"未来某个 milestone 的 DINOv3 特征网格"。用一堆指标从不同角度衡量"预测得好不好":
+LMWM 的目的:给 VLA 一个 milestone+1 的**价值层宏观引导**(不是进度级、是价值级)。据此定两条**硬指标**:
+- **① 解码保真**:预测的 milestone+1 解码后要忠实(不能是 off-manifold 噪声/黑斑)。
+- **② 价值前向**:预测的 milestone+1 在**进展价值**上要 > 当前 stage。
 
-| 指标 | 定义(直白版) | 作用 / 表明什么 |
+其余(reach / horizon / lag / 平滑)可协商。
+
+---
+
+## 1. 指标词典(本科生级)
+
+预测目标 = "未来某 milestone 的 patch 特征网格"。用多指标从不同角度衡量:
+
+| 指标 | 定义(直白版) | 表明什么 |
 |---|---|---|
-| **grid-cos** | 预测的特征网格 与 真实目标网格 的**余弦相似度**(1=完全一致,0=无关) | 核心保真度。越高=预测越像真实未来。 |
-| **oracle grid-cos** | 用"作弊码"(inverse 偷看了真实未来算出的转移码)重建目标的 cos | **天花板**:即使知道真实动作,forward 解码器能重建到多好。衡量"模型容量/表达上限"。 |
-| **deploy grid-cos** | 真实部署:只看当前帧、用预测码(predm)重建目标的 cos | **真实可用性**:实战中(没有未来)能做多好。这是我们最关心的数。 |
-| **persistence** | 直接把"当前帧"当作预测(不动)的 cos | **平庸基线**:"啥也不预测"能得多少分。用来判断预测器有没有真本事。 |
-| **lift = deploy − persistence** | 预测器比"不动"多赚了多少 | **真实技巧**:扣掉"目标本来就离当前近"的便宜,看模型净贡献。比绝对 deploy 更公平。 |
-| **model lag(时间滞后)** | 把预测的网格匹配到最像的真实帧,那帧比当前晚多少秒 | 模型"敢预测多远"。越接近目标 lag=越敢 commit。 |
-| **dataset lag** | 真实目标帧比当前晚多少秒 | 目标本身的时间跨度(horizon)。 |
-| **ratio = model/dataset lag** | 模型达成度 | <1 表示**欠射**(模型不敢预测那么远,退回当前附近)。越接近 1 越好。 |
-| **best-of-8** | VAE 采样 8 个预测,取和真实最像的那个的 cos | 衡量**未来是不是多模态**:若 best-of-8 ≫ 均值,说明未来有多个分支、采样能覆盖到。 |
-| **corr(value, time)** | CRAVE 给每帧的 progress 值 与 归一化时间 的相关系数 | CRAVE 进度标签质量。0.94=进度标签几乎和真实时间同步上升,很可靠。 |
-| **monotonicity** | 预测/进度序列中"非递减"的比例 | 进度是否单调不倒退。0.98=基本只前进。 |
-
-**一句话**:oracle=上限,deploy=实战,persistence=白给基线,lift=净技巧,lag/ratio=敢不敢预测远,best-of-8=未来多不多模态。
+| **grid-cos** | 预测网格 vs 真实目标网格的余弦 | 核心保真度(⚠️ 编码器空间不同则不能硬比) |
+| **oracle grid-cos** | 用"作弊码"(teacher 偷看真未来)重建的 cos | 天花板 = 生成器表达上限(不经预测器) |
+| **deploy grid-cos** | 只看当前帧、用预测码重建的 cos | **实战值**(最关心) |
+| **persistence** | 把"当前帧"当预测(不动)的 cos | 白给基线 |
+| **lift** = deploy − persistence | 扣掉"目标本来就近"的便宜 | 净技巧 |
+| **reach / model lag** | 预测匹配到的真帧比当前晚几秒 | 敢预测多远(**同协议下可严格比秒**) |
+| **dataset horizon** | 真实目标帧比当前晚几秒 | 目标时间跨度 |
+| **undershoot ratio** = reach/horizon | 达成度 | <1 = 欠射(目标越远 ratio 越易低) |
+| **身份 top-N** | 预测码解出的"下一 milestone" 命中真 milestone 的 top-N 率 | **硬指标② 的价值多峰命中** |
+| **value-forward frac** | 预测 milestone 的 pord 值 > 当前 stage 的比例 | **硬指标②** 直接量 |
+| **pred smoothness** | 相邻帧预测的余弦 | 是否抖(抖 = 给 VLA 噪声) |
+| **corr(value,time)** | CRAVE 进度值 vs 时间的相关 | 进度标签质量(0.94) |
 
 ---
 
-## 2. 最终网络结构
+## 2. 最终网络结构(Predictor + Generator)
 
 ```
-                    ┌─ 冻结编码器 DINOv3-H (ViT-H+/16, ~840M) ─┐
-   256²RGB 帧 ──────┤  256²→ 16×16×1280 patch grid            │  (纯torch standalone loader,
-                    └──────────────────────────────────────────┘   任何 env 可用,cosine 0.9999)
+在线编码器 = π0.5 SigLIP-So400m/14 (冻结, 与策略同塔, 复用 KV)
+   224² RGB ──► 16×16×1152 grid G_t  ──pool──►  gist g_t (1152)
 
-   子目标预测器(forward-from-current,冻结后喂 VLA):
-     inverse(g_t, g_target) ──► 转移码 z        [teacher, 训练用, CNN 2层, 6.5M]
-     predm(g_t)             ──► 预测码 ẑ         [deploy, CNN, 3.6M]  (+ VAE 头 kl≈1e-2, 可选)
-     forward(g_t, code)     ──► ĝ_target        [CNN 3层, 17M, 空间基底=当前 grid]
-     部署推理 predm+forward ≈ 21M  (inverse 仅训练)
+预测器 Predictor —— 回答"下一个价值 milestone 是哪个":
+   训练形态(teacher): inverse(G_t, G_future) ──► 理想码 z (128)   [2层CNN]
+                      + 簇中心 CE 身份锚: CE(cen_head(z) → 37 milestone id, next_ms) · center_w=0.1
+   部署形态(deploy):  MDN(g_t) ──► K=4 高斯混合 over 码 ──► argmax-π 分量均值 = ẑ  [3.28M]
 
-   目标构建 = V3.1 (milestone_viterbi):
-     CRAVE 37 milestone + Viterbi 单调分配 → 每 stage 干净 medoid
-     目标 = 进度前进的下一个 milestone 的 medoid (时间前向 + 进度单调 + 跨集一致)
+生成器 Generator —— 回答"它在当前场景长什么样":
+   AdaLN(G_t 当画布, 码) ──► 下一 grid Ĝ    [4 块 CNN, zero-init gate, 只学"变化"]
+   训练/部署同一形态
 
-   patch 解码器(仅可视化,不喂 VLA): make_decoder big + GDL, 5M, L1 0.0206 / sharp 574
+离线 label 工厂(不上线): DINOv3-H(840M) + CRAVE Viterbi 单调分配 → milestone+1 medoid 目标帧
+patch 解码器(仅可视化, 不喂 VLA): make_decoder big, val_L1≈0.05
+
+世界模型参数 ≈ 34M(预测器 3.28M + 生成器 + teacher 仅训练用)
 ```
 
-**注入 VLA(π0.5)**:obs_grid(256×1280) + 子目标 û_T(256×1280) + 转移码 ẑ(64/128) → action expert,
-全 stop-grad + KI 梯度隔离 + 蒸馏 ‖ẑ−z‖²(对齐 LaWM 接口)。
+**为什么是 AdaLN 而非 concat**:concat 允许"复制当前帧"塌缩;AdaLN 以当前 grid 为画布、码只调制 shift/scale/gate(zero-init gate 从 proj(g_t) 起步),强制只学变化。消融里 concat → lag/平滑掉(见 §5)。**与 LaWM 收敛到同款 AdaLN 调制**。
+
+**注入 VLA(§下一步)**:子目标 Ĝ + 码 ẑ → π0.5 action expert(KI + RoPE 偏移 + mask 重设计)。
 
 ---
 
-## 3. 与 LaWM 的对比
+## 3. 与 LaWM 的对比(完整表)
 
-**LaWM(官方 ckpt 在我们数据上实测)** vs **我们最终 V3.1**:
+LaWM(jialei02/lawam_lam 官方 ckpt,给它补 deploy-predm)在**我们数据**、**同 reach 协议**实测:
 
-### 3a. 平均未来预测(核心指标)
-| | LaWM | 我们 V3.1 |
-|---|---|---|
-| 目标 horizon | **固定物理时间 1.6s** | **进度前进一个 milestone**(时间~2.4s 变长但进度固定) |
-| oracle grid-cos(我们数据) | **0.770**(kai0, ViT-B 空间) | **0.789**(ViT-H+ 空间) |
-| deploy grid-cos | 需策略预测码(未单独测) | **0.694** |
-| lift over persistence | +0.143 | +0.128 |
-| ⚠️ 可比性 | 编码器空间不同(ViT-B 768 vs ViT-H+ 1280)+ 目标定义不同 → **绝对数不能硬比,趋势可比** |
+| 指标 | LaWM | LMWM(cw=0.1) | 谁好 / 口径 |
+|---|---|---|---|
+| **reach / model lag(秒)** | 1.476 | **1.673** | **LMWM** · 严格同口径,绝对更远 |
+| 目标 horizon(秒) | 1.66 | 2.64 | LMWM 目标更远更难 |
+| undershoot ratio | 0.891 | 0.63 | LaWM 高:近未来易打满(非更强) |
+| 前向预测率(>0) | 44.9% | 35.3% | LMWM 近+远双峰、尾更长 |
+| 负滞后率(<0) | 10.7% | **6.5%** | **LMWM** · 更少"预测倒退" |
+| oracle grid-cos | 0.770 | 0.715–0.750 | ⚠️ 空间不同不硬比(ViT-B768 vs SigLIP1152) |
+| persistence | 0.627 | 0.599–0.601 | — |
+| lift(oracle−persist) | +0.143 | +0.116–0.135 | 净技巧,趋势可比 |
+| deploy grid-cos | —¹ | **0.726–0.728** | 只看当前帧实战值 |
+| 身份 top-3 | N/A² | **0.511** | **硬指标②** |
+| 预测平滑(相邻 cos) | — | **0.948** | 稳定信号 |
+| 进展价值单调 | N/A² | **Viterbi 保证** | **硬指标②**,LaWM 无 |
+| 跨数据集(vis_base 零微调) | 定性 | **0.56 定量** | — |
+| 世界模型参数 | ~230M Transformer | **~34M CNN** | 轻 ~10× |
+| 下游 SR(extrinsic) | **LIBERO 98.6% / 187ms** | 待测 | **LaWM** · 唯一短板 |
 
-**结论**:同数据上 LaWM 230M transformer **没有碾压**我们 ~27M CNN(lift 相当)。我们的**进度目标(V3.1)是 LaWM 没有的设计**——LaWM 只有固定时间 horizon,我们额外做了"跨 episode 进度一致"的目标。
+¹ LaWM 的 LAM 内不产出预测码(甩给下游 VLA),补 deploy-predm 才能测 reach。 ² CRAVE 进度/身份标签为 LMWM 特有。
 
-### 3b. 其他指标
-| 维度 | LaWM | 我们 |
-|---|---|---|
-| 世界模型参数 | 230M(24enc/12dec transformer)| **~27M CNN**(轻 8×)|
-| 编码器 | DINOv3 ViT-B/16 ~86M | DINOv3 ViT-H+/16 ~840M(强 10×)|
-| 潜在动作码 | 32-d **VAE** | 64/128,det 或 VAE |
-| horizon 类型 | 固定时间 | 固定时间(near-future)/ 事件(milestone)/ **进度(V3.1,新)** |
-| 下游 SR(extrinsic) | LIBERO 98.6% / RoboTwin 91% / 真机 90% | **未接 VLA 测 SR(最大缺口)** |
-| 跨数据集泛化 | 定性(3000h 多源数据) | **定量**(vis_base cos 0.68 零微调)|
-
-**最诚实的差距**:LaWM 有**下游成功率(SR)**,我们只有 intrinsic 预测指标——接 VLA 测 SR 是必须补的实验。
+**读表**:LMWM 更好 = reach、负滞后、参数、VLA 嵌入深度、进展价值单调(②)、跨集可定量;LMWM 不足 = undershoot ratio(目标远所致)、grid-cos 不硬比、**下游 SR 待测**。"LaWM 敢预测更远"是 ratio 错觉(它目标只 1.66s、近未来易打满),论绝对秒数 LMWM 反超。
 
 ---
 
-## 4. 目标构建演进(V1→V3.1)的核心结论
+## 4. 消融与数据记录
 
-| 版本 | 目标 | deploy | lift | 欠射ratio | 时间一致 | 跨集一致 | 单调 |
+### 4a. 核心结构锁死(控制变量,同口径)
+| config(改一处) | deploy | id_t1 | id_t3 | lag_ratio | fwd% | neg% | smooth | 结论 |
+|---|---|---|---|---|---|---|---|---|
+| base | 0.721 | 0.208 | 0.474 | 0.75 | 46% | 18% | 0.943 | 参照 |
+| concat(关 AdaLN) | 0.714 | 0.230 | 0.470 | 0.52 | 35% | 6% | 0.905 | lag/smooth 掉 |
+| nolift(关 lift) | 0.701 | 0.241 | 0.481 | 0.57 | 40% | 8% | 0.873 | lag/smooth 掉 |
+| noteacher | 0.645 | 0.178 | 0.401 | — | — | — | — | deploy 崩 |
+| code256 | 0.703 | 0.192 | 0.444 | — | — | — | — | 更差 |
+
+**核心 = inverse-teacher + AdaLN + lift + code128**,四项各自关掉都掉指标。
+
+### 4b. 簇中心锚强度 center_w 扫描(定案 = 0.1)
+| center_w | deploy | id_t1 | id_t3 | reach_s | ratio | smooth |
+|---|---|---|---|---|---|---|
+| 0.0 | 0.717 | 0.214 | 0.474 | 1.67 | 0.63 | 0.919 |
+| **0.1** | **0.728** | **0.270** | **0.511** | **1.67** | 0.63 | **0.948** |
+| 0.25 | 0.721 | 0.255 | 0.510 | 1.50 | 0.57 | 0.926 |
+| 0.5 | 0.717 | 0.264 | 0.503 | 1.25 | 0.47 | 0.913 |
+
+甜点 = **0.1**:身份/deploy/reach/平滑同时见顶;>0.1 过保守(0.5 把 reach 从 1.67 砍到 1.25)。这解释了早前"LMWM reach 不如 LaWM"的真因 = center_w 定太高(旧定案是 ccenter 0.5)。簇中心 on-manifold 锚也修好了 off-manifold 黑斑(硬指标①)。
+
+### 4c. 预测器输入:gist vs grid(定案 = gist)
+控制变量,仅 `--pred_input` 不同;grid 变体 = `MilestonePredictorGrid`(2 层 conv 下采样 → 同 MDN 头)。
+| pred_input | deploy | oracle* | bestof8 | id_t3 | id_t5 | value_fwd | predm 参数 |
 |---|---|---|---|---|---|---|---|
-| V1 temporal-next | 时序下一段 | 0.726 | 0.108 | 0.29 | 前向但欠射 | ❌ | ❌ |
-| V2 progress-argmax | value 更高 milestone | 0.594 | 0.136 | — | ❌错乱(负滞后)| ✅ | ✅ |
-| V3 progress-Δ | 连续进度+Δ | 0.62 | 0.20 | — | 前向但远(6s)| ✅ | ✅ |
-| **V3.1 milestone-viterbi** | **Viterbi 进度下一段** | 0.694 | 0.128 | **0.347** | ✅**前向** | ✅ | ✅ |
-| **V3.1+VAE(最终定版)** | 同上+VAE(kl1e-2)头 | **0.700**(best8 **0.705**)| 0.135 | 0.34 | ✅前向 | ✅ | ✅ |
+| **gist**(定案) | **0.7260** | 0.7504 | 0.7321 | **0.5125** | 0.6125 | 0.465 | **3.28M** |
+| grid | 0.7257 | 0.7599 | 0.7369 | 0.5044 | 0.6231 | 0.460 | 5.61M(+71%) |
 
-**最终定版 = V3.1 + VAE(kl 1e-2)**:deploy 0.700 / best-of-8 0.705(比 V3.1-det 微升 +0.006/+0.011),VAE 头对齐 LaWM 潜在动作接口。欠射 ratio 0.34(VAE 不改善欠射,印证 gap 是本质信息损失)。
-
-**结论**:**V3.1 = 最佳数据集构建**——用 CRAVE Viterbi 单调分配,唯一同时满足"时间前向+跨集一致+进度单调+干净标准 medoid"。模型欠射从 V1 的 0.29 改善到 0.35(预测 lag 0.28s→0.845s,敢 commit 3× 远)。
-
-**三大天花板(实测)**:①容量(transformer)无用;②多模态(VAE best-of-8)只回收 +0.02;③感知端(多视角+时序)只 +0.005。oracle→deploy 的 gap 大部分是**"从当前预测未来"的真实信息损失**,是硬的。
-
-> ⚠️ **更正(2026-07,见 `RESEARCH_DIRECTION_milestone_universal_fusion_2026-07.md`)**:上面 ②"多模态只回收 +0.02"**测错了轴**。best-of-8-on-code / grid-cos 对**身份多峰不敏感**;真正的多峰在"下一个是哪个 milestone"(身份),帧条件后仍 ~2.5 分支。换成 MDN 多峰 Stage-1 + 身份 top-N 指标后,best-of-N 随 K 单调回收(E1 best-of-3 **+0.29**;gf3 sweep V3.1 top3 .377→.448)。故"多模态天花板低"结论作废——**是 grid-cos 掩盖了它**。正确头指标 = 身份 top-N + 下游 SR,不是 grid-cos。
+**结论:维持 gist**。deploy 打平(Δ0.0003),身份/value-forward 全在 run-to-run 噪声(±0.01)内;grid 多 71% 参数换 0 deploy 收益 → "下一个是哪个价值 milestone"是**场景级全局身份判断**,pooled gist 已充分,空间细节无增量。
+*oracle 只经 teacher+生成器、不过预测器,两 run 的 0.75/0.76 差是 batch 采样未固定种子的噪声,非 grid 效应;严格坐实需多 seed,deploy 打平信号已足够。
 
 ---
 
-## 5. 产物索引
-- 预测器:`optimize_subgoal.py`(--mode {nearfuture, milestone, milestone_value, progress_delta, milestone_viterbi}, --code_head vae)
-- 目标术语:`milestone_target_terminology.md`
-- 诊断:`measure_milestone_lag.py`(欠射)、`crave_dataset_effect.py`(CRAVE 处理效果)
-- 官方 LaWM 评测:`eval_lawm_lam.py` + vendored `lmwm/vendor/LaWAM`
-- 渲染:`render_milestone_predict_video.py`(--viterbi, --raw_video 跨数据集)
-- 架构:`lmwm_architecture_current.md`
+## 5. 过程迭代(演进史)
+
+| 阶段 | 关键变化 | 结论 |
+|---|---|---|
+| **DINOv3-H V1→V3.1** | 目标构建:时序-next → 进度-argmax → 进度-Δ → **Viterbi 单调 milestone** | V3.1 唯一同满足 时间前向+跨集一致+进度单调+干净 medoid |
+| **多峰归位** | 发现"多模态只回收 +0.02"**测错了轴**:多峰在**身份**(哪个 milestone),grid-cos 不敏感 | 换 MDN 多峰 Stage-1 + 身份 top-N 指标 |
+| **SigLIP-space 重构** | 在线编码器 DINOv3-H → **π0.5 SigLIP 同塔**(消除与 VLA 隔阂),DINOv3-H+CRAVE 降为离线 label 工厂 | deploy 不掉,融合零隔阂 |
+| **Predictor/Generator** | 两模块化:预测器(身份码 MDN)+ 生成器(AdaLN 落地);v1 concat→77% persistence 塌缩,改 AdaLN 修复(ratio 0.29→0.99) | 定架构 |
+| **center_w 调参** | 簇中心 CE 锚 0.5→**0.1** | reach 1.25→1.67,身份/保真见顶 |
+| **gist vs grid** | 预测器输入 | grid 无增益,维持 gist |
+
+**三大天花板(实测)**:① 容量(Transformer)无用(LaWM 230M 未碾压 34M);② 早期"多模态天花板低"结论**作废**(是 grid-cos 掩盖身份多峰);③ SigLIP 解码 val_L1≈0.05 是对比训练特征的重建天花板,**仅影响可视化**(VLA 吃特征不吃像素),非预测/VLA 问题。
+
+---
+
+## 6. 下一步:LMWM × VLA → LMVLA / LMWAM
+
+子目标 Ĝ + 码 ẑ 注入 π0.5 action expert(KI + RoPE 偏移 + mask)。Phase 1 融合接线(本地)→ Phase 2 簇微调(集群 submit-training-job)→ Phase 3 真机。裁决 = offline action-MAE(base vs +LMWM vs control)→ 真机 SR,对齐 LaWM LIBERO 98.6%。
+
+---
+
+## 7. 产物索引
+- 最终 ckpt:`lmwm/checkpoints/twomodel_final.pt`(center_w=0.1)
+- 训练:`train_twomodel_v2.py`(`MilestonePredictor` + `MilestoneGenerator` + `MilestonePredictorGrid`)
+- 消融:`train_ablation.py`(`--target_mode/--teacher/--fwd_arch/--lift_w/--code_dim/--center_w/--pred_input`)
+- reach 同口径:`measure_twomodel_v2_lag.py` / `measure_lawm_lag.py` · 分布图 `plot_lag_dist.py`
+- 跨域渲染:`make_visbase_dinov3h_index.py` + `render_twomodel_video.py`
+- 深度文档:`ABLATION_CONVERGENCE_2026-07.md`(消融全表)、`RESEARCH_DIRECTION_milestone_universal_fusion_2026-07.md`(命名/假设/多峰)、`PROGRESS_lawm_comparison_2026-07.md`(LaWM)
+- baseline:LaWM `rlinf.github.io/LaWAM`(vendored `lmwm/vendor/LaWAM`)
+- 网站 showcase:`web/showcase/reports/lmwm_final/`

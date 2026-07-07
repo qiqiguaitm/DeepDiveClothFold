@@ -95,6 +95,7 @@
     <span class="tag">baseline <b>LaWM</b></span>
     <span class="tag">2026-07-07</span>
   </div>
+  <p class="ref" style="margin-top:14px">本页是<b>精简可视化 showcase</b>;完整数据记录、全部消融表与过程迭代见报告 <code>lmwm/docs/FINAL_REPORT.md</code>。</p>
 </div></header>
 
 <div class="wrap">
@@ -275,11 +276,7 @@
       </tbody>
     </table></div>
 
-    <p style="margin-top:16px"><b>训练关键 · 簇中心锚强度 center_w</b>:锚太弱 → 预测冲出真实流形(解码黑斑,违反硬指标①);太强 → 过保守、reach 缩短。扫描定案 <b>center_w=0.1</b> 为甜点。</p>
-    <figure>
-      <img src="assets/center_w_curve.png" alt="center_w 扫描曲线">
-      <figcaption><b>簇中心锚 center_w 扫描</b>({0,0.1,0.25,0.5})。center_w=0.1 时身份(id_t3 .511)、deploy(.728)、reach(1.67s)、平滑(.948)同时见顶;再加大到 0.5 会把 reach 从 1.67 砍到 1.25s。</figcaption>
-    </figure>
+    <p style="margin-top:16px"><b>训练关键 · 簇中心锚强度 center_w</b>:锚太弱 → 预测冲出真实流形(解码黑斑,违反硬指标①);太强 → 过保守、reach 缩短。扫描 {0,0.1,0.25,0.5} 定案 <b>center_w=0.1</b> 为甜点(身份/deploy/reach/平滑同时见顶)。<span class="ref">完整扫描表 + 核心结构消融 + gist-vs-grid 预测器输入消融见报告 <code>lmwm/docs/FINAL_REPORT.md §4</code>。</span></p>
 
     <h3><span class="h3n">2.3</span>预测渲染效果</h3>
     <p class="sub" style="margin-top:4px">最终模型(center_w=0.1)预测 milestone+1。四栏 = 当前 │ <b>预测 m+1 解码</b> │ 真实 m+1 编→解码 │ 真实 m+1 帧(中间两栏过<b>同一</b>解码器 → 差异纯是预测质量)。</p>
@@ -327,24 +324,17 @@
     <h3><span class="h3n">3.2</span>预测指标 / 视野对比</h3>
     <p class="sub" style="margin-top:4px">同一批 kai0 数据、<b>同一 reach 协议</b>(预测帧匹配到的真帧比当前晚几秒)实测。⚠️ grid-cos 编码器空间不同不硬比;<b>reach(秒)严格同口径</b>(给官方 LaWM ckpt 补 deploy-predm 后在我们数据上测)。</p>
     <div class="scroll"><table>
-      <thead><tr><th>指标</th><th class="num">LaWM</th><th class="num">LMWM(cw=0.1)</th><th>谁好 / 口径</th></tr></thead>
+      <thead><tr><th>指标(headline)</th><th class="num">LaWM</th><th class="num">LMWM(cw=0.1)</th><th>谁好 / 口径</th></tr></thead>
       <tbody>
         <tr><td class="term">reach / model lag(秒)</td><td class="num">1.48</td><td class="num pos">1.67</td><td class="pos"><b>LMWM 好</b> · 严格同口径,绝对更远</td></tr>
-        <tr><td class="term">目标 horizon(秒)</td><td class="num">1.66</td><td class="num">2.64</td><td>LMWM 目标本就更远更难</td></tr>
         <tr><td class="term">undershoot ratio</td><td class="num">0.89</td><td class="num amb">0.63</td><td class="amb">LaWM 高:近未来易打满(非更强)</td></tr>
-        <tr><td class="term">前向预测率(&gt;0)</td><td class="num">44.9%</td><td class="num">35.3%</td><td>见分布图:LMWM 近+远双峰、尾更长</td></tr>
         <tr><td class="term">负滞后率(&lt;0)</td><td class="num">10.7%</td><td class="num pos">6.5%</td><td class="pos"><b>LMWM 好</b> · 更少"预测倒退"</td></tr>
-        <tr><td class="term">oracle grid-cos</td><td class="num">0.770</td><td class="num">0.715</td><td class="amb">空间不同,不硬比</td></tr>
-        <tr><td class="term">lift(oracle−persist)</td><td class="num">+0.143</td><td class="num">+0.116</td><td>净技巧;趋势可比</td></tr>
-        <tr><td class="term">deploy grid-cos</td><td class="num amb">—<sup>1</sup></td><td class="num pos">0.728</td><td>只看当前帧的实战值</td></tr>
-        <tr><td class="term">身份 top-3(下一 milestone)</td><td class="num amb">N/A<sup>2</sup></td><td class="num pos">0.511</td><td class="pos"><b>硬指标②</b> 价值多峰命中</td></tr>
-        <tr><td class="term">预测平滑(相邻帧 cos)</td><td class="num amb">—</td><td class="num pos">0.948</td><td class="pos">不抖 → 对 VLA 是稳定信号</td></tr>
-        <tr><td class="term">进展价值单调</td><td class="num amb">N/A<sup>2</sup></td><td class="num pos">Viterbi 保证</td><td class="pos"><b>硬指标②</b> · LaWM 无此约束</td></tr>
-        <tr><td class="term">跨数据集(vis_base 零微调)</td><td class="num">定性</td><td class="num">0.56 定量</td><td>LMWM 可定量</td></tr>
-        <tr><td class="term">下游 SR(extrinsic)</td><td class="num pos">LIBERO 98.6%</td><td class="num amb">待测(§04)</td><td class="amb"><b>LaWM 好</b> · 我们唯一短板</td></tr>
+        <tr><td class="term">deploy grid-cos</td><td class="num amb">—</td><td class="num pos">0.728</td><td>只看当前帧实战值(硬指标①)</td></tr>
+        <tr><td class="term">身份 top-3 / 价值单调</td><td class="num amb">N/A</td><td class="num pos">0.511 / ✓</td><td class="pos"><b>硬指标②</b> LaWM 无此约束</td></tr>
+        <tr><td class="term">下游 SR(extrinsic)</td><td class="num pos">LIBERO 98.6%</td><td class="num amb">待测(§04)</td><td class="amb"><b>LaWM 好</b> · 唯一短板</td></tr>
       </tbody>
     </table></div>
-    <p class="ref"><sup>1</sup> LaWM 的 LAM 内不产出预测码(部署甩给下游 VLA),我们给它补 deploy-predm 才能测 reach。 <sup>2</sup> CRAVE 进度/身份标签为 LMWM 特有,LaWM 无进度/事件标签。</p>
+    <p class="ref">完整 13 项对比(oracle/lift/horizon/前向率/平滑/跨集 + N/A 脚注)见报告 <code>lmwm/docs/FINAL_REPORT.md §3</code>。</p>
 
     <div class="vids" style="margin-top:16px">
       <figure><img src="assets/lag_distribution.png" alt="LMWM vs LaWM 预测时滞分布">
@@ -397,7 +387,8 @@
 </div>
 
 <footer><div class="wrap">
-  产物 · <code>lmwm/checkpoints/twomodel_final.pt</code>(center_w=0.1) · <code>train_twomodel_v2.py</code>(MilestonePredictor + MilestoneGenerator) · <code>train_ablation.py</code> · <code>measure_twomodel_v2_lag.py</code> / <code>measure_lawm_lag.py</code>(reach 同口径) · <code>render_twomodel_video.py</code> · baseline: <a href="https://rlinf.github.io/LaWAM/">LaWM (rlinf.github.io/LaWAM)</a>
+  <b>完整报告(数据记录 + 过程迭代)</b>:<code>lmwm/docs/FINAL_REPORT.md</code> · 消融全表 <code>ABLATION_CONVERGENCE_2026-07.md</code> · 命名/多峰 <code>RESEARCH_DIRECTION_...md</code> · LaWM <code>PROGRESS_lawm_comparison_2026-07.md</code><br>
+  产物 · <code>lmwm/checkpoints/twomodel_final.pt</code>(center_w=0.1) · <code>train_twomodel_v2.py</code> · <code>train_ablation.py</code> · <code>measure_lawm_lag.py</code> · <code>render_twomodel_video.py</code> · baseline: <a href="https://rlinf.github.io/LaWAM/">LaWM (rlinf.github.io/LaWAM)</a>
 </div></footer>
 </body>
 </html>
