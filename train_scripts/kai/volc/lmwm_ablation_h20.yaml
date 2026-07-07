@@ -82,14 +82,24 @@ Entrypoint: |
   [ -f "$RG" ]              || { echo "FATAL: recurrence graph missing $RG" >&2; exit 13; }
   [ -f "$DSROOT/meta/episodes.jsonl" ] || { echo "FATAL: frames dataset missing $DSROOT" >&2; exit 13; }
   [ -f "$PI05NPZ" ]        || { echo "FATAL: SigLIP pt_224.npz missing $PI05NPZ" >&2; exit 13; }
-  echo "[$(date)] preflight OK (bank + recurrence graph + frames + SigLIP npz)"
+  echo "[$(date)] kai0 preflight OK"
 
-  # Single-GPU run — pin to one H20.
-  # >>> ARGS_PLACEHOLDER <<< main session finalizes --datasets/--anchor/--tag (multi-task flags).
-  # train_ablation.py REQUIRES --tag. Single-task kai0_base example (all defaults resolve on North-E FS):
-  #   --tag lmwm_abl_v1 --anchor progress --teacher center --steps 9000
-  # Replace PLACEHOLDER_EDIT_ME below with the finalized flags before submitting.
-  exec env CUDA_VISIBLE_DEVICES=0 $PY -u lmwm/scripts/train_ablation.py --tag PLACEHOLDER_EDIT_ME
+  # coffee multi-task inputs (bank+graph rsync'd from local; frames symlinked to shared_data on gf3)
+  CFEAT=$REPO/temp/coffee_dinov3h
+  CRG=$REPO/lmwm/data/recurrence_graphs/coffee_dinov3h/recurrence_graph.npz
+  [ -f "$CFEAT/index.npz" ]                      || { echo "FATAL: coffee bank missing $CFEAT" >&2; exit 13; }
+  [ -f "$CRG" ]                                  || { echo "FATAL: coffee graph missing $CRG" >&2; exit 13; }
+  [ -f "$REPO/temp/aloha_static_coffee/meta/episodes.jsonl" ] || { echo "FATAL: coffee frames missing $REPO/temp/aloha_static_coffee" >&2; exit 13; }
+  $PY -c "import av; print('pyav', av.__version__)" || { echo "FATAL: pyav missing (coffee AV1 decode)" >&2; exit 13; }
+  echo "[$(date)] coffee preflight OK"
+
+  # P1b 3-arm (kai0+coffee) in PARALLEL on the 8-GPU node. seed 7 = 2nd independent seed vs local(2026).
+  DS=kai0,coffee; SEED=7
+  CUDA_VISIBLE_DEVICES=0 $PY -u lmwm/scripts/train_multitask.py --datasets $DS --anchor union_ce   --seed $SEED --tag h20_p1b_union_ce    &
+  CUDA_VISIBLE_DEVICES=1 $PY -u lmwm/scripts/train_multitask.py --datasets $DS --anchor progress    --seed $SEED --tag h20_p1b_progress     &
+  CUDA_VISIBLE_DEVICES=2 $PY -u lmwm/scripts/train_multitask.py --datasets $DS --anchor progress_id --seed $SEED --tag h20_p1b_progress_id  &
+  wait
+  echo "=== H20 P1b 3-arm done $(date) ==="
 
 RetryOptions:
     EnableRetry: false
