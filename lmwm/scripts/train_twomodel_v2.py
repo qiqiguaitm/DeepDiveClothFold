@@ -94,6 +94,41 @@ class MilestonePredictor(nn.Module):  # PREDICTOR (deploy head): current gist ->
         return torch.stack(out)
 
 
+class MilestonePredictorGrid(nn.Module):  # PREDICTOR variant: input = current GRID G_t (spatial) not pooled gist
+    """预测器(部署头)· grid 输入变体: 小 conv 编码器把 G_t(B,din,P,P) 压成特征 -> 同一 MDN 头.
+    与 MilestonePredictor 输出契约一致(pi,mu,ls / nll / deploy_mean / sample), 只是 forward 吃 grid."""
+    def __init__(self, in_dim, C, K, hid=1024, cw=256):
+        super().__init__()
+        self.K, self.C = K, C
+        self.enc = nn.Sequential(
+            nn.Conv2d(in_dim, cw, 3, 2, 1), nn.GroupNorm(8, cw), nn.GELU(),   # 16->8
+            nn.Conv2d(cw, cw, 3, 2, 1), nn.GroupNorm(8, cw), nn.GELU(),       # 8->4
+        )
+        self.trunk = nn.Sequential(nn.Linear(cw, hid), nn.GELU(), nn.Linear(hid, hid), nn.GELU())
+        self.pi = nn.Linear(hid, K); self.mu = nn.Linear(hid, K * C); self.ls = nn.Linear(hid, K * C)
+
+    def forward(self, G):
+        h = self.trunk(self.enc(G).mean((2, 3))); B = G.shape[0]
+        return self.pi(h), self.mu(h).view(B, self.K, self.C), self.ls(h).view(B, self.K, self.C).clamp(-6, 4)
+
+    def nll(self, G, z):
+        logit, mu, ls = self(G); logpi = F.log_softmax(logit, -1); var = (2 * ls).exp()
+        comp = -0.5 * (((z[:, None] - mu) ** 2) / var + 2 * ls + np.log(2 * np.pi)).sum(-1)
+        return -(torch.logsumexp(logpi + comp, -1)).mean()
+
+    @torch.no_grad()
+    def deploy_mean(self, G):
+        logit, mu, _ = self(G); return mu[torch.arange(len(G)), logit.argmax(-1)]
+
+    @torch.no_grad()
+    def sample(self, G, n):
+        logit, mu, ls = self(G); pi = F.softmax(logit, -1); out = []
+        for _ in range(n):
+            k = torch.multinomial(pi, 1).squeeze(1)
+            out.append(mu[torch.arange(len(G)), k] + torch.randn_like(mu[:, 0]) * ls[torch.arange(len(G)), k].exp())
+        return torch.stack(out)
+
+
 def cosr(a, b):
     return (a * b).sum(1) / (a.norm(dim=1) * b.norm(dim=1) + 1e-8)
 

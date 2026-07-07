@@ -293,7 +293,12 @@
           <source src="assets/final_heldout_cw01.mp4" type="video/mp4">
           浏览器无法内嵌播放,<a href="assets/final_heldout_cw01.mp4">点此下载视频</a>。
         </video>
-        <figcaption><b>ep3000(留出集,未训练)</b> · 未见 episode 上预测与真实进度前向 milestone 高度吻合 —— 泛化到留出数据。<span class="ref">SigLIP 解码略糊是对比训练特征的重建天花板(val_L1≈0.05),非预测问题;VLA 消费的是特征不是像素。跨数据集 vis_base 泛化见 §03.2 定量(cos 0.56),新架构 visbase 渲染为后续补。</span></figcaption></figure>
+        <figcaption><b>ep3000(留出集,未训练)</b> · 未见 episode 上预测与真实进度前向 milestone 高度吻合 —— 泛化到留出数据。<span class="ref">SigLIP 解码略糊是对比训练特征的重建天花板(val_L1≈0.05),非预测问题;VLA 消费的是特征不是像素。</span></figcaption></figure>
+      <figure><video controls playsinline preload="metadata" muted loop>
+          <source src="assets/final_visbase_cw01.mp4" type="video/mp4">
+          浏览器无法内嵌播放,<a href="assets/final_visbase_cw01.mp4">点此下载视频</a>。
+        </video>
+        <figcaption><b>vis_base 跨数据集(未见本体)</b> · 用最终 center_w=0.1 模型 + 为该 episode 现算的 DINOv3-H 特征做<b>跨域</b> milestone 预测(黑色衣物,外观与 kai0 差异大)。预测 m+1(第2栏)= 衣物更展开/被操作的形态,构型在特征空间迁移(§03.2 定量 cos 0.56)。<span class="ref">解码更糊 = kai0 训练的解码器跨域外观漂移(像素级),非预测问题。</span></figcaption></figure>
     </div>
   </section>
 

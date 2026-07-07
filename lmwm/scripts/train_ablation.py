@@ -32,7 +32,7 @@ sys.path.insert(0, str(REPO / "crave/src"))
 from train_lawm_patch import load_index, read_imgs, InverseEnc, ForwardDec  # noqa: E402
 from crave.utils.dp import viterbi_forward  # noqa: E402
 from _siglip_bigvision import SiglipBigVision  # noqa: E402
-from train_twomodel_v2 import MilestoneGenerator, MilestonePredictor, PI05_NPZ, PI05_NPZ_GF3, cosr  # noqa: E402
+from train_twomodel_v2 import MilestoneGenerator, MilestonePredictor, MilestonePredictorGrid, PI05_NPZ, PI05_NPZ_GF3, cosr  # noqa: E402
 
 
 def build_pairs_abl(E, FR, Fn, proto, protoL, pord, mode, val_eps, seed):
@@ -70,6 +70,7 @@ def main():
     ap.add_argument("--target_mode", default="seglast", choices=["seglast", "allframes"])
     ap.add_argument("--teacher", default="medoid", choices=["medoid", "center", "none"])
     ap.add_argument("--fwd_arch", default="adaln", choices=["adaln", "concat"])
+    ap.add_argument("--pred_input", default="gist", choices=["gist", "grid"])  # predictor sees pooled gist vs full grid
     ap.add_argument("--lift_w", type=float, default=1.0)
     ap.add_argument("--code_dim", type=int, default=128)
     ap.add_argument("--K", type=int, default=4)
@@ -113,7 +114,7 @@ def main():
 
     inv = InverseEnc(din, cd).to(dev) if args.teacher != "none" else None
     fwd = (MilestoneGenerator(din, cd) if args.fwd_arch == "adaln" else ForwardDec(din, cd)).to(dev)
-    predm = MilestonePredictor(din, cd, args.K).to(dev)
+    predm = (MilestonePredictorGrid if args.pred_input == "grid" else MilestonePredictor)(din, cd, args.K).to(dev)
     cen_head = nn.Linear(cd, Mn).to(dev) if args.teacher == "center" else None
     p1 = list(fwd.parameters()) + (list(inv.parameters()) if inv else []) + (list(cen_head.parameters()) if cen_head else [])
     o1 = torch.optim.AdamW(p1, lr=2e-4, weight_decay=1e-5)
@@ -121,6 +122,7 @@ def main():
     for step in range(args.steps):
         sel = torch.randint(0, len(tra), (64,))
         Gc = GZ[tra[sel]].float().to(dev); Gf = GZ[trb[sel]].float().to(dev); gc = gist[tra[sel]].to(dev)
+        pc = Gc if args.pred_input == "grid" else gc                       # predictor input: grid vs gist
         nm = torch.from_numpy(trn[sel.numpy()]).long().to(dev)
         if inv is not None:                                                # teacher path
             z = inv(Gc, Gf); gh = fwd(Gc, z)
@@ -129,9 +131,9 @@ def main():
             if cen_head is not None:                                       # cluster-center identity anchor
                 l1 = l1 + args.center_w * F.cross_entropy(cen_head(z), nm)
             o1.zero_grad(); l1.backward(); o1.step()
-            l2 = predm.nll(gc, z.detach()); o2.zero_grad(); l2.backward(); o2.step()
+            l2 = predm.nll(pc, z.detach()); o2.zero_grad(); l2.backward(); o2.step()
         else:                                                              # no teacher: predm code reconstructs
-            zp = predm.deploy_mean(gc) if False else predm(gc)[1][:, 0]    # use 1st component mean as code
+            zp = predm.deploy_mean(pc) if False else predm(pc)[1][:, 0]    # use 1st component mean as code
             gh = fwd(Gc, zp)
             lift = torch.relu(cosr(gh.flatten(1), Gc.flatten(1)) - cosr(gh.flatten(1), Gf.flatten(1))).mean()
             loss = F.smooth_l1_loss(gh, Gf) + args.lift_w * lift
@@ -151,19 +153,21 @@ def main():
     with torch.no_grad():
         for s in range(0, len(vaa), 128):
             Gc = GZ[vaa[s:s + 128]].float().to(dev); Gf = GZ[vab[s:s + 128]].float().to(dev); gc = gist[vaa[s:s + 128]].to(dev)
-            gtr = f(Gf); zdep = predm.deploy_mean(gc)
+            pc = Gc if args.pred_input == "grid" else gc
+            gtr = f(Gf); zdep = predm.deploy_mean(pc)
             if inv is not None:
                 co.append(cn(f(fwd(Gc, inv(Gc, Gf))), gtr))
             cd_.append(cn(f(fwd(Gc, zdep)), gtr)); cp.append(cn(f(Gc), gtr))
             best = None
-            for zi in predm.sample(gc, args.bestof):
+            for zi in predm.sample(pc, args.bestof):
                 ck = cn(f(fwd(Gc, zi)), gtr); best = ck if best is None else np.maximum(best, ck)
             cb.append(best)
         # identity top-N: rank milestones by cos(deploy predicted pooled gist, SigLIP proto)
         idpred = []
         for s in range(0, len(vaa), 128):
             Gc = GZ[vaa[s:s + 128]].float().to(dev); gc = gist[vaa[s:s + 128]].to(dev)
-            gh = fwd(Gc, predm.deploy_mean(gc)).mean((2, 3)).cpu().numpy()  # predicted pooled gist
+            pc = Gc if args.pred_input == "grid" else gc
+            gh = fwd(Gc, predm.deploy_mean(pc)).mean((2, 3)).cpu().numpy()  # predicted pooled gist
             idpred.append(gh)
         idpred = np.concatenate(idpred); idpred /= (np.linalg.norm(idpred, axis=1, keepdims=True) + 1e-8)
         idn = topn_hit(idpred @ spL.T, vbn)
@@ -173,6 +177,7 @@ def main():
         value_true = float((pord[vbn] > pord[cur_ms]).mean())              # target's own value-forward (ref)
 
     res = {"tag": args.tag, "target_mode": args.target_mode, "teacher": args.teacher, "fwd_arch": args.fwd_arch,
+           "pred_input": args.pred_input, "predm_params": sum(p.numel() for p in predm.parameters()),
            "lift_w": args.lift_w, "center_w": args.center_w, "code_dim": cd, "K": args.K, "n_train": len(tr),
            "oracle_grid_cos": round(float(np.concatenate(co).mean()), 4) if co else None,
            "deploy_grid_cos": round(float(np.concatenate(cd_).mean()), 4),
@@ -184,7 +189,7 @@ def main():
     ckp = REPO / f"lmwm/checkpoints/ablation/{args.tag}.pt"; ckp.parent.mkdir(parents=True, exist_ok=True)
     save = {"fwd": fwd.state_dict(), "predm": predm.state_dict(), "K": args.K, "din": din, "code_dim": cd,
             "gmu": float(gmu), "gsd": float(gsd), "arch": "v2" if args.fwd_arch == "adaln" else "v2concat",
-            "fwd_arch": args.fwd_arch}
+            "fwd_arch": args.fwd_arch, "pred_input": args.pred_input}
     if inv:
         save["inv"] = inv.state_dict()
     torch.save(save, ckp)
