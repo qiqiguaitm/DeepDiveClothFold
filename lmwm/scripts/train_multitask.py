@@ -57,7 +57,34 @@ def read_frames(cfg, E, FR, gidx, enc_res, tgt_res):
         return read_imgs(Path(cfg["root"]), cfg["cam"], E, FR, gidx, enc_res, tgt_res)
     if cfg["fmt"] == "lerobotv3":
         return _read_lerobotv3(Path(cfg["root"]), cfg["cam"], E, FR, gidx, enc_res, tgt_res)
-    raise NotImplementedError(cfg["fmt"])  # hdf5 (xvla) added for P2
+    if cfg["fmt"] == "hdf5":
+        return _read_hdf5(Path(cfg["root"]), cfg["cam"], E, FR, gidx, enc_res, tgt_res)
+    raise NotImplementedError(cfg["fmt"])
+
+
+def _read_hdf5(root, camera, E, FR, gidx, enc_res, tgt_res):
+    """XVLA HDF5: one episode_<N>.hdf5 per episode; frames = JPEG-encoded bytes at observations/images/<cam>."""
+    import h5py
+    from collections import defaultdict
+    key = camera.replace("observation.images.", "")                        # cam_high
+    ie = np.zeros((len(gidx), enc_res, enc_res, 3), np.uint8)
+    it = np.zeros((len(gidx), tgt_res, tgt_res, 3), np.uint8)
+    by_ep = defaultdict(list)
+    for k, g in enumerate(gidx):
+        by_ep[int(E[g])].append((k, int(FR[g])))
+    for ep, items in by_ep.items():
+        fp = root / f"episode_{ep}.hdf5"
+        if not fp.exists():
+            continue
+        with h5py.File(fp, "r") as h:
+            ds = h[f"observations/images/{key}"]
+            for k, fr in items:
+                img = cv2.imdecode(np.frombuffer(bytes(ds[fr]), np.uint8), cv2.IMREAD_COLOR)
+                if img is None:
+                    continue
+                img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+                ie[k] = cv2.resize(img, (enc_res, enc_res)); it[k] = cv2.resize(img, (tgt_res, tgt_res))
+    return ie, it
 
 
 def _read_lerobotv3(root, camera, E, FR, gidx, enc_res, tgt_res):
