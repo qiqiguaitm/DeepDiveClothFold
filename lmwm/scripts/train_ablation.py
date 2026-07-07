@@ -109,7 +109,7 @@ def main():
     gist = torch.from_numpy(GZnp.mean((2, 3)))                             # fp32 pooled (small)
     GZ = torch.from_numpy(GZnp).half(); del GZnp                          # fp16 CPU grids (halve RAM vs fp32)
     tra = np.array([u2k[p[0]] for p in tr]); trb = np.array([u2k[p[1]] for p in tr]); trn = np.array([p[3] for p in tr])
-    vaa = np.array([u2k[p[0]] for p in va]); vab = np.array([u2k[p[1]] for p in va]); vbn = np.array([p[3] for p in va])
+    vaa = np.array([u2k[p[0]] for p in va]); vab = np.array([u2k[p[1]] for p in va]); vbn = np.array([p[3] for p in va]); vcm = np.array([p[2] for p in va])
 
     inv = InverseEnc(din, cd).to(dev) if args.teacher != "none" else None
     fwd = (ForwardAdaLN(din, cd) if args.fwd_arch == "adaln" else ForwardDec(din, cd)).to(dev)
@@ -167,14 +167,18 @@ def main():
             idpred.append(gh)
         idpred = np.concatenate(idpred); idpred /= (np.linalg.norm(idpred, axis=1, keepdims=True) + 1e-8)
         idn = topn_hit(idpred @ spL.T, vbn)
+        # HARD REQ ②: predicted milestone's progress-VALUE > current stage's value
+        pred_ms = (idpred @ spL.T).argmax(1); cur_ms = vcm  # Viterbi current milestone (consistent w/ target)
+        value_fwd = float((pord[pred_ms] > pord[cur_ms]).mean())            # value-forward fraction
+        value_true = float((pord[vbn] > pord[cur_ms]).mean())              # target's own value-forward (ref)
 
     res = {"tag": args.tag, "target_mode": args.target_mode, "teacher": args.teacher, "fwd_arch": args.fwd_arch,
-           "lift_w": args.lift_w, "code_dim": cd, "K": args.K, "n_train": len(tr),
+           "lift_w": args.lift_w, "center_w": args.center_w, "code_dim": cd, "K": args.K, "n_train": len(tr),
            "oracle_grid_cos": round(float(np.concatenate(co).mean()), 4) if co else None,
            "deploy_grid_cos": round(float(np.concatenate(cd_).mean()), 4),
            "bestof%d" % args.bestof: round(float(np.concatenate(cb).mean()), 4),
            "persistence": round(float(np.concatenate(cp).mean()), 4),
-           "identity_topN": idn}
+           "identity_topN": idn, "value_forward_frac": round(value_fwd, 4), "target_value_forward_ref": round(value_true, 4)}
     outp = REPO / f"lmwm/outputs/ablation/{args.tag}.json"; outp.parent.mkdir(parents=True, exist_ok=True)
     outp.write_text(json.dumps(res, indent=2))
     ckp = REPO / f"lmwm/checkpoints/ablation/{args.tag}.pt"; ckp.parent.mkdir(parents=True, exist_ok=True)

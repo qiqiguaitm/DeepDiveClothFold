@@ -41,6 +41,7 @@ def main():
     ap.add_argument("--future_only", action="store_true", help="restrict model-match to frames >= current")
     ap.add_argument("--pi05_npz", default="")
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--tag", default="v2")
     ap.add_argument("--device", default="cuda")
     args = ap.parse_args()
     dev = args.device
@@ -114,6 +115,7 @@ def main():
            "real_frame_smoothness_adj_cos": round(float(np.mean(real_smooth)), 4),  # reference
            "old_dinov3_ref": {"model_lag_s": 0.845, "dataset_lag_s": 2.43, "ratio": 0.347}}
     (REPO / "lmwm/outputs/twomodel_v2_lag.json").write_text(json.dumps(res, indent=2))
+    np.save(REPO / f"lmwm/outputs/lag_raw_{args.tag}.npy", md)
     print(json.dumps(res, indent=2), flush=True)
 
 

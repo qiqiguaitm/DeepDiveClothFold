@@ -140,6 +140,7 @@ def main():
            "undershoot_ratio_mean": round(float(md.mean() / (ds.mean() + 1e-9)), 3),
            "ours_v2_ccenter_ref": {"model_lag_s": 1.277, "dataset_lag_s": 2.787, "ratio": 0.458}}
     (REPO / "lmwm/outputs/lawm_lag.json").write_text(json.dumps(res, indent=2))
+    np.save(REPO / "lmwm/outputs/lag_raw_lawm.npy", md)
     print(json.dumps(res, indent=2), flush=True)
 
 
