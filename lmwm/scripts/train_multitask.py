@@ -152,6 +152,7 @@ def main():
     ap.add_argument("--steps", type=int, default=9000)
     ap.add_argument("--bestof", type=int, default=8)
     ap.add_argument("--tag", required=True)
+    ap.add_argument("--save_ckpt", action="store_true", help="save the trained cross-task predictor (fwd+predm+inv+anchor)")
     ap.add_argument("--pi05_npz", default="")
     ap.add_argument("--seed", type=int, default=2026)
     ap.add_argument("--device", default="cuda")
@@ -289,6 +290,15 @@ def main():
     outp = REPO / f"lmwm/outputs/multitask/{args.tag}.json"; outp.parent.mkdir(parents=True, exist_ok=True)
     outp.write_text(json.dumps(res, indent=2))
     print(json.dumps(res, indent=2), flush=True)
+
+    if args.save_ckpt:                                                     # save the trained cross-task predictor
+        ck = {"fwd": fwd.state_dict(), "predm": predm.state_dict(), "anchor_head": anchor_head.state_dict(),
+              "inv": inv.state_dict() if inv is not None else None, "idproj": idproj,
+              "gmu": gmu, "gsd": gsd, "din": din, "code_dim": args.code_dim, "K": args.K,
+              "anchor": args.anchor, "teacher": args.teacher, "total_M": total_M, "datasets": datasets,
+              "tasks": [{"name": m["name"], "M": int(m["M"]), "msoff": int(m["msoff"]), "pord": m["pord"].tolist()} for m in train_metas]}
+        cp = REPO / f"lmwm/checkpoints/{args.tag}.pt"; cp.parent.mkdir(parents=True, exist_ok=True)
+        torch.save(ck, cp); print(f"saved cross-task predictor -> {cp}", flush=True)
 
 
 if __name__ == "__main__":
