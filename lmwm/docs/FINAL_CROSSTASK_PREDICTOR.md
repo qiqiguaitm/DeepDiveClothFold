@@ -9,8 +9,9 @@
 
 | 组件 | 最优选择 | 依据 |
 |---|---|---|
-| **锚 anchor** | **union_ce**(所有任务 milestone 拼成 union 头,CE) | in-dist 全面最强(见 §3) |
-| **teacher** | **inv**(逆向动力学 + 蒸馏) | 去掉 teacher deploy 掉 0.07–0.13(见 §3) |
+| **teacher** | **proto(簇中心)** ← 更新 | 与 inv 打平(deploy .7532 vs .754,id3 .710 vs .702),但**去掉 InverseEnc + 去掉 CE 锚、码=连续中心=开放词表、轻 5.9M**;xvla 身份反升(见 §3b) |
+| (teacher 备选) | inv(逆向动力学 + 蒸馏) | 与 proto 同级;去掉任何 teacher(none)deploy 掉 0.07–0.13 |
+| **锚 anchor** | proto 下**无需锚**(码即中心=身份);inv 下用 union_ce | in-dist union_ce 最强(见 §3a) |
 | 编码器 | π0.5 SigLIP 同塔(冻结,共享归一化) | 与策略同空间 |
 | 预测器 Predictor | 逆向 teacher 出码 z → MDN(K=4)部署 | — |
 | 生成器 Generator | AdaLN(当前 grid 画布,zero-gate) | 已有定论 |
@@ -22,7 +23,9 @@
 
 ## 2. 交付模型指标(12k step)
 
-**主交付 = 3 任务** `final_crosstask_3task.pt`:
+> **推荐交付 = proto teacher**:`teach_proto_3task.pt`(135MB)/ `teach_proto_4task.pt`(135MB)。与下方 inv 版打平但更简/更轻/更开放词表(见 §3b)。以下 inv 版作为等效对照保留。
+
+**inv 版 3 任务** `final_crosstask_3task.pt`:
 | task(簇数) | deploy | id_top3 |
 |---|---|---|
 | kai0 叠衣(37) | 0.699 | 0.483 |
@@ -47,6 +50,15 @@
 |---|---|---|---|
 | union_ce | **0.770** | 0.698 | +0.072 |
 | progress | 0.758 | 0.630 | +0.128 |
+
+### 3b. teacher = proto(簇中心)vs inv —— 打平但 proto 更优(推荐)
+| | inv | **proto** | 说明 |
+|---|---|---|---|
+| 3任务 mean deploy / id3 | 0.754 / 0.702 | **0.7532 / 0.7097** | 打平(噪声内) |
+| 3任务 xvla id3 | 0.638 | **0.679** | 最难身份反升 +0.04 |
+| 4任务 mean deploy / id3 | 0.786 / 0.563 | 0.783 / 0.546 | 打平 |
+| ckpt / 结构 | 158MB,含 InverseEnc + CE 锚 | **135MB,无 InverseEnc、无 CE 锚**(码=连续中心=身份=开放词表) | proto 更简/更轻/更跨任务 |
+→ **proto 同性能、更简洁、天然开放词表(对齐 LOO 连续锚在 unseen 身份反超)→ 采纳为最优。** teacher 码 = 下一 milestone SigLIP 中心的固定投影;predm 蒸馏它;生成器把它渲染到当前画布。
 
 **open-vocab / LOO(留一任务当 unseen,train 其余)—— 连续锚在身份上小胜,但整体弱**
 | unseen | union_ce id3 | progress id3 | deploy vs persist |
