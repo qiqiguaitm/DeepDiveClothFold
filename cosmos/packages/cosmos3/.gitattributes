@@ -1,7 +1,0 @@
-*.lock linguist-generated=true
-tests/data/** linguist-generated=true
-ATTRIBUTIONS.md linguist-generated=true
-
-# NOTE: upstream cosmos-framework tracked media via Git LFS. In this monorepo
-# the vendored source is stored as plain git blobs (no LFS), so the filter=lfs
-# rules have been removed.
