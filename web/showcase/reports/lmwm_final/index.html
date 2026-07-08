@@ -211,60 +211,121 @@
 
     <h3><span class="h3n">2.2</span>模型训练 & 部署 — 预测器 + 生成器(π0.5 SigLIP 同塔)</h3>
     <p class="sub" style="margin-top:4px">解决 1.1:在线编码换成 <b>π0.5 自己的 SigLIP</b>(与策略同塔、复用 KV,零隔阂)。<b>预测器 Predictor</b> 回答"下一个价值 milestone 是<b>哪个</b>";<b>生成器 Generator</b> 回答"它在当前场景<b>长什么样</b>"。</p>
+    <p class="sub" style="margin-top:10px;margin-bottom:4px"><b>训练</b>与<b>部署</b>是两张不同的图:训练时有一道<b>「矿界」</b>—— 线下 CRAVE 挖矿的 label 工厂,只吐监督目标、不上线;部署时矿界整体消失,只剩两个网络在 π0.5 SigLIP 同塔上自包含前向。</p>
+
+    <!-- ============ SVG A · 训练(含矿界)============ -->
     <div class="diagram">
-      <svg viewBox="0 0 1000 470" role="img" aria-label="预测器+生成器数据流">
+      <svg viewBox="0 0 1000 452" role="img" aria-label="LMWM 训练数据流:含离线挖矿矿界 + 预测器/生成器双监督">
         <defs><marker id="ah3" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#a78bfa"/></marker>
-          <marker id="ahd3" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#5a5e8c"/></marker></defs>
+          <marker id="ahd3" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#c084fc"/></marker>
+          <marker id="ahm3" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#5a5e8c"/></marker></defs>
         <style>
           .n2bx{fill:#0f002e;stroke:#3730a3;stroke-width:1.5}
           .n2fz{fill:#2a1065;stroke:#7c3aed;stroke-width:1.8}
           .n2ac{fill:#1a0b3e;stroke:#a78bfa;stroke-width:2}
+          .n2mn{fill:#241206;stroke:#b45309;stroke-width:1.5}
           .n2of{fill:rgba(124,58,237,.05);stroke:#3730a3;stroke-width:1.3;stroke-dasharray:5 4}
+          .n2mine{fill:rgba(180,83,9,.06);stroke:#b45309;stroke-width:1.6;stroke-dasharray:7 5}
           .n2t{fill:#e8eaf6;font:600 13px sans-serif;text-anchor:middle}
           .n2s{fill:#8892c8;font:10.5px monospace;text-anchor:middle}
           .n2ar{stroke:#a78bfa;stroke-width:1.8;fill:none}
-          .n2ard{stroke:#5a5e8c;stroke-width:1.5;fill:none;stroke-dasharray:5 4}
+          .n2ard{stroke:#c084fc;stroke-width:1.6;fill:none;stroke-dasharray:4 3}
+          .n2arm{stroke:#5a5e8c;stroke-width:1.4;fill:none}
           .n2lb{fill:#818cf8;font:10px monospace;text-anchor:middle}
+          .n2loss{fill:#3f1d1d;stroke:#f87171;stroke-width:1.6}
+          .n2lt{fill:#fecaca;font:600 11px sans-serif;text-anchor:middle}
+          .n2mt{fill:#fbbf24;font:700 12px sans-serif;text-anchor:middle}
         </style>
-        <rect class="n2of" x="285" y="12" width="430" height="50" rx="10"/>
-        <text class="n2t" x="500" y="32">离线 label 工厂(§2.1)· DINOv3-H + CRAVE Viterbi</text>
-        <text class="n2s" x="500" y="50">给出 milestone+1 目标帧 · 不上线</text>
-        <path class="n2ard" d="M500,62 L500,120" marker-end="url(#ahd3)"/>
-        <text class="n2lb" x="560" y="92">训练目标</text>
 
-        <rect class="n2bx" x="18" y="150" width="104" height="62" rx="9"/>
-        <text class="n2t" x="70" y="176">当前帧</text><text class="n2s" x="70" y="196">224²×3</text>
-        <rect class="n2fz" x="150" y="150" width="150" height="62" rx="9"/>
-        <text class="n2t" x="225" y="176">π0.5 SigLIP 塔</text><text class="n2s" x="225" y="196">冻结 · 与策略共享</text>
-        <rect class="n2bx" x="330" y="150" width="104" height="62" rx="9"/>
-        <text class="n2t" x="382" y="176">grid G_t</text><text class="n2s" x="382" y="196">16×16×1152</text>
-        <rect class="n2bx" x="462" y="150" width="96" height="62" rx="9"/>
-        <text class="n2t" x="510" y="176">gist g_t</text><text class="n2s" x="510" y="196">pool 1152</text>
-        <rect class="n2ac" x="588" y="150" width="204" height="62" rx="9"/>
-        <text class="n2t" x="690" y="176">预测器 · MDN(K=4)</text><text class="n2s" x="690" y="196">多峰码 ẑ(128)+ 簇中心 CE 锚</text>
+        <!-- 矿界 mining boundary -->
+        <rect class="n2mine" x="14" y="8" width="972" height="120" rx="12"/>
+        <text class="n2mt" x="150" y="28">⛏ 矿界 · 离线 CRAVE 挖矿 label 工厂(不上线)</text>
+        <rect class="n2mn" x="30" y="44" width="118" height="56" rx="8"/><text class="n2t" x="89" y="68">demo 视频</text><text class="n2s" x="89" y="86">原始帧序列</text>
+        <rect class="n2mn" x="182" y="44" width="140" height="56" rx="8"/><text class="n2t" x="252" y="68">DINOv3-H 编码</text><text class="n2s" x="252" y="86">840M · 离线专用</text>
+        <rect class="n2mn" x="356" y="44" width="168" height="56" rx="8"/><text class="n2t" x="440" y="66">CRAVE Viterbi 挖矿</text><text class="n2s" x="440" y="86">跨 episode 复现→价值序</text>
+        <rect class="n2mn" x="558" y="44" width="150" height="56" rx="8"/><text class="n2t" x="633" y="68">milestone 簇中心 c</text><text class="n2s" x="633" y="86">身份原型</text>
+        <rect class="n2mn" x="742" y="44" width="224" height="56" rx="8"/><text class="n2t" x="854" y="68">milestone+1 目标帧</text><text class="n2s" x="854" y="86">= 生成器监督目标</text>
+        <path class="n2arm" d="M148,72 L182,72" marker-end="url(#ahm3)"/>
+        <path class="n2arm" d="M322,72 L356,72" marker-end="url(#ahm3)"/>
+        <path class="n2arm" d="M524,72 L558,72" marker-end="url(#ahm3)"/>
+        <path class="n2arm" d="M708,72 L742,72" marker-end="url(#ahm3)"/>
 
-        <rect class="n2ac" x="330" y="330" width="210" height="62" rx="9"/>
-        <text class="n2t" x="435" y="356">生成器 · AdaLN(4 块)</text><text class="n2s" x="435" y="376">(G_t 画布, ẑ)→ 下一 grid · zero-gate</text>
-        <rect class="n2bx" x="566" y="330" width="110" height="62" rx="9"/>
-        <text class="n2t" x="621" y="356">子目标 Ĝ</text><text class="n2s" x="621" y="376">16×16×1152</text>
-        <rect class="n2fz" x="704" y="330" width="188" height="62" rx="9"/>
-        <text class="n2t" x="798" y="352">π0.5 action expert</text><text class="n2s" x="798" y="372">注入 · KI · RoPE 偏移(§04)</text>
+        <!-- 两条监督穿过矿界下行 -->
+        <path class="n2ard" d="M633,100 C633,150 470,150 400,196" marker-end="url(#ahd3)"/>
+        <text class="n2lb" x="470" y="150">簇中心码 z(teacher · 0 参数)</text>
+        <path class="n2ard" d="M854,100 L854,318" marker-end="url(#ahd3)"/>
+        <text class="n2lb" x="900" y="210">监督目标</text>
 
-        <path class="n2ar" d="M122,181 L150,181" marker-end="url(#ah3)"/>
-        <path class="n2ar" d="M300,181 L330,181" marker-end="url(#ah3)"/>
-        <path class="n2ar" d="M434,181 L462,181" marker-end="url(#ah3)"/>
-        <path class="n2ar" d="M558,181 L588,181" marker-end="url(#ah3)"/>
-        <path class="n2ar" d="M360,212 C360,300 380,300 400,330" marker-end="url(#ah3)"/>
-        <text class="n2lb" x="300" y="290">当前 grid = 画布</text>
-        <path class="n2ar" d="M690,212 C690,300 560,300 500,330" marker-end="url(#ah3)"/>
-        <text class="n2lb" x="640" y="300">ẑ 码(128)· best-of-N</text>
-        <path class="n2ar" d="M540,361 L566,361" marker-end="url(#ah3)"/>
-        <path class="n2ar" d="M676,361 L704,361" marker-end="url(#ah3)"/>
+        <!-- 在线形态的可训练主体 -->
+        <rect class="n2bx" x="14" y="196" width="96" height="56" rx="8"/><text class="n2t" x="62" y="220">当前帧</text><text class="n2s" x="62" y="240">224²×3</text>
+        <rect class="n2fz" x="132" y="196" width="140" height="56" rx="8"/><text class="n2t" x="202" y="220">π0.5 SigLIP</text><text class="n2s" x="202" y="240">❄ 冻结 · 同塔</text>
+        <rect class="n2bx" x="296" y="180" width="96" height="44" rx="8"/><text class="n2t" x="344" y="200">grid G_t</text><text class="n2s" x="344" y="216">16²×1152</text>
+        <rect class="n2bx" x="296" y="230" width="96" height="44" rx="8"/><text class="n2t" x="344" y="250">gist g_t</text><text class="n2s" x="344" y="266">pool 1152</text>
+        <rect class="n2ac" x="470" y="196" width="196" height="56" rx="8"/><text class="n2t" x="568" y="220">预测器 · MDN(K=4)</text><text class="n2s" x="568" y="240">蒸馏簇中心码 → ẑ(128)</text>
+        <rect class="n2ac" x="330" y="318" width="200" height="56" rx="8"/><text class="n2t" x="430" y="342">生成器 · AdaLN(4 块)</text><text class="n2s" x="430" y="362">(G_t 画布, z)→ 预测 grid · zero-gate</text>
+        <rect class="n2bx" x="562" y="318" width="104" height="56" rx="8"/><text class="n2t" x="614" y="342">预测 Ĝ</text><text class="n2s" x="614" y="362">16²×1152</text>
+
+        <path class="n2ar" d="M110,224 L132,224" marker-end="url(#ah3)"/>
+        <path class="n2ar" d="M272,224 C282,224 286,202 296,202" marker-end="url(#ah3)"/>
+        <path class="n2ar" d="M272,224 C282,224 286,252 296,252" marker-end="url(#ah3)"/>
+        <path class="n2ar" d="M392,252 L470,224" marker-end="url(#ah3)"/><text class="n2lb" x="430" y="248">gist</text>
+        <path class="n2ar" d="M344,274 C344,318 360,318 380,318" marker-end="url(#ah3)"/><text class="n2lb" x="300" y="300">grid=画布</text>
+        <path class="n2ar" d="M530,346 L562,346" marker-end="url(#ah3)"/>
+        <!-- 蒸馏箭头 predictor->generator code -->
+        <path class="n2ard" d="M568,252 C568,285 500,290 470,318" marker-end="url(#ahd3)"/><text class="n2lb" x="560" y="290">蒸馏 z</text>
+
+        <!-- 两个损失 -->
+        <rect class="n2loss" x="470" y="404" width="230" height="36" rx="8"/><text class="n2lt" x="585" y="426">① 生成器:smooth-L1 + lift(Ĝ ↔ 目标帧)</text>
+        <path class="n2arm" d="M614,374 L600,404" marker-end="url(#ahm3)"/>
+        <path class="n2arm" d="M854,318 C854,404 720,420 700,420" marker-end="url(#ahm3)"/>
+        <rect class="n2loss" x="18" y="404" width="210" height="36" rx="8"/><text class="n2lt" x="123" y="426">② 预测器:NLL 蒸馏簇中心码</text>
+        <path class="n2arm" d="M540,240 C400,240 200,320 123,404" marker-end="url(#ahm3)"/>
       </svg>
       <div class="legend">
-        <span><i style="background:#2a1065;border:1px solid #7c3aed"></i>冻结 · 共享(π0.5 塔/expert)</span>
+        <span><i style="background:#241206;border:1px dashed #b45309"></i>⛏ 矿界(离线挖矿 · 不上线)</span>
+        <span><i style="background:#2a1065;border:1px solid #7c3aed"></i>❄ 冻结同塔(π0.5 SigLIP)</span>
         <span><i style="background:#1a0b3e;border:1px solid #a78bfa"></i>可训练(预测器/生成器)</span>
-        <span><i style="background:transparent;border:1px dashed #3730a3"></i>离线 · 只出监督目标</span>
+        <span><i style="background:#3f1d1d;border:1px solid #f87171"></i>损失</span>
+      </div>
+    </div>
+
+    <!-- ============ SVG B · 部署(矿界消失)============ -->
+    <div class="diagram" style="margin-top:14px">
+      <svg viewBox="0 0 1000 236" role="img" aria-label="LMWM 部署框架:矿界消失,SigLIP 同塔上两个网络自包含前向">
+        <defs><marker id="ah4" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#34d399"/></marker></defs>
+        <style>
+          .d2fz{fill:#2a1065;stroke:#7c3aed;stroke-width:1.8}
+          .d2ac{fill:#052e2b;stroke:#34d399;stroke-width:2}
+          .d2bx{fill:#0f002e;stroke:#3730a3;stroke-width:1.5}
+          .d2t{fill:#e8eaf6;font:600 13px sans-serif;text-anchor:middle}
+          .d2s{fill:#8892c8;font:10.5px monospace;text-anchor:middle}
+          .d2ar{stroke:#34d399;stroke-width:2;fill:none}
+          .d2lb{fill:#6ee7b7;font:10px monospace;text-anchor:middle}
+        </style>
+        <text x="20" y="26" style="fill:#6ee7b7;font:700 12px sans-serif">部署:⛏ 矿界消失 · 零 CRAVE / 零 DINO / 零 bank · 自包含 ~34M 两网络</text>
+
+        <rect class="d2bx" x="14" y="70" width="92" height="58" rx="8"/><text class="d2t" x="60" y="94">当前帧</text><text class="d2s" x="60" y="114">224²×3</text>
+        <rect class="d2fz" x="128" y="70" width="150" height="58" rx="8"/><text class="d2t" x="203" y="94">π0.5 SigLIP</text><text class="d2s" x="203" y="114">❄ 冻结 · 复用 KV</text>
+        <rect class="d2bx" x="300" y="52" width="92" height="44" rx="8"/><text class="d2t" x="346" y="72">grid G_t</text><text class="d2s" x="346" y="88">16²×1152</text>
+        <rect class="d2bx" x="300" y="102" width="92" height="44" rx="8"/><text class="d2t" x="346" y="122">gist g_t</text><text class="d2s" x="346" y="138">pool 1152</text>
+        <rect class="d2ac" x="414" y="102" width="176" height="44" rx="8"/><text class="d2t" x="502" y="122">预测器 · MDN(K=4)</text><text class="d2s" x="502" y="138">g_t → 码 ẑ(128)</text>
+        <rect class="d2ac" x="626" y="70" width="182" height="58" rx="8"/><text class="d2t" x="717" y="94">生成器 · AdaLN</text><text class="d2s" x="717" y="114">(G_t 画布, ẑ)→ 子目标</text>
+        <rect class="d2bx" x="828" y="70" width="92" height="58" rx="8"/><text class="d2t" x="874" y="94">子目标 Ĝ</text><text class="d2s" x="874" y="114">16²×1152</text>
+        <rect class="d2fz" x="720" y="168" width="200" height="50" rx="8"/><text class="d2t" x="820" y="190">π0.5 action expert</text><text class="d2s" x="820" y="208">注入子目标 · KI · 下游 SR</text>
+
+        <path class="d2ar" d="M106,99 L128,99" marker-end="url(#ah4)"/>
+        <path class="d2ar" d="M278,99 C288,99 292,74 300,74" marker-end="url(#ah4)"/>
+        <path class="d2ar" d="M278,99 C288,99 292,124 300,124" marker-end="url(#ah4)"/>
+        <path class="d2ar" d="M392,124 L414,124" marker-end="url(#ah4)"/>
+        <path class="d2ar" d="M346,52 C346,30 620,30 700,30 720,30 717,60 717,70" marker-end="url(#ah4)"/><text class="d2lb" x="520" y="24">grid 当画布</text>
+        <path class="d2ar" d="M590,124 C608,124 612,99 626,99" marker-end="url(#ah4)"/><text class="d2lb" x="608" y="145">ẑ</text>
+        <path class="d2ar" d="M808,99 L828,99" marker-end="url(#ah4)"/>
+        <path class="d2ar" d="M874,128 C874,168 830,168 820,168" marker-end="url(#ah4)"/>
+      </svg>
+      <div class="legend">
+        <span><i style="background:#2a1065;border:1px solid #7c3aed"></i>❄ 冻结同塔 · 复用 KV</span>
+        <span><i style="background:#052e2b;border:1px solid #34d399"></i>在线两网络(预测器/生成器)</span>
+        <span style="color:#6ee7b7">⛏ 矿界已消失 —— 部署零挖矿依赖</span>
       </div>
     </div>
 
