@@ -214,9 +214,12 @@
 
 ---
 
-## 6. 实验计划(P0 决定性优先,便宜优先,每步带 kill criteria)
+## 6. 实验计划(2026-07-08 用户调序:**P1/P2 本地并行先行,P0 oracle/VLA 注入后延**)
 
-### P0 —— oracle 裁决(最高信息量,不训任何新 WM)
+> 执行顺序 = P1 ∥ P2(本地 2 卡,纯 intrinsic,不碰 π0.5)→ P0(oracle 裁决,后延至 P1/P2 收敛后)→ P3。
+> P2 原判据依赖 A*>A0,后延后 P2 改为**纯 intrinsic 消融**:几何 vs 模块每对都在回放评测上裁决;涉及 SR 的最终裁决保留给后延的 P0。
+
+### P0 —— oracle 裁决(**后延**;最高信息量,不训任何新 WM)
 | 臂 | 内容 | 角色 |
 |---|---|---|
 | A0 | π0.5 baseline(语言条件,无子目标) | 基线 |
@@ -229,17 +232,20 @@
 - **kill criteria**:全臂 ≈A0 → 停注入路线转 FLARE-aux;A1>A0 → P2;A1≈A0<A_diag → 火力集中生成质量(③④⑤)。
 - 算力:LoRA 微调走集群(H20 队列/gf3 恢复后);本地 2 卡做接线 smoke + 离线 eval。
 
-### P1 —— LMWM-2 组件落地(与 P0 并行,本地可做)
-- **码空间塑形**(核心):L_proto + L_mono(episode 内 ranking)联合训 W/u/predm(train_multitask.py 骨架);
-- **几何自持性离线回放评测**(新,验红线二):在 val episode 上回放几何调度器,报告——u·z 单调率(vs CRAVE 值仅作 eval 标签)、码距达成判定 F1(vs CRAVE 边界仅作 eval 标签)、前向锥门通过率、熵门触发率。**CRAVE 在此只当考卷,不当零件**;
-- ① 条件化改造(lang/prev_ẑ/proprio)、循环一致自检、bank 验收三关卡 + UVD 交叉验收脚本。
+### P1 —— 码空间塑形 + 几何自持性(本地 2 卡,**立即执行**)
+- **码空间塑形**(核心):L_proto + L_mono(episode 内 ranking)训 u(先固定 W 作最纯的线性检验=T8 哨兵;学 W 作第二臂)(train_multitask.py 骨架);
+- **几何自持性离线回放评测**(验红线二):在 val episode 上回放几何调度器,报告四件套——u·z 单调率、码距达成判定 F1、前向锥门通过率、熵门触发率(CRAVE 值/边界**仅作考卷**,不作零件);
+- ① 条件化改造(task-emb[语言代理,单指令数据集下等价]/prev_ẑ/proprio)、循环一致自检、bank 验收三关卡。
 产出:`LMWM2Provider`(纯前向、全冻结、零索引、零锚点)。
 
-### P2 —— 换真预测器(仅 A*>A0 才做)
-oracle→预测,量化预测误差吃掉多少增量;消融(每条对应一个设计赌注):
-- 几何 vs 模块:u·z 前向锥门 vs 独立价值头(§3f 预案 1)、MDN 密度验证 vs 外挂 verifier(预案 2)、码距达成 vs 学习 reach 头(预案 3);
-- 熵门开/关;**语言条件开/关**(T7 主杠杆直接检验);top-K 几何选择 vs top1 硬目标。
-判据:剩余增量>0,且几何版不输模块版(输了按 §3f 逐级降级,诚实记录)。
+### P2 —— 几何 vs 模块 intrinsic 消融(本地 2 卡,**与 P1 并行**;原"换真预测器"的 SR 部分并入后延的 P0)
+每条对应一个设计赌注,判据 = P1 回放评测四件套 + top-K acc:
+- u·z 线性方向 vs 独立价值头 MLP(§3f 预案 1):单调率/停滞检测质量;
+- MDN 密度校准 vs 外挂 verifier(预案 2):π_k 置信-正确率校准曲线、熵门扫描;
+- 码距达成 vs 学习 reach 头(预案 3):达成 F1;
+- 条件化增量:baseline(纯 gist)vs +task-emb vs +prev_ẑ vs +proprio(探针 +11/+5.2pt 兑现检验);
+- top-K 几何选择 vs top1 硬目标。
+判据:几何版不输模块版(输了按 §3f 逐级降级,诚实记录);预测误差对 oracle 的差距量化留给 P0。
 
 ### P3 —— 论文主张与 scaling
 milestone-horizon vs 固定 1.2s 消融(生态位);GVL 零训 value baseline;UVD 对标;跨任务(3 任务联合)+ LOO 开放词表复测——这次以 action-MAE 为准,并验证语言条件是否兑现 unseen 任务泛化。
