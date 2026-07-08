@@ -10,7 +10,7 @@
 
 | # | 文档 | 一句话 |
 |---|---|---|
-| 0 | [`REDESIGN_RAMP_2026-07.md`](REDESIGN_RAMP_2026-07.md) | ⭐ **重设计方案 RAMP**(2026-07-08 三路文献深调研 + 任务特性推导;检索锚定 + value 门控 + SR 裁决计划;vs 现 LMWM 逐维对比与定案) |
+| 0 | [`REDESIGN_LMWM2_2026-07.md`](REDESIGN_LMWM2_2026-07.md) | ⭐ **重设计方案 LMWM-2(全学习式,弃检索)**(2026-07-08 三路文献深调研 + 任务特性推导;语言条件 + 测试时价值门控 + 学习型 verifier + 事件调度 + SR 裁决计划;vs 现 LMWM 逐维对比与定案) |
 | 1 | [`FINAL_REPORT.md`](FINAL_REPORT.md) | **最终架构 + 各指标含义 + LaWM baseline 对比**(先看这个) |
 | 2 | [`FINAL_CROSSTASK_PREDICTOR.md`](FINAL_CROSSTASK_PREDICTOR.md) | **最优跨任务预测器**(多任务联合、teacher=proto 簇中心、交付 ckpt) |
 | 3 | [`ARCHITECTURE_AND_BASELINE.md`](ARCHITECTURE_AND_BASELINE.md) | **最终架构总表 + 参数量 + I/O + vs LaWM 指标一览**(单页速查) |
