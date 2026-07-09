@@ -51,3 +51,13 @@ ModelScope(阿里,域内快如 aliyun)有很多模型镜像,但**小型研究上
 
 ---
 其余踩坑见 memory `reference_local_download_bypass_proxy.md`(Claude Code 会自动加载)。RoboTwin/sim 环境配置见 `lmwm/docs/MASTER_PLAN_lmwm_vla_2026-07.md` 附录 A。
+
+## 5) hf-mirror 后段限速 → aria2c 多连接续传
+
+⚠️ hf-mirror 对大文件常**前段快、后段限速到 0**(snapshot_download 单连接 stall,.incomplete 卡住不增长)。破解:对卡住的单个大文件用 **aria2c 多连接续传**(绕 snapshot_download):
+```bash
+clean aria2c -x16 -s16 -c --max-connection-per-server=16 --file-allocation=none \
+  -d <dst_dir> -o <filename> \
+  "https://hf-mirror.com/<owner>/<repo>/resolve/main/<path/to/file>"
+```
+`-x16`(16 连接)分散单连接限速,`-c` 断点续传。实测把 stall 的 3.78GB 分片从 2GB 卡死 → 秒级冲到完成。分片模型(model-00001-of-N)逐个 aria2c 即可。

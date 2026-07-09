@@ -44,13 +44,13 @@ def main() -> None:
     E, FR, Fb = load_features(args.feature_dir)
     rng = np.random.default_rng(2026)
     sel = rng.choice(len(E), args.n_pairs + 800, replace=False)
-    tr, va = sel[:args.n_pairs], sel[args.n_pairs:]
     print(f"reading {len(sel)} frames ...", flush=True)
     imgs = read_enc(args.dataset_root, args.camera, E[sel], FR[sel], args.res)
     lat = l2(Fb[sel].astype(np.float32))
     Y = torch.from_numpy(imgs.astype(np.float32) / 127.5 - 1).permute(0, 3, 1, 2).contiguous()
     X = torch.from_numpy(lat)
-    ntr = args.n_pairs
+    ntr = args.n_pairs                                        # LOCAL indices into X/Y
+    va = np.arange(ntr, len(sel))
 
     reenc = DINOv3HGated(args.dino_path, device=str(dev))                # frozen re-encoder
     dec = PooledDecoder(din=1280, res=args.res).to(dev)
@@ -79,6 +79,9 @@ def main() -> None:
             def sharp(im): return float(cv2.Laplacian(cv2.cvtColor(im, cv2.COLOR_RGB2GRAY), cv2.CV_64F).var())
             srec = np.clip((vp[:8].cpu().numpy().transpose(0, 2, 3, 1) + 1) * 127.5, 0, 255).astype(np.uint8)
             print(f"epoch {ep}: val L1={vl1:.4f} reencode_cos={vcos:.4f} sharp={np.mean([sharp(x) for x in srec]):.0f}", flush=True)
+            Path(args.out).parent.mkdir(parents=True, exist_ok=True)
+            torch.save({"model": dec.state_dict(), "res": args.res, "din": 1280,
+                        "meta": {"epoch": ep, "val_reencode_cos": vcos, "val_L1": vl1}}, args.out)
             dec.train()
 
     args.out.parent.mkdir(parents=True, exist_ok=True)

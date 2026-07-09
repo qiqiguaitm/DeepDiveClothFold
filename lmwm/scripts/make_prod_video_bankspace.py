@@ -88,8 +88,8 @@ def main() -> None:
             break
         k = int(np.searchsorted(ts, f, side="right") - 1); k = max(0, min(k, len(idx) - 1))
         left = label(cv2.resize(im[:, :, ::-1], (BIG, BIG)), f"ep{args.episode} frame {f} (real, native)")
-        rt = rlabel(pred_dec[k], "PRED milestone+1 -> GAN decode")
-        rb = rlabel(true_dec[k], "TRUE milestone+1 -> GAN decode")
+        rt = rlabel(pred_dec[k], "PRED milestone+1 -> decode")
+        rb = rlabel(true_dec[k], "TRUE milestone+1 -> decode")
         right = cv2.resize(np.vstack([rt, rb]), (RW, left.shape[0]))
         canvas = np.hstack([left, np.full((left.shape[0], 8, 3), 20, np.uint8), right])
         vw.write(cv2.cvtColor(canvas[:H, :W], cv2.COLOR_RGB2BGR)); f += 1

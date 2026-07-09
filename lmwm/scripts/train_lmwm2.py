@@ -77,6 +77,7 @@ def main():
     ap.add_argument("--steps", type=int, default=12000)
     ap.add_argument("--probe_steps", type=int, default=3000)
     ap.add_argument("--task_emb_dim", type=int, default=16)
+    ap.add_argument("--target", default="code", choices=["code", "gist"], help="code(128) vs raw gist(1152) as teacher/predictor target")
     ap.add_argument("--tag", required=True)
     ap.add_argument("--save_ckpt", action="store_true")
     ap.add_argument("--pi05_npz", default="")
@@ -131,11 +132,19 @@ def main():
     task_of_ms = np.concatenate([np.full(m["M"], m["ti"]) for m in tasks_meta])
 
     # ---------- code space: z = Wproj·L2(gist); centers zc from SigLIP milestone centers ----------
+    if args.target == "gist":
+        args.code_dim = din                                                # predict raw gist (1152), no compression
     Wproj = (rng.standard_normal((din, args.code_dim)).astype(np.float32) / np.sqrt(din))
     sp_g = np.concatenate([m["spL"] for m in tasks_meta])
-    zc = (sp_g @ Wproj).astype(np.float32)                                   # (total_M, cd) center codes
-    zf = (gl2 @ Wproj).astype(np.float32)                                    # (N, cd) frame codes
+    zc = (sp_g @ Wproj).astype(np.float32)                                 # (total_M, code_dim) center codes
+    zf = (gl2 @ Wproj).astype(np.float32)                                  # (N, code_dim) frame codes
     zc_t = torch.from_numpy(zc).to(dev)
+    if args.target == "gist":
+        zc = zc.astype(np.float32); zf = zf.astype(np.float32)            # gist mode: z == Wproj·gl2 == raw gist (W=I up to rot)
+        # Actually: Wproj is din x din (1152x1152) random projection -> equivalent to rotated gist space
+        # For EXACT identity gist, override: zc = spL raw, zf = gl2 raw
+        zc = (sp_g).astype(np.float32); zf = gl2.astype(np.float32)       # identity: raw L2 gist
+        zc_t = torch.from_numpy(zc).to(dev)
     TR = np.array([p for m in tasks_meta for p in m["tr"]]); rng.shuffle(TR)
     VA = np.array([p for m in tasks_meta for p in m["va"]])
 

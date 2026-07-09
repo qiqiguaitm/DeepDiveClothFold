@@ -31,6 +31,7 @@ docs/deployment/
 | 看跨本体战略 / Task A roadmap / 与官方 fork 差异 / DAgger 主轨 / AWBC 升级 / RLT 精修轨 | [`strategy/`](strategy/README.md) | cross_embodiment_strategy.md / dagger_implementation_plan.md / awbc_implementation_plan.md / rlt_implementation_plan.md |
 | 提训练任务 / 集群知识库 / 数据 sync | [`training_ops/`](training_ops/README.md) | overview.md → submission/ |
 | ckpt 部署真机 / 推理时延优化 / sim01 / RTC | [`inference/`](inference/README.md) | realtime_vla/ / sim01_deployment.md |
+| **RoboTwin 2.0 仿真评测**(pi0/pi05/RLinf ckpt 跑 SR, 本地+gf3 双机) | [`robotwin_sim_env_setup.md`](robotwin_sim_env_setup.md) | 一条命令跑 eval + 补丁清单 + 踩坑(compile hang / H20 curobo sm_90) |
 | 录数据 / 遥操作 / replay 看数据 | [`data_collection/`](data_collection/README.md) | teleoperation_guide.md |
 | 在线 viz / mesh / rerun | [`visualization/`](visualization/README.md) | inference_visualization.md |
 | 历史 incident / 真机 debug / 硬件 issue | [`incidents/`](incidents/README.md) | (按日期排序) |
