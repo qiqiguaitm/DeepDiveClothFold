@@ -169,3 +169,5 @@ python script/collect_data.py <task_name> tim_smoke1   # 数据落 data/<task>/t
 **跑法**:`bash RoboTwin/run_eval_pi0.sh <task> <test_num>`(env vars 见附录 A + `HF_ENDPOINT`/`XLA_PYTHON_CLIENT_MEM_FRACTION`/双 GPU;ckpt 2 分片保存 → server 必须 `CUDA_VISIBLE_DEVICES=0,1`)。
 
 **E0.2 结果**:beat_block_hammer 闭环跑通(step 1→400 逐步执行 + 算 SR),harness 端到端验证 ✅。首轮 SR≈0%(cjgogo LoRA + `instruction_type=unseen`;偏低疑因 unseen 指令/obs 相机映射,属质量调优,不阻塞 harness 验证)。
+
+**⚠️ harness 忠实性验证(关键)**:首轮 `instruction_type=unseen` 得 0/5;改 `seen`(匹配训练指令)后 episode 2 即成功(1/2=50%)。→ **harness 忠实**(策略真工作时正确记成功),0% 是 unseen 指令配置(模型没在没见过的语言上训过),非 harness bug。**baseline eval 用 `instruction_type=seen`**(匹配训练);unseen 是更难的泛化 eval。跑法:`bash run_eval_pi0.sh <task> <test_num> seen`。
