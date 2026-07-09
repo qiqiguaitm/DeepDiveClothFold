@@ -113,4 +113,38 @@
 ---
 
 ## 6. 下一步(立即)
-E0.1:摸清 `/vePFS/shock/vla/RoboTwin` 的版本 + python env + 一条 demo rollout 能否跑通。这是地基,通了才谈注入。
+E0.2:接 pi05_base 到 RoboTwin eval client(client-server),单任务闭环出 SR。
+
+---
+
+## 附录 A · RoboTwin 环境配置(E0.1 实测,可复现)
+
+**版本**:RoboTwin 2.0(arXiv 2506.18088),双臂 aloha-agilex。
+**conda env**:`/vePFS/HuanQian/conda_envs/RoboTwin/bin/python`(py3.10 · sapien 3.0.0b1 · torch 2.4.1+cu121 · curobo/mplib)。
+**可写工作副本**:`/home/tim/workspace/RoboTwin`(代码 rsync 自 `/vePFS/shock/vla/RoboTwin`,`assets` 软链 16G 原目录,root-owned 原目录不可写)。
+
+**三个坑 + 修复(必设环境变量)**:
+```bash
+# ① SAPIEN 无头 GPU 渲染:必须指向 sapien 自带的 nvidia_icd(系统 vulkan ICD 无 nvidia)
+export VK_ICD_FILENAMES=/vePFS/HuanQian/conda_envs/RoboTwin/lib/python3.10/site-packages/sapien/vulkan_library/nvidia_icd.json
+# ② curobo CUDA kernel JIT:CUDA_HOME 必设(空则 torch cpp_extension 找不到 nvcc 挂死),限 A100 架构编译更快
+export CUDA_HOME=/usr/local/cuda           # cuda-12.8, 对 torch cu121 兼容
+export TORCH_CUDA_ARCH_LIST="8.0"          # A100 sm_80
+export PATH=/usr/local/cuda/bin:$PATH
+# ③ curobo JIT stale 锁:若曾挂死中断,必须清缓存否则新 run 死等文件锁(低CPU/无nvcc/无报错的假象)
+rm -rf ~/.cache/torch_extensions/py310_cu121
+# ④ warp 1.13 API 迁移:curobo 用旧 `wp.torch.xxx`,warp 1.13 移到顶层 `wp.xxx`
+#    warp/curobo 目录 root-only 不可改 → sitecustomize 运行时 shim(_shim/sitecustomize.py 别名 wp.torch)
+export PYTHONPATH=/home/tim/workspace/RoboTwin/_shim:$PYTHONPATH   # 内含 sitecustomize.py:wp.torch=SimpleNamespace(...)
+```
+- curobo 首次编译 ~10min(ptxas 高 CPU),编完缓存到 `~/.cache/torch_extensions/py310_cu121`,后续 rollout 免编。
+- 备用:HuanQian 已编好的 `.so` 在 `/vePFS/HuanQian/RoboTwin/envs/curobo/src/curobo/curobolib/`。
+
+**跑一条 demo rollout(scripted expert 采集)**:
+```bash
+cd /home/tim/workspace/RoboTwin
+python script/update_embodiment_config_path.py     # 首次:修 embodiment 路径
+# 建小配置:sed 's/episode_num: 50/episode_num: 1/' task_config/demo_clean.yml > task_config/tim_smoke1.yml
+python script/collect_data.py <task_name> tim_smoke1   # 数据落 data/<task>/tim_smoke1/
+```
+**eval(client-server)**:`policy_model_server.py`(policy 推理服务)+ RoboTwin client(`X-VLA/evaluation/robotwin-2.0/client.py` 或 `script/eval_policy_client.py`);tim 参考 `X-VLA/evaluation/robotwin-2.0/eval_robotwin.sh`。

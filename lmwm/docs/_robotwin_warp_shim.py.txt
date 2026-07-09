@@ -1,0 +1,14 @@
+"""warp 1.13 compat shim: curobo uses old `wp.torch.xxx`; warp 1.13 moved these to top-level `wp.xxx`.
+Import this BEFORE curobo to alias a `warp.torch` module. Read-only warp/curobo dirs → runtime shim."""
+import sys
+import types
+import warp as wp
+
+if not hasattr(wp, "torch") or isinstance(getattr(wp, "torch", None), types.ModuleType) is False:
+    m = types.ModuleType("warp.torch")
+    for fn in ["to_torch", "from_torch", "device_from_torch", "device_to_torch",
+               "dtype_from_torch", "dtype_to_torch", "stream_from_torch", "stream_to_torch"]:
+        if hasattr(wp, fn):
+            setattr(m, fn, getattr(wp, fn))
+    wp.torch = m
+    sys.modules["warp.torch"] = m
