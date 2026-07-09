@@ -1,0 +1,95 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1400 760" width="1400" height="760" role="img" aria-label="Milestone stage transition probability network">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 Z" fill="#4f46e5"/></marker>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="0" dy="3" stdDeviation="4" flood-color="#111827" flood-opacity="0.13"/></filter>
+    <style>
+      .title{font-weight:700;font-size:30px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans CJK SC',Arial,sans-serif;fill:#111827}
+      .sub{font-weight:500;font-size:16px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans CJK SC',Arial,sans-serif;fill:#64748b}
+      .label{font-weight:700;font-size:16px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans CJK SC',Arial,sans-serif;fill:#334155}
+      .small{font-weight:500;font-size:13px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans CJK SC',Arial,sans-serif;fill:#64748b}
+      .prob{font-weight:700;font-size:13px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans CJK SC',Arial,sans-serif;fill:#312e81}
+      .nodeText{font-weight:700;font-size:15px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans CJK SC',Arial,sans-serif;fill:#111827}
+      .nodeSub{font-weight:500;font-size:11px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans CJK SC',Arial,sans-serif;fill:#64748b}
+      .edge{fill:none;stroke:#4f46e5;stroke-linecap:round}
+      .edge.faint{stroke:#c7d2fe;marker-end:none}.edge.bad{stroke:#ef4444}
+    </style>
+  </defs>
+  <rect width="1400" height="760" fill="#f8fafc"/>
+  <text x="700" y="48" text-anchor="middle" class="title">Milestone Stage Transition Probability  P(next stage | current stage)</text>
+  <text x="700" y="78" text-anchor="middle" class="sub">Example with 5 current stages and 10 candidate next stages; edge width encodes empirical transition probability.</text>
+
+  <rect x="70" y="116" width="1260" height="560" rx="18" fill="#ffffff" stroke="#d8dee9" filter="url(#shadow)"/>
+  <text x="195" y="154" text-anchor="middle" class="label">Layer t</text>
+  <text x="195" y="176" text-anchor="middle" class="small">current stage</text>
+  <text x="700" y="132" text-anchor="middle" class="label">Layer t+1</text>
+  <text x="700" y="154" text-anchor="middle" class="small">10 candidate next stages</text>
+  <text x="1188" y="154" text-anchor="middle" class="label">Layer t+2</text>
+  <text x="1188" y="176" text-anchor="middle" class="small">next recurrent stage</text>
+
+  <!-- faint full candidate fan-out from selected current stage -->
+  <path fill="none" stroke="#c7d2fe" stroke-linecap="round" stroke-width="1.1" d="M232,380 C390,230 500,210 626,215"/>
+  <path fill="none" stroke="#c7d2fe" stroke-linecap="round" stroke-width="1.1" d="M232,380 C390,260 500,260 626,270"/>
+  <path fill="none" stroke="#c7d2fe" stroke-linecap="round" stroke-width="1.1" d="M232,380 C390,302 500,306 626,325"/>
+  <path fill="none" stroke="#4f46e5" stroke-linecap="round" stroke-width="5.8" d="M232,380 C394,348 498,356 626,380"/>
+  <path fill="none" stroke="#4f46e5" stroke-linecap="round" stroke-width="3.8" d="M232,380 C392,390 500,405 626,435"/>
+  <path fill="none" stroke="#4f46e5" stroke-linecap="round" stroke-width="2.8" d="M232,380 C388,424 500,455 626,490"/>
+  <path fill="none" stroke="#c7d2fe" stroke-linecap="round" stroke-width="1.1" d="M232,380 C390,470 500,506 626,545"/>
+  <path fill="none" stroke="#c7d2fe" stroke-linecap="round" stroke-width="1.1" d="M232,380 C390,512 500,558 626,600"/>
+  <path fill="none" stroke="#ef4444" stroke-linecap="round" stroke-width="2.2" d="M232,380 C382,205 497,184 626,160"/>
+  <path fill="none" stroke="#c7d2fe" stroke-linecap="round" stroke-width="1.1" d="M232,380 C392,552 502,602 626,655"/>
+
+  <!-- transitions from t+1 to t+2 -->
+  <path fill="none" stroke="#4f46e5" stroke-linecap="round" stroke-width="5.2" d="M774,380 C910,356 1012,326 1148,300"/>
+  <path fill="none" stroke="#4f46e5" stroke-linecap="round" stroke-width="4.2" d="M774,435 C913,430 1015,420 1148,410"/>
+  <path fill="none" stroke="#4f46e5" stroke-linecap="round" stroke-width="3.2" d="M774,490 C910,514 1015,540 1148,570"/>
+  <path fill="none" stroke="#c7d2fe" stroke-linecap="round" stroke-width="1.2" d="M774,325 C912,286 1015,260 1148,245"/>
+  <path fill="none" stroke="#c7d2fe" stroke-linecap="round" stroke-width="1.2" d="M774,545 C912,502 1014,462 1148,410"/>
+
+  <!-- probability labels -->
+  <rect x="420" y="333" width="56" height="26" rx="13" fill="#eef2ff" stroke="#c7d2fe"/><text x="448" y="351" text-anchor="middle" class="prob">0.46</text>
+  <rect x="420" y="397" width="56" height="26" rx="13" fill="#eef2ff" stroke="#c7d2fe"/><text x="448" y="415" text-anchor="middle" class="prob">0.24</text>
+  <rect x="420" y="456" width="56" height="26" rx="13" fill="#eef2ff" stroke="#c7d2fe"/><text x="448" y="474" text-anchor="middle" class="prob">0.13</text>
+  <rect x="396" y="195" width="56" height="26" rx="13" fill="#fef2f2" stroke="#fecaca"/><text x="424" y="213" text-anchor="middle" class="prob" fill="#991b1b">0.03</text>
+  <rect x="938" y="334" width="56" height="26" rx="13" fill="#eef2ff" stroke="#c7d2fe"/><text x="966" y="352" text-anchor="middle" class="prob">0.51</text>
+  <rect x="940" y="421" width="56" height="26" rx="13" fill="#eef2ff" stroke="#c7d2fe"/><text x="968" y="439" text-anchor="middle" class="prob">0.37</text>
+  <rect x="938" y="518" width="56" height="26" rx="13" fill="#eef2ff" stroke="#c7d2fe"/><text x="966" y="536" text-anchor="middle" class="prob">0.29</text>
+
+  <!-- nodes layer t -->
+  <g filter="url(#shadow)">
+    <g transform="translate(158 215)"><circle r="38" fill="#ffffff" stroke="#cbd5e1" stroke-width="2"/><text text-anchor="middle" y="-2" class="nodeText">M0</text><text text-anchor="middle" y="17" class="nodeSub">start</text></g>
+    <g transform="translate(158 300)"><circle r="38" fill="#ffffff" stroke="#cbd5e1" stroke-width="2"/><text text-anchor="middle" y="-2" class="nodeText">M4</text><text text-anchor="middle" y="17" class="nodeSub">approach</text></g>
+    <g transform="translate(158 380)"><circle r="44" fill="#eef2ff" stroke="#4f46e5" stroke-width="3"/><text text-anchor="middle" y="-3" class="nodeText">M8</text><text text-anchor="middle" y="17" class="nodeSub">current</text></g>
+    <g transform="translate(158 465)"><circle r="38" fill="#ffffff" stroke="#cbd5e1" stroke-width="2"/><text text-anchor="middle" y="-2" class="nodeText">M12</text><text text-anchor="middle" y="17" class="nodeSub">lift</text></g>
+    <g transform="translate(158 550)"><circle r="38" fill="#ffffff" stroke="#cbd5e1" stroke-width="2"/><text text-anchor="middle" y="-2" class="nodeText">M16</text><text text-anchor="middle" y="17" class="nodeSub">spread</text></g>
+  </g>
+
+  <!-- nodes layer t+1 -->
+  <g filter="url(#shadow)">
+    <g transform="translate(700 178)"><circle r="34" fill="#fff7ed" stroke="#fb923c" stroke-width="2"/><text text-anchor="middle" y="-2" class="nodeText">M2</text><text text-anchor="middle" y="16" class="nodeSub">back</text></g>
+    <g transform="translate(700 230)"><circle r="31" fill="#ffffff" stroke="#cbd5e1" stroke-width="2"/><text text-anchor="middle" y="5" class="nodeText">M5</text></g>
+    <g transform="translate(700 282)"><circle r="31" fill="#ffffff" stroke="#cbd5e1" stroke-width="2"/><text text-anchor="middle" y="5" class="nodeText">M7</text></g>
+    <g transform="translate(700 334)"><circle r="31" fill="#ffffff" stroke="#cbd5e1" stroke-width="2"/><text text-anchor="middle" y="5" class="nodeText">M9</text></g>
+    <g transform="translate(700 386)"><circle r="38" fill="#ecfdf5" stroke="#22c55e" stroke-width="3"/><text text-anchor="middle" y="-2" class="nodeText">M10</text><text text-anchor="middle" y="17" class="nodeSub">best</text></g>
+    <g transform="translate(700 438)"><circle r="35" fill="#eef2ff" stroke="#818cf8" stroke-width="2"/><text text-anchor="middle" y="5" class="nodeText">M11</text></g>
+    <g transform="translate(700 490)"><circle r="33" fill="#eef2ff" stroke="#818cf8" stroke-width="2"/><text text-anchor="middle" y="5" class="nodeText">M13</text></g>
+    <g transform="translate(700 542)"><circle r="31" fill="#ffffff" stroke="#cbd5e1" stroke-width="2"/><text text-anchor="middle" y="5" class="nodeText">M15</text></g>
+    <g transform="translate(700 594)"><circle r="31" fill="#ffffff" stroke="#cbd5e1" stroke-width="2"/><text text-anchor="middle" y="5" class="nodeText">M18</text></g>
+    <g transform="translate(700 646)"><circle r="31" fill="#ffffff" stroke="#cbd5e1" stroke-width="2"/><text text-anchor="middle" y="5" class="nodeText">M20</text></g>
+  </g>
+
+  <!-- nodes layer t+2 -->
+  <g filter="url(#shadow)">
+    <g transform="translate(1208 245)"><circle r="35" fill="#ffffff" stroke="#cbd5e1" stroke-width="2"/><text text-anchor="middle" y="-2" class="nodeText">M14</text><text text-anchor="middle" y="17" class="nodeSub">align</text></g>
+    <g transform="translate(1208 300)"><circle r="40" fill="#ecfdf5" stroke="#22c55e" stroke-width="3"/><text text-anchor="middle" y="-2" class="nodeText">M17</text><text text-anchor="middle" y="17" class="nodeSub">fold</text></g>
+    <g transform="translate(1208 410)"><circle r="38" fill="#eef2ff" stroke="#818cf8" stroke-width="2"/><text text-anchor="middle" y="-2" class="nodeText">M21</text><text text-anchor="middle" y="17" class="nodeSub">press</text></g>
+    <g transform="translate(1208 505)"><circle r="35" fill="#ffffff" stroke="#cbd5e1" stroke-width="2"/><text text-anchor="middle" y="-2" class="nodeText">M25</text><text text-anchor="middle" y="17" class="nodeSub">tuck</text></g>
+    <g transform="translate(1208 570)"><circle r="38" fill="#eef2ff" stroke="#818cf8" stroke-width="2"/><text text-anchor="middle" y="-2" class="nodeText">M31</text><text text-anchor="middle" y="17" class="nodeSub">done</text></g>
+  </g>
+
+  <g transform="translate(92 700)">
+    <rect width="1216" height="34" rx="8" fill="#f1f5f9" stroke="#cbd5e1"/>
+    <circle cx="28" cy="17" r="5" fill="#4f46e5"/><text x="44" y="22" class="small">thicker forward edge = more likely transition</text>
+    <circle cx="346" cy="17" r="5" fill="#ef4444"/><text x="362" y="22" class="small">red low-probability backward edge = potential anomaly / regression</text>
+    <circle cx="762" cy="17" r="5" fill="#c7d2fe"/><text x="778" y="22" class="small">faint edges represent remaining candidate stages with small mass</text>
+  </g>
+</svg>

@@ -1,0 +1,76 @@
+# CRAVE 全量 kai0_base @3Hz 聚类 + Wan2.2 渲染 — DINOv2-large 编码聚类(推荐)
+# 8×A100 单节点 sharded encode → aggregate cluster → Wan VAE 渲染簇中心
+# Submit: ssh gf0; source ~/.volc_creds; \
+#   /vePFS/tim/workspace/deepdive_kai0/kai0/.venv/bin/python \
+#   /vePFS/tim/workspace/deepdive_kai0/train_scripts/kai/volc/submit_yaml.py \
+#   /vePFS/tim/workspace/deepdive_kai0/train_scripts/kai/volc/crave_full_wan_cnsh_8gpu.yaml
+TaskName: "crave-full-wan-cnsh-8gpu"
+Description: "CRAVE full kai0_base @3Hz: ALL-Wan2.2 cluster + Wan2.2 VAE render (3055ep/~336k fr)"
+Tags: []
+
+ImageUrl: "visincept-cn-shanghai.cr.volces.com/grasp/h2r:1.0"
+ResourceQueueName: "robot-task"
+Framework: "Custom"
+
+TaskRoleSpecs:
+  - RoleName: "worker"
+    RoleReplicas: 1
+    Flavor: "ml.hpcpni2.28xlarge"   # 8× A100-80G
+
+ActiveDeadlineSeconds: 21600
+
+Storages:
+  - Type: "Vepfs"
+    VepfsId: "vepfs-cnsh075262e1f815"
+    SubPath: ""
+    MountPath: "/vePFS"
+
+CacheType: "Cloudfs"
+
+Envs:
+  - Name: HF_HUB_OFFLINE
+    Value: "1"
+  - Name: TRANSFORMERS_OFFLINE
+    Value: "1"
+  - Name: TOKENIZERS_PARALLELISM
+    Value: "false"
+  - Name: CRAVE_ENC
+    Value: "wan"
+
+Entrypoint: |
+  STAMP=$(date -u +%Y%m%d_%H%M%S)
+  REPO=/vePFS/tim/workspace/deepdive_kai0
+  LOG_DIR=$REPO/logs; mkdir -p "$LOG_DIR"
+  LOG="$LOG_DIR/crave_full_${CRAVE_ENC}_${STAMP}.log"
+  exec >> "$LOG" 2>&1
+  echo "=== crave_full $CRAVE_ENC start $(date) ==="
+  set -ex
+  nvidia-smi -L
+  export PATH="$HOME/.local/bin:$PATH"
+  if [ ! -x "$HOME/.local/bin/uv" ]; then curl -LsSf https://astral.sh/uv/install.sh | sh; fi
+  uv python install 3.11.15 2>&1 | tail -1
+  mkdir -p /home/tim/.local/share && ln -sfn /root/.local/share/uv /home/tim/.local/share/uv
+
+  PY=$REPO/kai0/.venv/bin/python
+  DIFF=/tmp/diff35                       # 容器本地, 不污染共享 .venv
+  uv pip install --python "$PY" --target "$DIFF" --no-deps diffusers==0.35.1 accelerate safetensors
+  uv pip install --python "$PY" --target "$DIFF" "huggingface_hub>=0.34,<1.0"
+  export PYTHONPATH="$DIFF:$PYTHONPATH"
+  cd "$REPO"
+  PYTHONPATH="$DIFF" "$PY" -c "import torch,transformers,cv2,av,sklearn; from diffusers import AutoencoderKLWan; print('env ok', torch.cuda.device_count(),'gpu')"
+
+  SCR=train_scripts/kai/data/crave_full_cluster.py
+  echo "[$(date)] encode 8 shards ($CRAVE_ENC) ..."
+  for r in $(seq 0 7); do
+    CUDA_VISIBLE_DEVICES=$r PYTHONPATH="$DIFF" "$PY" "$SCR" --encoder "$CRAVE_ENC" --stage encode --rank $r --world 8 &
+  done
+  wait
+  echo "[$(date)] aggregate + Wan render ..."
+  export CUDA_VISIBLE_DEVICES=0 PYTHONPATH="$DIFF"
+  exec "$PY" "$SCR" --encoder "$CRAVE_ENC" --stage aggregate
+
+RetryOptions:
+    EnableRetry: false
+    MaxRetryTimes: 0
+
+AccessType: "Public"

@@ -1,0 +1,160 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 900" width="1600" height="900" role="img" aria-label="CRAVE latent stage WAM architecture">
+  <defs>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="0" dy="4" stdDeviation="5" flood-color="#111827" flood-opacity="0.13"/></filter>
+    <marker id="arrowBlue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0,0 L10,5 L0,10 Z" fill="#2563eb"/></marker>
+    <marker id="arrowGreen" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0,0 L10,5 L0,10 Z" fill="#16a34a"/></marker>
+    <marker id="arrowPurple" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0,0 L10,5 L0,10 Z" fill="#7c3aed"/></marker>
+    <linearGradient id="blueBox" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#eff6ff"/><stop offset="1" stop-color="#dbeafe"/></linearGradient>
+    <linearGradient id="greenBox" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#f0fdf4"/><stop offset="1" stop-color="#dcfce7"/></linearGradient>
+    <linearGradient id="purpleBox" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#f5f3ff"/><stop offset="1" stop-color="#ede9fe"/></linearGradient>
+    <style>
+      .title{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans CJK SC',Arial,sans-serif;font-size:31px;font-weight:750;fill:#111827}
+      .subtitle{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans CJK SC',Arial,sans-serif;font-size:15px;font-weight:500;fill:#64748b}
+      .section{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans CJK SC',Arial,sans-serif;font-size:18px;font-weight:750;fill:#1e293b}
+      .boxTitle{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans CJK SC',Arial,sans-serif;font-size:16px;font-weight:750;fill:#111827}
+      .boxText{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans CJK SC',Arial,sans-serif;font-size:12.5px;font-weight:500;fill:#475569}
+      .tiny{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans CJK SC',Arial,sans-serif;font-size:11px;font-weight:500;fill:#64748b}
+      .math{font-family:'Times New Roman',serif;font-size:16px;font-weight:700;fill:#312e81}
+      .arrowText{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans CJK SC',Arial,sans-serif;font-size:12px;font-weight:700;fill:#334155}
+      .box{stroke-width:1.5;filter:url(#shadow)}
+      .edgeBlue{fill:none;stroke:#2563eb;stroke-width:2.6;marker-end:url(#arrowBlue)}
+      .edgeGreen{fill:none;stroke:#16a34a;stroke-width:2.6;marker-end:url(#arrowGreen)}
+      .edgePurple{fill:none;stroke:#7c3aed;stroke-width:2.6;marker-end:url(#arrowPurple)}
+      .edgeGray{fill:none;stroke:#94a3b8;stroke-width:1.8;stroke-dasharray:6 5}
+    </style>
+  </defs>
+
+  <rect width="1600" height="900" fill="#f8fafc"/>
+  <text x="800" y="45" text-anchor="middle" class="title">CRAVE Latent Stage World-Action Model</text>
+  <text x="800" y="75" text-anchor="middle" class="subtitle">Predict the next task stage by graph search, then feed its latent prototype to a VLA as a subgoal context.</text>
+
+  <!-- Stage 1 background -->
+  <rect x="50" y="110" width="690" height="710" rx="22" fill="#ffffff" stroke="#cbd5e1"/>
+  <text x="86" y="148" class="section">Stage 1 · Build recurrence stage graph (offline / periodically refreshed)</text>
+
+  <!-- Stage 2 background -->
+  <rect x="790" y="110" width="760" height="710" rx="22" fill="#ffffff" stroke="#cbd5e1"/>
+  <text x="826" y="148" class="section">Stage 2 · Policy inference with CRAVE latent subgoal</text>
+
+  <!-- Demo episodes -->
+  <rect class="box" x="86" y="186" width="165" height="122" rx="14" fill="url(#blueBox)" stroke="#93c5fd"/>
+  <text x="168" y="216" text-anchor="middle" class="boxTitle">Demo episodes</text>
+  <text x="168" y="239" text-anchor="middle" class="boxText">multi-view frames</text>
+  <text x="168" y="258" text-anchor="middle" class="boxText">+ robot state</text>
+  <g transform="translate(112 269)"><rect width="36" height="24" rx="4" fill="#1f2937"/><rect x="9" y="12" width="18" height="7" rx="3" fill="#e5e7eb"/><rect x="44" width="36" height="24" rx="4" fill="#1f2937"/><rect x="52" y="11" width="20" height="8" rx="4" fill="#d1d5db"/><rect x="88" width="36" height="24" rx="4" fill="#1f2937"/><rect x="98" y="10" width="18" height="9" rx="4" fill="#e5e7eb"/></g>
+
+  <rect class="box" x="318" y="186" width="175" height="122" rx="14" fill="url(#blueBox)" stroke="#93c5fd"/>
+  <text x="405" y="216" text-anchor="middle" class="boxTitle">Frozen encoder</text>
+  <text x="405" y="240" text-anchor="middle" class="boxText">DINOv3-H / DINO</text>
+  <text x="405" y="260" text-anchor="middle" class="math">u_t = f_enc(o_t)</text>
+  <g transform="translate(360 274)"><rect width="16" height="16" fill="#bfdbfe" stroke="#60a5fa"/><rect x="20" width="16" height="16" fill="#dbeafe" stroke="#60a5fa"/><rect x="40" width="16" height="16" fill="#fde68a" stroke="#f59e0b"/><rect x="60" width="16" height="16" fill="#bbf7d0" stroke="#22c55e"/></g>
+
+  <rect class="box" x="560" y="186" width="145" height="122" rx="14" fill="url(#greenBox)" stroke="#86efac"/>
+  <text x="632" y="216" text-anchor="middle" class="boxTitle">CRAVE mining</text>
+  <text x="632" y="240" text-anchor="middle" class="boxText">K-Means</text>
+  <text x="632" y="260" text-anchor="middle" class="boxText">coverage + Pord</text>
+  <circle cx="604" cy="286" r="7" fill="#22c55e"/><circle cx="632" cy="286" r="7" fill="#4f46e5"/><circle cx="660" cy="286" r="7" fill="#f59e0b"/>
+
+  <path class="edgeBlue" d="M252 247 H308"/><path class="edgeBlue" d="M494 247 H550"/>
+  <text x="280" y="235" text-anchor="middle" class="arrowText">encode</text><text x="522" y="235" text-anchor="middle" class="arrowText">cluster</text>
+
+  <!-- Stage graph -->
+  <rect class="box" x="108" y="368" width="255" height="205" rx="16" fill="url(#greenBox)" stroke="#86efac"/>
+  <text x="235" y="398" text-anchor="middle" class="boxTitle">Recurrence Stage Graph</text>
+  <text x="235" y="421" text-anchor="middle" class="boxText">milestone nodes + transition matrix</text>
+  <text x="235" y="444" text-anchor="middle" class="math">P(next | current)</text>
+  <g transform="translate(148 465)">
+    <circle cx="0" cy="42" r="24" fill="#ffffff" stroke="#22c55e" stroke-width="2"/><text x="0" y="47" text-anchor="middle" class="tiny">M0</text>
+    <circle cx="82" cy="18" r="24" fill="#ffffff" stroke="#4f46e5" stroke-width="2"/><text x="82" y="23" text-anchor="middle" class="tiny">M8</text>
+    <circle cx="172" cy="48" r="24" fill="#ffffff" stroke="#4f46e5" stroke-width="2"/><text x="172" y="53" text-anchor="middle" class="tiny">M17</text>
+    <path d="M23 35 C45 25 55 20 58 20" fill="none" stroke="#16a34a" stroke-width="4"/><path d="M106 24 C128 31 143 39 149 43" fill="none" stroke="#16a34a" stroke-width="4"/>
+  </g>
+
+  <rect class="box" x="435" y="368" width="250" height="205" rx="16" fill="url(#greenBox)" stroke="#86efac"/>
+  <text x="560" y="398" text-anchor="middle" class="boxTitle">Stage prototypes</text>
+  <text x="560" y="421" text-anchor="middle" class="boxText">latent centers, not pixels</text>
+  <text x="560" y="445" text-anchor="middle" class="math">c_k in latent space</text>
+  <g transform="translate(496 468)"><rect width="18" height="18" fill="#bfdbfe" stroke="#60a5fa"/><rect x="22" width="18" height="18" fill="#bfdbfe" stroke="#60a5fa"/><rect x="44" width="18" height="18" fill="#fde68a" stroke="#f59e0b"/><rect x="66" width="18" height="18" fill="#bbf7d0" stroke="#22c55e"/><rect x="88" width="18" height="18" fill="#dbeafe" stroke="#60a5fa"/><rect x="110" width="18" height="18" fill="#c4b5fd" stroke="#7c3aed"/></g>
+  <g transform="translate(496 508)"><rect width="18" height="18" fill="#bfdbfe" stroke="#60a5fa"/><rect x="22" width="18" height="18" fill="#dbeafe" stroke="#60a5fa"/><rect x="44" width="18" height="18" fill="#fde68a" stroke="#f59e0b"/><rect x="66" width="18" height="18" fill="#bbf7d0" stroke="#22c55e"/><rect x="88" width="18" height="18" fill="#bbf7d0" stroke="#22c55e"/><rect x="110" width="18" height="18" fill="#c4b5fd" stroke="#7c3aed"/></g>
+
+  <path class="edgeGreen" d="M236 309 V358"/><path class="edgeGreen" d="M632 309 V358"/><path class="edgeGreen" d="M364 470 H425"/>
+  <text x="394" y="457" text-anchor="middle" class="arrowText">store</text>
+
+  <!-- Current observation / Viterbi -->
+  <rect class="box" x="830" y="186" width="175" height="122" rx="14" fill="url(#blueBox)" stroke="#93c5fd"/>
+  <text x="918" y="216" text-anchor="middle" class="boxTitle">Current context</text>
+  <text x="918" y="240" text-anchor="middle" class="boxText">obs history + state</text>
+  <text x="918" y="260" text-anchor="middle" class="boxText">task instruction</text>
+  <g transform="translate(870 275)"><rect width="42" height="24" rx="4" fill="#1f2937"/><rect x="11" y="12" width="20" height="7" rx="3" fill="#e5e7eb"/><rect x="54" y="2" width="60" height="20" rx="4" fill="#eef2ff" stroke="#93c5fd"/></g>
+
+  <rect class="box" x="1068" y="186" width="190" height="122" rx="14" fill="url(#greenBox)" stroke="#86efac"/>
+  <text x="1163" y="216" text-anchor="middle" class="boxTitle">Viterbi stage readout</text>
+  <text x="1163" y="240" text-anchor="middle" class="boxText">current stage</text>
+  <text x="1163" y="262" text-anchor="middle" class="math">k_t = Viterbi(o_1:t)</text>
+  <rect x="1115" y="277" width="96" height="22" rx="11" fill="#ffffff" stroke="#22c55e"/><text x="1163" y="293" text-anchor="middle" class="tiny">current = M8</text>
+
+  <rect class="box" x="1318" y="186" width="190" height="122" rx="14" fill="url(#greenBox)" stroke="#86efac"/>
+  <text x="1413" y="216" text-anchor="middle" class="boxTitle">Max-success planner</text>
+  <text x="1413" y="240" text-anchor="middle" class="boxText">Viterbi / max-product</text>
+  <text x="1413" y="262" text-anchor="middle" class="math">path* = max-product</text>
+  <rect x="1352" y="277" width="122" height="22" rx="11" fill="#ffffff" stroke="#22c55e"/><text x="1413" y="293" text-anchor="middle" class="tiny">next stage = M10</text>
+
+  <path class="edgeBlue" d="M1006 247 H1058"/><path class="edgeGreen" d="M1259 247 H1308"/>
+  <text x="1032" y="235" text-anchor="middle" class="arrowText">encode</text><text x="1284" y="235" text-anchor="middle" class="arrowText">plan</text>
+
+  <!-- Latent subgoal -->
+  <rect class="box" x="890" y="392" width="248" height="145" rx="16" fill="url(#purpleBox)" stroke="#c4b5fd"/>
+  <text x="1014" y="422" text-anchor="middle" class="boxTitle">CRAVE latent subgoal</text>
+  <text x="1014" y="445" text-anchor="middle" class="boxText">retrieve next-stage prototype</text>
+  <text x="1014" y="468" text-anchor="middle" class="math">g_t = c_next</text>
+  <g transform="translate(948 492)"><rect width="18" height="18" fill="#bfdbfe" stroke="#60a5fa"/><rect x="22" width="18" height="18" fill="#bfdbfe" stroke="#60a5fa"/><rect x="44" width="18" height="18" fill="#fde68a" stroke="#f59e0b"/><rect x="66" width="18" height="18" fill="#bbf7d0" stroke="#22c55e"/><rect x="88" width="18" height="18" fill="#c4b5fd" stroke="#7c3aed"/><rect x="110" width="18" height="18" fill="#c4b5fd" stroke="#7c3aed"/></g>
+  <text x="1014" y="528" text-anchor="middle" class="tiny">latent token / adapter input</text>
+
+  <rect class="box" x="1206" y="392" width="250" height="145" rx="16" fill="url(#purpleBox)" stroke="#c4b5fd"/>
+  <text x="1331" y="422" text-anchor="middle" class="boxTitle">VLA context adapter</text>
+  <text x="1331" y="445" text-anchor="middle" class="boxText">project CRAVE latent</text>
+  <text x="1331" y="466" text-anchor="middle" class="boxText">into policy token space</text>
+  <text x="1331" y="492" text-anchor="middle" class="math">h_g = W_g · g_t</text>
+  <rect x="1282" y="508" width="98" height="20" rx="10" fill="#ffffff" stroke="#a78bfa"/><text x="1331" y="522" text-anchor="middle" class="tiny">subgoal tokens</text>
+
+  <path class="edgeGreen" d="M1413 309 C1413 350 1080 348 1042 382"/>
+  <path class="edgePurple" d="M1139 464 H1196"/>
+  <text x="1168" y="450" text-anchor="middle" class="arrowText">project</text>
+
+  <!-- VLA policy -->
+  <rect class="box" x="880" y="620" width="205" height="130" rx="16" fill="#ffffff" stroke="#cbd5e1"/>
+  <text x="982" y="650" text-anchor="middle" class="boxTitle">VLM backbone</text>
+  <text x="982" y="674" text-anchor="middle" class="boxText">language + history</text>
+  <text x="982" y="694" text-anchor="middle" class="boxText">π0.7-style context</text>
+  <rect x="925" y="710" width="114" height="22" rx="11" fill="#eef2ff" stroke="#93c5fd"/><text x="982" y="725" text-anchor="middle" class="tiny">semantic tokens</text>
+
+  <rect class="box" x="1150" y="620" width="222" height="130" rx="16" fill="#ffffff" stroke="#cbd5e1"/>
+  <text x="1261" y="650" text-anchor="middle" class="boxTitle">Action expert</text>
+  <text x="1261" y="674" text-anchor="middle" class="boxText">Alternate-DiT / flow policy</text>
+  <text x="1261" y="694" text-anchor="middle" class="boxText">conditioned on latent subgoal</text>
+  <rect x="1205" y="710" width="112" height="22" rx="11" fill="#f5f3ff" stroke="#c4b5fd"/><text x="1261" y="725" text-anchor="middle" class="tiny">denoise actions</text>
+
+  <rect class="box" x="1422" y="620" width="90" height="130" rx="16" fill="#fff7ed" stroke="#fdba74"/>
+  <text x="1467" y="655" text-anchor="middle" class="boxTitle">Action</text>
+  <text x="1467" y="678" text-anchor="middle" class="boxText">chunk</text>
+  <text x="1467" y="710" text-anchor="middle" class="math">a_t:t+H</text>
+
+  <path class="edgeBlue" d="M918 309 C918 500 942 555 966 610"/>
+  <path class="edgePurple" d="M1331 538 C1331 570 1300 590 1276 612"/>
+  <path class="edgePurple" d="M1086 685 H1140"/>
+  <path class="edgePurple" d="M1373 685 H1412"/>
+  <text x="1113" y="671" text-anchor="middle" class="arrowText">context</text>
+
+  <!-- Concept bridge from Stage 1 storage to inference -->
+  <path class="edgeGray" d="M685 470 C760 470 815 466 878 464"/>
+  <text x="780" y="452" text-anchor="middle" class="arrowText">lookup c_next</text>
+  <path class="edgeGray" d="M363 470 C668 590 1015 250 1318 247"/>
+  <text x="720" y="620" text-anchor="middle" class="arrowText">use graph for max-probability route to terminal stage</text>
+
+  <!-- Formula box -->
+  <rect x="96" y="635" width="590" height="120" rx="14" fill="#f8fafc" stroke="#cbd5e1"/>
+  <text x="126" y="666" class="boxTitle">Planning rule</text>
+  <text x="126" y="698" class="math">path* = argmax over future stages  product_i P(k_{i+1} | k_i)</text>
+  <text x="126" y="730" class="math">latent subgoal = prototype(next(path*))  ->  VLA context</text>
+  <text x="126" y="782" class="tiny">This replaces pixel-space generated subgoal images with a deterministic CRAVE stage latent selected by graph search.</text>
+</svg>
