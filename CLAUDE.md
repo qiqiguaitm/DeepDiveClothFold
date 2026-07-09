@@ -179,6 +179,14 @@ Source `setup_env.sh` at the repo root first — it sets the three machine-speci
 | `CUDA_VISIBLE_DEVICES` | GPU selection | — (varies per script) |
 | `GIT_LFS_SKIP_SMUDGE` | Skip Git LFS downloads during install | — (`1` during install) |
 
+### Downloads (HF models / pip / datasets) — di-* 本机
+
+**On the di-* box, bypass the proxy and use domestic mirrors — the proxy is 1000× slower for international sites.** Full tested recipes in [`docs/download_methods.md`](docs/download_methods.md). Quick reference:
+- Always fully unset proxy first (incl. `ALL_PROXY`/`all_proxy`): `env -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY -u all_proxy ...` (or `proxy-off`).
+- **HF models/data** → `HF_ENDPOINT=https://hf-mirror.com` + `huggingface_hub.snapshot_download(...)` (~10 MB/s). Do NOT `curl` a resolve URL (redirects to a slow backend).
+- **pip/uv** → `UV_DEFAULT_INDEX=https://mirrors.aliyun.com/pypi/simple/` (6 MB/s).
+- huggingface.co direct = blocked (GFW); any proxy for HF = 20–600 B/s.
+
 ### Data Layout
 
 Datasets follow LeRobot v2.1 format under `kai0/data/`:
