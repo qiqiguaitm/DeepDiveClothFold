@@ -73,6 +73,27 @@
 **推荐架构定稿**:`GRU h256 · L2~L3 · img128⊕(可选) · 0.72–1.12M`,不加 task-embed,不放大。均衡数据(各域 ~1000)训练。
 脚本:`train_multitask_gf3.py`(gf3 8卡版,含域重组+均衡+参数扫描)。数据两套就绪(本地 + gf3:`temp/xvla_dinov3h_full` 1532ep)。
 
+## 3.6 DINOv3-base 对齐复核(原始频率全量 · 与部署方案一致)
+
+之前 §2–3.5 用的是 **DINOv3-H(1280D)** 特征(cross-dataset bank 现成),与最终 kai0 部署方案(**DINOv3-base 768D→PCA128**,见 [final_architecture](final_architecture.md) §2.1:base Tstd 0.195 < H 0.219)**不一致**。为对齐,**用 DINOv3-base 在原始频率(native 30/50Hz)全量重抽 4 数据集**(gf3 8×H20:xvla 1532ep/2.83M帧 + kai 3055ep/3.36M帧;di:vis 289 + coffee 50),shared PCA 768→128,内联 BayesianGMM milestone,重跑:
+
+teacher-vs-归一时间:kai 0.957 / vis 0.984 / xvla 0.962 / coffee 0.997(M=11/14/7/35)。
+
+| 配置 | 参数 | kai | vis | xvla | coffee | mean |
+|---|---|---|---|---|---|---|
+| h128/L2 | 0.21M | 0.963 | 0.976 | 0.954 | 0.984 | **0.969** |
+| **h256/L2** | 0.72M | 0.961 | 0.974 | 0.956 | 0.987 | **0.969** |
+| h256/L3 | 1.12M | 0.961 | 0.972 | 0.955 | 0.985 | 0.969 |
+| h384/L2 | 1.53M | 0.961 | 0.969 | 0.958 | 0.982 | 0.968 |
+
+**结论(base + 原始频率 + 全量,全部证实且更坚定)**:
+- **mean 0.969 > H 版 0.959**(base 编码器更干净,印证 base>H);参数量**更平**(0.21M–1.53M 全 0.968–0.969),h384 略降 → **别加参数**更坚定。
+- 4 数据集齐平(kai 0.96 / vis 0.97 / xvla 0.955 / coffee 0.98);**0.72M 甚至 0.21M 就够**。
+- **现与部署方案(DINOv3-base)完全一致。**
+
+脚本:`extract_base_bank.py`(vis/coffee,`load_ep_native`)、`kai_extract_base_gf3.py` / `xvla` 直读器(mp4/hdf5,8卡)、`train_multitask_base.py`(读 base bank + 内联 milestone + 参数扫描)。
+base bank(`temp/{kai,vis,coffee,xvla}_dinov3base`)在 gf3(di 盘满,择机同步)。注册表新增 `dinov3-base` 条目。
+
 ## 4. 诚实边界
 
 - teacher 是 CRAVE 无监督(vis/coffee/xvla 无 GT),corr 是 vs teacher;teacher vs 归一时间 0.96–0.997 有保证。

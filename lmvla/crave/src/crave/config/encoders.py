@@ -37,6 +37,7 @@ ENCODERS: dict[str, EncoderSpec] = {
     # ---- DINOv3 (patch16, 1 CLS + 4 register tokens, bf16 mandatory) ----
     # Smaller debug model (ungated HF-format re-upload, camenduru) — fetch/run faster than H+ while 7B downloads.
     # (ViT-S/B only exist as raw .pth upstream; they'd need a .pth->HF conversion before this AutoModel path can load them.)
+    "dinov3-base":      EncoderSpec("dinov3-base", "hf_dino", str(REPO / "temp/dinov3_vitb16"), 768, "fp16", 256, 16, 5),
     "dinov3-l":         EncoderSpec("dinov3-l", "hf_dino", str(REPO / "temp/dinov3_vitl16"), 1024, "bf16", 256, 16, 5),
     "dinov3-h":         EncoderSpec("dinov3-h", "hf_dino", str(HF_HUB / "dinov3-vith16plus-pretrain-lvd1689m"), 1280, "bf16", 256, 16, 5),
     "dinov3-7b":        EncoderSpec("dinov3-7b", "hf_dino", str(REPO / "temp/dinov3_7b"), 4096, "bf16", 256, 16, 5),
