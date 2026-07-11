@@ -325,7 +325,7 @@ a.link{color:var(--accent3);text-decoration:none;border-bottom:1px dashed var(--
   <li><b>效果</b>:留出集(严格未见)corr vs 监督GT <b>0.955 ≥ 离线本身 0.943</b> → gap 归零,还平滑掉了离散阶梯噪声。</li>
 </ul>
 <figure><img src="assets/online_gru_heldout.png" alt="因果 GRU 留出集">
-  <figcaption><b>档③ 因果 GRU(蓝,零未来+warmup)蒸馏「去阶梯 polyline 双锚 Viterbi」teacher(绿)· 6 条 kai 严格留出 ep</b>:student 平滑贴合 polyline ramp(<b>非硬阶梯</b>),mean corr <b>0.955</b> 追平离线;首帧 warmup 已消除 GRU 冷启动尖峰(从 0 起步)。橙=归一时间参考。同一因果模型可跨 12 任务共享(见 §6 复用与选型)。</figcaption>
+  <figcaption><b>档③ 因果 GRU(蓝,零未来+warmup)蒸馏「去阶梯 polyline 双锚 Viterbi」teacher(绿)· 6 条 kai 严格留出 ep(img PCA128 ⊕ proprio14,M=10 milestone)</b>:teacher 明显偏离橙色时间对角线——<b>~0.4 处的折叠停留平台</b>(主 milestone)、中段拐点、个别 ep 的再抓回落,正是 CRAVE 相对"朴素时间"的增量;student 平滑贴合(mean corr <b>0.975</b>,首帧 warmup 消除冷启动尖峰、从 0 起步)。同一因果模型可跨 12 任务共享(见 §6 复用与选型)。</figcaption>
 </figure>
 <div class="callout ok"><b>首帧冷启动已修:</b>单向 GRU 在 t=0 时 h₀=0 无时序上下文 → 首帧输出冷启动默认值(跨任务一致的架构性小尖峰)。<b>推理时 warmup</b>(首帧复制 ~20 步前置进 GRU、丢弃预热输出)把首帧 pred 从 0.057→0.009 直接消除,零重训、因果友好。</div>
 
