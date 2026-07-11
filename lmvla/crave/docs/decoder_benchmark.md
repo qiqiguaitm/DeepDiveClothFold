@@ -72,3 +72,17 @@ REPO=/home/tim/workspace/deepdive_kai0 PYTHONPATH=crave/src:lmwm/src:lmwm/script
 - 输入:`temp/crave_full_dinov3h`(DINOv3-H pooled 特征 + 帧)+ 三个解码器 ckpt(`lmwm/checkpoints/{dinov3h_decoder/dec.pt, dinov3h_decoder/dec_gan.pt, patch_decoder/patch_dec.pt}`)
 - 输出:`crave/docs/visualization/decoder_benchmark/{decoder_benchmark.png, summary.json}`
 - 相关:[`milestone_centroid_decoding.md`](milestone_centroid_decoding.md)(方法史/规模消融)、[`lmwm/docs/decoder_blur_diagnosis_20260702.md`](../../lmwm/docs/decoder_blur_diagnosis_20260702.md)(LMWM 侧应用)、规范组件 `lmwm/src/lmwm/retrieval_decoder.py`。
+
+---
+
+## 6. DINOv3-base decoder(新, 2026-07-11)—— 单帧自重建达标, 簇心仍软 → milestone 用检索
+
+为 base pipeline 训了 pooled decoder(768D → 128×128, L1, `train_decoder_base.py`):
+
+- **单帧自重建**: coffee **re-encode cos 0.873 / L1 0.023** —— 远超 §2 合成封顶 0.47(coffee 刚性场景比 kai0 可形变布料好重建太多), 视觉上场景/臂位/物体忠实、仅高频略软。**达标。**
+  ![base self-recon](visualization/decoder_benchmark/decoder_selfrecon_base.png)
+- **簇心解码**: 簇心是几百帧的**平均态** → decode 出的臂被平均糊成团块(§2.4 "簇平均合成 ill-posed 恒软"); coffee 场景保住、xvla 布态可辨但臂糊。**检索(最近真实帧)仍更清晰、信息量大。**
+  ![coffee centroids](visualization/decoder_benchmark/centroid_decode_coffee.png)
+  ![xvla centroids](visualization/decoder_benchmark/centroid_decode_xvla.png)
+
+**结论(与 §3 一致)**: decoder 适合"单帧 latent→图"(自重建 0.87); milestone 簇心可视化用**检索**。脚本 `train_decoder_base.py` / `decode_milestone_centroids.py`; ckpt `lmvla/crave/data/base_decoder_{coffee,xvla}.pt`(gf3, gitignore)。

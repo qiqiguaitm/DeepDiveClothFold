@@ -83,29 +83,29 @@ def pred(f, warm=20):
     fw=np.concatenate([f[:1].repeat(warm,0),f])
     return net(torch.tensor(fw[None],device=DEV),torch.tensor([len(fw)]))[0].cpu().numpy()[warm:]
 # per-task corr 全表
-print("=== 12任务 per-dataset 留出 corr ===",flush=True)
+print("=== 12-task per-dataset held-out corr ===",flush=True)
 allcorr={}
 for n in DATA:
-    c=[cc(pred(f),v) for f,v,t,tg,e in EV[n]]; allcorr[n]=np.nanmean(c); print(f"  {n}: {allcorr[n]:.3f} (M按ep)",flush=True)
-print(f"  >>> 12任务 mean={np.mean(list(allcorr.values())):.3f}",flush=True)
+    c=[cc(pred(f),v) for f,v,t,tg,e in EV[n]]; allcorr[n]=np.nanmean(c); print(f"  {n}: {allcorr[n]:.3f} ",flush=True)
+print(f"  >>> 12-task mean={np.mean(list(allcorr.values())):.3f}",flush=True)
 # 渲 aloha 9 任务(coffee+8) 各1留出ep
 alods=['coffee','cups_open','candy','screw_driver','vinh_cup','ziploc_slide','coffee_new','pro_pencil','vinh_cup_left']
 fig,axes=plt.subplots(3,3,figsize=(14,9)); axes=axes.flatten()
 for ax,dn in zip(axes,alods):
     f,v,t,tg,e=EV[dn][0]; p=pred(f)
-    ax.plot(t,color='#e8830c',lw=1.1,alpha=.6,label='时间'); ax.plot(v,color='#2ca02c',lw=1.5,label='teacher'); ax.plot(p,color='#1f77ff',lw=1.9,label='value model')
+    ax.plot(t,color='#e8830c',lw=1.1,alpha=.6,label='time'); ax.plot(v,color='#2ca02c',lw=1.5,label='teacher'); ax.plot(p,color='#1f77ff',lw=1.9,label='value model')
     ax.set_title(f'{dn} ep{e} corr={cc(p,v):.3f}',fontsize=9); ax.set_ylim(-.03,1.03); ax.grid(alpha=.25)
 axes[0].legend(fontsize=7)
-fig.suptitle('DINOv3-base 12任务 multitask value · 9个ALOHA任务留出集',fontsize=12); fig.tight_layout()
+fig.suptitle('DINOv3-base 12-task multitask value - 9 ALOHA tasks (held-out)',fontsize=12); fig.tight_layout()
 fig.savefig(REPO/"temp/base_aloha9.png",dpi=110,bbox_inches='tight'); print('SAVED base_aloha9.png',flush=True)
 for dsname,ncol in [("xvla",6),("coffee",8)]:
     ev=EV[dsname][:ncol]; nr=2; nc=(len(ev)+1)//2
     fig,axes=plt.subplots(nr,nc,figsize=(3.2*nc,6)); axes=np.atleast_1d(axes).flatten()
     for ax,(f,v,t,tg,e) in zip(axes,ev):
-        p=pred(f); ax.plot(t,color='#e8830c',lw=1.2,alpha=.7,label='归一时间'); ax.plot(v,color='#2ca02c',lw=1.6,label='CRAVE teacher'); ax.plot(p,color='#1f77ff',lw=2,label='base value model')
+        p=pred(f); ax.plot(t,color='#e8830c',lw=1.2,alpha=.7,label='norm time'); ax.plot(v,color='#2ca02c',lw=1.6,label='CRAVE teacher'); ax.plot(p,color='#1f77ff',lw=2,label='base value model')
         ax.set_title(f'{dsname} ep{e} corr={cc(p,v):.3f}',fontsize=9); ax.set_ylim(-.03,1.03); ax.grid(alpha=.25)
     axes[0].legend(fontsize=7)
     for ax in axes[len(ev):]: ax.axis('off')
-    fig.suptitle(f'DINOv3-base multitask value · {dsname} 留出集(零未来因果)',fontsize=12); fig.tight_layout()
-    outp=REPO/f'lmvla/crave/docs/visualization/online_value/base_{dsname}.png'; fig.savefig(outp,dpi=115,bbox_inches='tight'); print('SAVED',outp.name,flush=True)
+    fig.suptitle(f'DINOv3-base multitask value - {dsname} held-out (causal, zero-future)',fontsize=12); fig.tight_layout()
+    outp=REPO/f'temp/base_{dsname}.png'; fig.savefig(outp,dpi=115,bbox_inches='tight'); print('SAVED',outp.name,flush=True)
 print('DONE',flush=True)
