@@ -128,7 +128,7 @@ a.link{color:var(--accent3);text-decoration:none;border-bottom:1px dashed var(--
   <h1>CRAVE:基于共现状态无监督的进度估计</h1>
   <p class="sub">面向观看者的方法汇报:先看清当前监督 value/progress 模型的<b>三个痛点</b>,再看 CRAVE 怎么用"跨 episode 复现 + 簇间转移概率"逐一解决,最后给出<b>效果对比与优缺点</b>。</p>
   <div class="meta">
-    <span>零训练 · frozen DINOv3-H</span><span>零人工标注</span>
+    <span>零训练 · frozen DINOv3-base</span><span>零人工标注</span>
     <span>跨数据集泛化</span><span>退步信号干净</span>
   </div>
 </div>
@@ -140,9 +140,10 @@ a.link{color:var(--accent3);text-decoration:none;border-bottom:1px dashed var(--
   <a href="#pain">1 · 现状与三大痛点</a>
   <a href="#idea">2 · CRAVE 核心思想</a>
   <a href="#compare">3 · 效果对比</a>
-  <a href="#mech">4 · 实现原理</a>
-  <a href="#summary">5 · 优缺点与选型</a>
-  <a href="#next">6 · 下一步计划</a>
+  <a href="#mech">4 · 实现原理(离线)</a>
+  <a href="#online">5 · 在线推理(因果)</a>
+  <a href="#summary">6 · 优缺点与选型</a>
+  <a href="#next">7 · 下一步计划</a>
 </nav>
 
 <main>
@@ -155,7 +156,7 @@ a.link{color:var(--accent3);text-decoration:none;border-bottom:1px dashed var(--
   <div class="stat"><div class="v">零训练</div><div class="l">frozen 特征 + 聚类 + DP,无梯度更新、无人工标注</div></div>
   <div class="stat"><div class="v">100% vs 52%</div><div class="l">in-distribution 单调性(CRAVE vs 监督 AE),且打平 corr</div></div>
   <div class="stat"><div class="v">7% vs 45%</div><div class="l">真机 OOD 退步帧占比:CRAVE 稀疏对齐真事件 / AE 弥散</div></div>
-  <div class="stat"><div class="v">0.956 / 0.988</div><div class="l">跨数据集泛化 corr(XVLA 叠衣 / 真实 ALOHA 咖啡),配方逐字不改</div></div>
+  <div class="stat"><div class="v">0.962 / 0.997</div><div class="l">跨数据集泛化 corr(XVLA 叠衣 / 真实 ALOHA 咖啡),配方逐字不改</div></div>
 </div>
 </section>
 
@@ -204,7 +205,7 @@ a.link{color:var(--accent3);text-decoration:none;border-bottom:1px dashed var(--
 <table>
 <thead><tr><th>痛点</th><th>CRAVE 怎么解</th></tr></thead>
 <tbody>
-<tr><td><b>① AE 抖动 → 正负交错</b></td><td>milestone 阶梯 + Viterbi-DP 全局最优 → progress 平滑单调,正负<b>段化稀疏</b>而非逐帧横跳</td></tr>
+<tr><td><b>① AE 抖动 → 正负交错</b></td><td>milestone 阶梯 + 双锚 Viterbi-DP 全局最优 → progress 平滑单调,正负<b>段化稀疏</b>而非逐帧横跳</td></tr>
 <tr><td><b>② 升降不可解释</b></td><td>progress = "在哪个反复出现的 milestone 簇上" → 每次升/降都能<b>指着具体 milestone</b>说清楚</td></tr>
 <tr><td><b>③ 末端相似度假跌</b></td><td>不只看瞬时相似度:转移惩罚 + <b>簇间转移概率</b>(知道"末段不会跳回起始态")→ 压住假跌</td></tr>
 </tbody>
@@ -218,13 +219,13 @@ a.link{color:var(--accent3);text-decoration:none;border-bottom:1px dashed var(--
 </figure>
 <h3>2.2 三步直觉(全程零训练)</h3>
 <div class="flow">
-  <div class="node"><div class="ix">① 特征</div><div class="t">frozen DINOv3-H</div><div class="d">最优编码器架构选择;每帧 → 视觉特征(冻结,无训练)</div></div>
+  <div class="node"><div class="ix">① 特征</div><div class="t">frozen DINOv3-base</div><div class="d">最优编码器(base&gt;H,相位更纯);每帧 → 768D pooled(冻结,无训练)</div></div>
   <div class="arrow">→</div>
-  <div class="node"><div class="ix">② 聚类</div><div class="t">找"反复出现的态"</div><div class="d">KMeans → 自动浮现 milestone</div></div>
+  <div class="node"><div class="ix">② 聚类</div><div class="t">找"反复出现的态"</div><div class="d">共享PCA128 → 贝叶斯GMM(自动K)+ 覆盖率≥0.5 → 自动浮现 milestone</div></div>
   <div class="arrow">→</div>
-  <div class="node"><div class="ix">③ 读出</div><div class="t">Viterbi-DP</div><div class="d">milestone → 稠密单调 progress</div></div>
+  <div class="node"><div class="ix">③ 读出</div><div class="t">双锚 Viterbi-DP</div><div class="d">milestone + 起点/终点锚 → 稠密单调 progress</div></div>
 </div>
-<p style="color:var(--text2);font-size:13.5px">全链无梯度更新:DINOv3-H 冻结 + KMeans + DP,没有任何可学习参数被训练。</p>
+<p style="color:var(--text2);font-size:13.5px">全链无梯度更新:DINOv3-base 冻结 + PCA + 贝叶斯GMM + 双锚 DP,没有任何可学习参数被训练。</p>
 
 <h3>2.3 充分利用「簇间转移概率」(直接解痛点③)</h3>
 <p>从 demo 统计"当前 milestone 的下一个最可能是谁"的经验概率 <code>P(next | cur)</code>,折进 DP:它知道"末段几乎不会跳回起始态",于是把相似度造成的末端假跌重罚压住。质量集中在对角线右上(单向前进 + 合法跳级),"中段→起始"近乎为 0。</p>
@@ -254,39 +255,93 @@ a.link{color:var(--accent3);text-decoration:none;border-bottom:1px dashed var(--
 </figure>
 
 <h3>3.3 跨数据集泛化(配方逐字不改)</h3>
-<p>同一冻结配方套全新数据集:<b>XVLA 叠衣 corr 0.956</b>、<b>真实 ALOHA 咖啡 corr 0.988</b> —— 学的是"跨 demo 重复结构 = 进度"的通用规律,而非单数据集过拟合。下面两段为 CRAVE 在两个全新数据集上的逐帧 progress + milestone 对齐演示:</p>
-<figure><video src="assets/generalize_coffee_video.mp4" controls preload="metadata"></video><figcaption><b>真实 ALOHA 咖啡</b>(互联网真实数据,全新长程任务,corr 0.988)。</figcaption></figure>
-<figure><video src="assets/generalize_xvla_video.mp4" controls preload="metadata"></video><figcaption><b>XVLA 叠衣</b>(全新本体/相机/布料,corr 0.956)。</figcaption></figure>
+<p>同一冻结配方套全新数据集:<b>XVLA 叠衣 corr 0.962</b>、<b>真实 ALOHA 咖啡 corr 0.997</b> —— 学的是"跨 demo 重复结构 = 进度"的通用规律,而非单数据集过拟合。配方还进一步扩到 <b>12 个任务(2 域 + 新本体 + 9 个 ALOHA)一个共享 value model,mean corr 0.977</b>(见 §6 复用)。下面两段为 CRAVE 在两个全新数据集上的逐帧 progress + milestone 对齐演示:</p>
+<figure><video src="assets/generalize_coffee_video.mp4" controls preload="metadata"></video><figcaption><b>真实 ALOHA 咖啡</b>(互联网真实数据,全新长程任务,corr 0.997)。</figcaption></figure>
+<figure><video src="assets/generalize_xvla_video.mp4" controls preload="metadata"></video><figcaption><b>XVLA 叠衣</b>(全新本体/相机/布料,corr 0.962)。</figcaption></figure>
 </section>
 
 <!-- ════ 4. 实现原理 ════ -->
 <section id="mech">
 <h2><span class="n">4</span>实现原理</h2>
+<div class="callout"><b>最终架构(收口方案,一句话):</b> <b>DINOv3-base</b>(ViT-B/16, 768D, 冻结)→ pooled → <b>PCA→128D</b> ⊕ proprio 位置14(各自 L2,能量 1:1)→ <b>贝叶斯GMM(diag, 自适应K)+ per-mode 覆盖率≥0.5 筛选</b> → 簇成员帧 <b>T 中位数</b> 定 milestone 进度 → <b>双锚 Viterbi</b>(起点锚→0 / 终点锚→1,λ=16,无 smooth、无 norm01)。全消融(编码器/降维/K₀/proprio/聚类器/多峰/读出/端点锚)后收口,vs 监督 stage_gt corr <b>0.943</b>。<span style="color:var(--text3)">下方部分示意图在等价的早期方案(KMeans-K10 / DINOv3-H)下渲染;经交叉验证结论对编码器/聚类器不敏感(cross-encoder corr 0.88,base 比 H 略纯 Tstd 0.195&lt;0.219),定性结论在 base 下不变。</span></div>
 <h3>4.1 milestone 自动浮现</h3>
-<figure><img src="assets/milestone_repr_frames.png" alt="10 个代表 milestone 的最近真实帧"><figcaption><b>① 时序直观(最近真实帧)</b>:10 个代表 milestone 按任务进度 0.00→0.92 排开,各取最近真实帧 —— 一眼看清自动浮现的 milestone 时序。</figcaption></figure>
+<figure><img src="assets/milestone_repr_frames.png" alt="代表 milestone 的最近真实帧"><figcaption><b>① 时序直观(最近真实帧)</b>:各代表 milestone 按任务进度排开,各取最近真实帧 —— 一眼看清自动浮现的 milestone 时序。<span style="color:var(--text3)">(图示早期 K=10;最终贝叶斯GMM 浮现 12 个 milestone + 双锚,时序图景一致。)</span></figcaption></figure>
 <figure>
   <a href="assets/encoder_decoder_arch_hq.png" target="_blank" rel="noopener"><img src="assets/encoder_decoder_arch_hq.png" alt="CRAVE 编解码架构图高清版"></a>
-  <figcaption><b>② 编解码架构</b>:真实帧→DINOv3-H 编码→token features→flatten + state 拼接→K-Means 统一 latent 聚类→去除 state component 得到 image-token 簇中心→decoder 重建簇中心图。页面内按普通配图宽度展示。</figcaption>
+  <figcaption><b>② 编解码架构</b>:真实帧→DINOv3-base 编码→pooled 768D→PCA128 ⊕ proprio位置(各自L2 1:1)→贝叶斯GMM(自适应K)统一 latent 聚类→去除 state component 得到 image 簇中心→decoder 重建簇中心图。页面内按普通配图宽度展示。<span style="color:var(--text3)">(示意图沿用早期 DINOv3-H/K-Means 版渲染,方案已收口为 base+PCA128+贝叶斯GMM,流程等价。)</span></figcaption>
 </figure>
 <figure><img src="assets/milestone_repr_decode.png" alt="10 个代表 milestone 的簇中心解码图"><figcaption><b>③ 可解释 + 簇中心合理(簇中心解码图)</b>:同 10 个 milestone 的<b>簇中心解码图</b>(解码"平均 latent")—— 解码出的中心与上排真实帧一致,<b>证明簇中心是合理的语义平均</b>(medoid 只是最近成员、不能验证中心本身)。聚簇可解释、簇中心合理。</figcaption></figure>
 <h3>4.2 为什么用「簇平均 progress」当 milestone 进度(progress 一致性)</h3>
 <figure><img src="assets/value_consistency_proof.png" alt="progress 一致性证明">
-  <figcaption><b>DINOv3-H 聚类的 progress 一致性证明</b>:(A)置信度过滤 t-SNE (K=10, CQ=0.85),仅高置信点训练降维,低置信点灰色投影,各簇一色;(B)每帧 progress vs 其所在簇平均 progress,相干簇(各色)紧贴对角线,R²=0.84,证明簇平均可以可靠代表 milestone 进度。</figcaption>
+  <figcaption><b>DINO 聚类的 progress 一致性证明</b>:(A)置信度过滤 t-SNE(CQ=0.85),仅高置信点训练降维,低置信点灰色投影,各簇一色;(B)每帧 progress vs 其所在簇平均 progress,相干簇(各色)紧贴对角线,R²=0.84,证明簇均/中位数可以可靠代表 milestone 进度。<span style="color:var(--text3)">(t-SNE 用早期 DINOv3-H/K=10 渲染;一致性 R² 对编码器不敏感,base 下同样成立。)</span></figcaption>
 </figure>
-<h3>4.3 progress 读出三步:无 Viterbi → Viterbi → 转移概率</h3>
+<h3>4.3 progress 读出:双锚 Viterbi(离线标准)</h3>
 
-<p><b>Viterbi：</b>Viterbi 不是单帧独立决策,而是用固定滞后窗口看一小段局部上下文来约束当前帧的选择,相当于给当前帧配了前后几秒的"连续性约束"。单帧因光照/褶皱/角度突变导致的模型输出抖动,被窗口内的路径连贯性平滑掉。</p>
+<p><b>Viterbi(全局最优路径)：</b>不是单帧独立决策,而是用全局动态规划把整条轨迹的 milestone 序列一次解出——单帧因光照/褶皱/角度突变导致的抖动,被路径连贯性(转移罚 λ|Δbin|)平滑掉,得到平滑单调的阶梯 progress。</p>
 
-<p><b>转移概率：</b>从大量 demo 中学到"任务只能往前推进",所以当某帧突然像起始态(折叠时画面骤变→相似度假跌),Viterbi 会说"末段跳到起始的概率极低",不会真的跟丢、progress 不会随之暴跌。两条一起:原始逐帧乱跳 → 变成段落式的干净阶梯,每个 POSITIVE/NEGATIVE 都有前后文支撑,不再是横跳的噪声。</p>
+<p><b>转移概率(压末端假跌)：</b>从大量 demo 中学到"任务只能往前推进",所以当某帧突然像起始态(折叠时画面骤变→相似度假跌),Viterbi 会说"末段跳到起始的概率极低",不会真的跟丢、progress 不会随之暴跌——直接解掉痛点③。</p>
 
-<p><b>在线推理：</b>用固定滞后 Viterbi 实现:每来一帧,向前多看一小段(3Hz 下约 12 帧=4 秒),然后局部回溯判断当前帧——相当于有 4 秒的"合理缓冲",不需要等整条 episode 完结,就能在线输出稳定的 progress。固定滞后窗口足够小,真机实时可用,实测与全局 DP 相关度 0.9+、末值差小于 0.03。</p>
+<p><b>双锚(替代 per-ep norm01,关键修正)：</b>起点锚=全 ep 首 3 帧均值→固定为 <b>0</b>,终点锚=全 ep 末 3 帧均值→固定为 <b>1</b>;Viterbi 强制首帧=bin0、末帧=bin1.0。这样 raw 值天然 0→1(不再靠 per-ep min-max 拉伸掩盖"达顶失败"),且 DP 为登顶<b>必阶梯经过高 milestone</b>(0.6→0.83→0.96)→ 高 milestone 被激活、中段形状诚实。标准读出<b>不加 smooth、不加 norm01</b>,vs 监督 stage_gt corr <b>0.943</b>、单调 0.981、末值 0.999。</p>
 
-<figure><img src="assets/viterbi_mechanism.png" alt="Viterbi 机制"><figcaption><b>① 无 Viterbi</b>(逐帧最近 milestone,乱抖)<b>→ ② Viterbi</b>(平滑单调 mono≈0.8→0.98);转移概率进一步压末端假跌。</figcaption></figure>
+<figure><img src="assets/viterbi_mechanism.png" alt="Viterbi 机制"><figcaption><b>① 无 Viterbi</b>(逐帧最近 milestone,乱抖)<b>→ ② Viterbi</b>(平滑单调 mono≈0.8→0.98);双锚 + 转移概率进一步保证 0→1 登顶、压末端假跌。</figcaption></figure>
+<p style="color:var(--text2);font-size:13.5px">以上是<b>离线</b>读出(需整条 episode)。真机部署要<b>完全因果、零未来</b>的在线读出 —— 见下一节 §5。</p>
 </section>
 
-<!-- ════ 5. 优缺点 ════ -->
+<!-- ════ 5. 在线推理 ════ -->
+<section id="online">
+<h2><span class="n">5</span>在线推理(完全因果 · 零未来)</h2>
+<p class="lead">§4 的双锚 Viterbi 是<b>离线</b>读出——它的全部威力来自"知道未来"(全局回溯 + 强制末帧=1)。真机部署要<b>完全因果</b>:每来一帧只用 ≤t 的信息、零延迟输出 progress。本节讲怎么在不偷看未来的前提下逼近离线效果。</p>
+
+<h3>5.1 核心矛盾:离线的威力=知道未来</h3>
+<p>离线 Viterbi 靠两件事拿到干净 progress:① 全局回溯把每个转变提前锁定;② "强制末帧=1"反向激活高 milestone 登顶。<b>完全在线两者都没有</b>。三档方案逐步用<b>因果先验</b>替代"偷看未来",最终用<b>学到的未来预期</b>追平离线:</p>
+<table>
+<thead><tr><th>档</th><th>方法</th><th>用什么替代"未来"</th><th>corr vs 监督GT</th><th>末值(登顶)</th></tr></thead>
+<tbody>
+<tr><td>⓪</td><td><s>固定滞后 Viterbi</s>(否决)</td><td>偷看 L 帧未来 → <b>不是完全在线</b></td><td>0.74</td><td>0.50</td></tr>
+<tr><td>①</td><td>对称 forward-DP(流式 Viterbi)+ratchet</td><td>转移罚(因果抗跳变)+ 单调</td><td>0.83</td><td>0.54</td></tr>
+<tr><td>②</td><td>非对称 forward-DP(前向偏置)+ratchet</td><td>"进度多半向前"的因果先验</td><td>0.86</td><td>0.82</td></tr>
+<tr><td><b>③ ★</b></td><td><b>因果 GRU 蒸馏</b></td><td><b>从训练数据学到的未来预期</b></td><td><b>0.955</b></td><td><b>0.986</b></td></tr>
+<tr><td>—</td><td>离线双锚 Viterbi(基准,偷看未来)</td><td>—</td><td>0.943</td><td>1.00</td></tr>
+</tbody>
+</table>
+<div class="callout warn"><b>为什么否决固定滞后(档⓪):</b>要输出第 t−L 帧必须先见到第 t 帧 → <b>偷看了 L 帧未来</b>,不是完全在线;且实测 L 越大越差(不强制末帧时高 L 只把"泊 0.5"的错误抹得更平)。完全因果只能 L=0。</div>
+
+<h3>5.2 零训练两档:流式 forward-DP + 前向偏置</h3>
+<p>离线 Viterbi 的<b>前向递推</b>照跑,但每帧即时输出当前 forward-cost 的 argmin、<b>不做后向回溯</b>(后向才需未来),再加单调 ratchet:</p>
+<ul>
+  <li><b>① 对称 forward-DP</b>:转移罚 λ|Δbin| 在因果方向就压住跳变(相比逐帧投票无毛刺);但无末帧强制 → 泊中段 0.5 登不了顶(corr 0.83)。</li>
+  <li><b>② 非对称 forward-DP</b>:转移罚拆方向——上升便宜 λf、下降贵 λb(λf&lt;λb),编码"进度多半向前"的<b>合法因果先验</b>(不偷看未来)。前向便宜 → 敢爬高 milestone(末值 0.54→0.82);后向贵 → 强单调。<b>λf8/λb32 是零训练甜点</b>(corr 0.86)。</li>
+</ul>
+<figure><img src="assets/online_vs_offline_curves.png" alt="在线 forward-DP vs 离线 Viterbi">
+  <figcaption><b>档① 完全在线(红)vs 离线(蓝)</b>:前中段贴合(前 80% 一致性 0.84、单调持平、零毛刺),分歧集中在<b>末段登顶</b>(粉阴影)——零训练档只能到此,要抹平末段登顶需档③。</figcaption>
+</figure>
+
+<h3>5.3 追平离线:因果 GRU 蒸馏 ★</h3>
+<p>把离线双锚 Viterbi 当 <b>teacher</b>,训一个<b>单向 GRU(结构上严格因果)</b> 当 student 回归它。GRU 见过几千条同类轨迹,内化了"这个状态之后进度通常跳到 X / 平台还剩多久 / 这类轨迹会完成"——用<b>学到的未来预期</b>补上滞后、中段选级、甚至登顶,而<b>推理时零未来</b>。</p>
+<ul>
+  <li><b>严格因果</b>:第 t 帧输出只依赖隐状态 h<sub>t</sub>(累积自 1..t),零未来;真机逐帧复用隐状态,<b>O(1)/帧</b>实时。</li>
+  <li><b>轻量</b>:GRU(142→256)+ progress 头 = <b>0.735M 参数</b>(ckpt 2.94MB);输入 = 每帧 img PCA128 ⊕ proprio 位置14。</li>
+  <li><b>效果</b>:留出集(严格未见)corr vs 监督GT <b>0.955 ≥ 离线本身 0.943</b> → gap 归零,还平滑掉了离散阶梯噪声。</li>
+</ul>
+<figure><img src="assets/online_gru_heldout.png" alt="因果 GRU 留出集">
+  <figcaption><b>档③ 因果 GRU(紫,零未来)vs 离线 Viterbi(蓝)· 6 个严格留出 ep</b>:台阶对齐 + 自学登顶,corr 0.955 追平离线。同一模型可跨 12 任务共享(见 §6 复用与选型)。</figcaption>
+</figure>
+<div class="callout ok"><b>首帧冷启动已修:</b>单向 GRU 在 t=0 时 h₀=0 无时序上下文 → 首帧输出冷启动默认值(跨任务一致的架构性小尖峰)。<b>推理时 warmup</b>(首帧复制 ~20 步前置进 GRU、丢弃预热输出)把首帧 pred 从 0.057→0.009 直接消除,零重训、因果友好。</div>
+
+<h3>5.4 选型</h3>
+<table>
+<thead><tr><th>场景</th><th>选择</th><th>理由</th></tr></thead>
+<tbody>
+<tr><td>零训练 / 快速上线</td><td><span class="tag y">档② 非对称 forward-DP</span></td><td>corr 0.86,无毛刺,微秒级/帧,无需训练</td></tr>
+<tr><td>追平离线 / 有训练预算</td><td><span class="tag g">档③ 因果 GRU 蒸馏 ★</span></td><td>corr 0.955=离线水平,0.735M,真机实时,可跨任务共享</td></tr>
+</tbody>
+</table>
+<div class="callout warn"><b>诚实边界:</b>档③末端登顶靠"训练全是成功 demo"学到的先验;真机遇失败 rollout 仍可能高估(所有在线法通病),但这是<b>学出来、更好校准</b>的先验,非硬编码强制。若部署有外部成功/终止信号,可作 end-trigger 进一步校准。</div>
+</section>
+
+<!-- ════ 6. 优缺点 ════ -->
 <section id="summary">
-<h2><span class="n">5</span>优缺点、适用边界与选型</h2>
+<h2><span class="n">6</span>优缺点、适用边界与选型</h2>
 <p class="lead">CRAVE 用"跨 episode 复现 + 簇间转移概率",零训练地把三个痛点逐一解掉——抖动→平滑段化、升降可解释、末端假跌被压住,且跨任务直接复用。</p>
 <div class="cols2">
   <div class="col good"><h4>✅ 优点</h4><ul>
@@ -319,10 +374,10 @@ a.link{color:var(--accent3);text-decoration:none;border-bottom:1px dashed var(--
 
 <!-- ════ 6. 下一步计划 ════ -->
 <section id="next">
-<h2><span class="n">6</span>下一步计划：从描述 → 预测 → 决策</h2>
+<h2><span class="n">7</span>下一步计划：从描述 → 预测 → 决策</h2>
 <p class="lead">当前 CRAVE 还是一个"描述器"。下一步是从"看懂"到"能预测、能规划、能决策"——构建一个以 <b>task-aware latent milestone</b> 为核心的世界模型。</p>
 
-<h3>6.1 AWBC + Process Reward (决策与在线优化)</h3>
+<h3>7.1 AWBC + Process Reward (决策与在线优化)</h3>
 <p>有了 task-aware latent milestone 和转移图,下一步是让机器人<strong>能用这个模型做决策</strong>:</p>
 <ul>
   <li><b>AWBC 离线策略</b>:milestone 天然的 state abstraction——在几十个有语义的状态上学习"当前阶段的最优动作",样本效率远高于像素级 RL;</li>
@@ -330,7 +385,7 @@ a.link{color:var(--accent3);text-decoration:none;border-bottom:1px dashed var(--
   <li><b>闭环迭代</b>:离线学→线上发现差距→收集新数据→改进策略。</li>
 </ul>
 
-<h3>6.2 Latent Milestone World Model -- Recurrence Latent Milestone Probability Graph (milestone 转移概率模型)</h3>
+<h3>7.2 Latent Milestone World Model -- Recurrence Latent Milestone Probability Graph (milestone 转移概率模型)</h3>
 <p>这一节把两件事合在一起:先把 <b>latent milestone</b> 定义为世界模型里的离散状态,再在这些状态之间统计 <b>Recurrence Latent Milestone Probability Graph</b>。也就是说,CRAVE 不是预测下一帧像素,而是预测“任务接下来更可能进入哪个 latent milestone”。</p>
 <p>现有世界模型通常卡在两个极端之间:</p>
 <ul>
@@ -338,13 +393,13 @@ a.link{color:var(--accent3);text-decoration:none;border-bottom:1px dashed var(--
   <li><b>"Physical state" 声称</b>(如 JEPA):声称学到了物理表征,但没有机制保障——模型可以"作弊"走捷径而不真正理解任务结构;</li>
   <li><b>3D/point-based</b>:深度噪声大、遮挡不稳定,且缺乏任务相关语义——它知道物体在哪,但不知道"这个状态在任务中意味着什么"。</li>
 </ul>
-<p>CRAVE 采用中间路线:用 DINOv3-H 视觉语义、28D 本体状态和跨 episode 共现聚类共同定义 <b>task-aware latent milestone</b>。</p>
+<p>CRAVE 采用中间路线:用 DINOv3-base 视觉语义、14D 本体位置和跨 episode 共现聚类共同定义 <b>task-aware latent milestone</b>。</p>
 <ul style="margin-top:8px">
-  <li><b>视觉基座</b>:DINOv3-H (隐含分割/深度) → 提供<strong>视觉语义</strong></li>
-  <li><b>本体状态</b>:28D 关节位置(加权 0.2)拼接 → 注入<strong>自身姿态感知</strong></li>
-  <li><b>共现聚类</b>:将"任务中反复按顺序出现的状态"归为 milestone → 注入<strong>任务语义</strong></li>
+  <li><b>视觉基座</b>:DINOv3-base(768D pooled → PCA128,隐含分割/深度) → 提供<strong>视觉语义</strong></li>
+  <li><b>本体状态</b>:14D 关节位置(与 img 各自 L2、能量 1:1)拼接 → 注入<strong>自身姿态感知</strong></li>
+  <li><b>共现聚类</b>:贝叶斯GMM(自适应K)+ 覆盖率≥0.5,将"任务中反复按顺序出现的状态"归为 milestone → 注入<strong>任务语义</strong></li>
 </ul>
-<p>三者融合为一个 1308D 的联合 latent 特征空间 → <b>latent milestone(任务阶段压缩表征)</b>。当每一帧都能通过 Viterbi 读出为一个 latent milestone 后,大规模 episode 就变成 latent milestone 序列;在这些序列上统计 <b>P(milestone<sub>t+1</sub> | milestone<sub>t</sub>, a<sub>t</sub>)</b>,就得到 milestone 转移概率图。</p>
+<p>三者融合为一个 142D(img PCA128 ⊕ 位置14)的联合 latent 特征空间 → <b>latent milestone(任务阶段压缩表征)</b>。当每一帧都能通过 Viterbi 读出为一个 latent milestone 后,大规模 episode 就变成 latent milestone 序列;在这些序列上统计 <b>P(milestone<sub>t+1</sub> | milestone<sub>t</sub>, a<sub>t</sub>)</b>,就得到 milestone 转移概率图。</p>
 <figure>
   <img src="assets/transition_probability_network.svg" alt="CRAVE 簇间转移概率网络示意图">
   <figcaption><b>簇间转移概率示意</b>:把 milestone 看作离散任务 milestone,从当前 milestone 向候选后继 milestone 连边,边上数值是从 demo 统计得到的经验概率 <code>P(next milestone | current milestone)</code>。粗线表示高概率前进路径,红线表示低概率回退/异常路径。图中用 3 层示意一段短期预测链。</figcaption>
@@ -360,7 +415,7 @@ a.link{color:var(--accent3);text-decoration:none;border-bottom:1px dashed var(--
           <img src="assets/milestone_flow/m8_real.png" alt="milestone #8 最近真实帧">
         </div>
         <div class="milestone-labels single"><span>real frame</span></div>
-        <div class="milestone-note">当前真实观测作为输入,先进入 DINOv3-H + 28D state 编码。</div>
+        <div class="milestone-note">当前真实观测作为输入,先进入 DINOv3-base + 14D state 编码。</div>
       </div>
       <div class="milestone-arrow">→<span>encode + cluster</span></div>
       <div class="milestone-card current">
@@ -399,7 +454,7 @@ a.link{color:var(--accent3);text-decoration:none;border-bottom:1px dashed var(--
   <figcaption><b>Latent milestone 预测能力</b>:这里只抽取 #8/#13/#17 三个 milestone 示意流程。当前真实帧与当前簇中心拆开展示:先由 real frame 编码并聚类得到 current milestone center,再基于该簇中心在 Recurrence Latent Milestone Graph 上分别得到 Greedy Milestone 与 Max-Probability Milestone。两个 next-milestone 候选只展示 decoded center,表示可直接作为可审查的 latent prototype。</figcaption>
 </figure>
 
-<h3>6.2.1 下一 milestone 的可审查解码 — 归档两套解码方案</h3>
+<h3>7.2.1 下一 milestone 的可审查解码 — 归档两套解码方案</h3>
 <p>预测出的下一 milestone 是一个 <b>latent prototype</b>,可解码成图像供人审查。我们在多种解码器中<b>只保留两套忠实(非幻觉)方案做归档</b>,其余已淘汰(GAN 会凭空编造细节 / GDL 与再编码一致性损失训练失败或产生对抗噪声 / 检索式不展示模型自身预测):</p>
 <ul style="margin-top:8px">
   <li><b>L1(高一致性)</b>:确定性回归到条件均值——同一 latent 永远解出同一张图、绝不幻觉,但偏软(re-encode cos 0.33 / sharpness 194)。</li>
@@ -407,7 +462,7 @@ a.link{color:var(--accent3);text-decoration:none;border-bottom:1px dashed var(--
 </ul>
 <figure>
   <img src="assets/selfrecon_decoder_compare.png" alt="同一原始帧的两套归档解码方案对比">
-  <figcaption><b>同一原始帧 → DINOv3-H 编码 → 解码</b>(自重建上界):上=真实帧,中=L1(确定均值,高一致但软),下=flow(生成,锐+忠实)。两套归档方案在<b>同一批帧</b>上直接对照 —— flow 明显复现衣物形状/颜色/褶皱与夹爪位置;GAN 及其他方案已淘汰。</figcaption>
+  <figcaption><b>同一原始帧 → DINOv3-base 编码 → 解码</b>(自重建上界):上=真实帧,中=L1(确定均值,高一致但软),下=flow(生成,锐+忠实)。两套归档方案在<b>同一批帧</b>上直接对照 —— flow 明显复现衣物形状/颜色/褶皱与夹爪位置;GAN 及其他方案已淘汰。</figcaption>
 </figure>
 <div class="latent-decoder-videos" style="display:flex;gap:14px;flex-wrap:wrap">
   <figure style="flex:1;min-width:300px">
@@ -421,7 +476,7 @@ a.link{color:var(--accent3);text-decoration:none;border-bottom:1px dashed var(--
 </div>
 <p style="color:var(--text3);font-size:12.5px">两段视频<b>逐字保持同一提示与布局(同一 episode、同一 milestone+1 语义、同一面板文字)</b>,只替换解码器,便于把差异直接归因到解码方案本身。归档到此为止:<b>仅 L1 与 flow 两套</b>,其余淘汰。</p>
 
-<h3>6.3 与 VLA 架构结合: CRAVE + VLA → LMWAM</h3>
+<h3>7.3 与 VLA 架构结合: CRAVE + VLA → LMWAM</h3>
 <p>CRAVE 可以和通用 VLA 策略结合成 <b>LMWAM (Latent Milestone World Action Model)</b>:CRAVE 负责从真实 demo 中发现 latent milestone、预测下一 milestone 并给出转移概率,VLA 负责在语言、视觉历史与机器人状态条件下完成动作生成。这样把“世界模型的 milestone 预测”和“策略模型的动作执行”解耦,避免把未来目标强行生成成像素图。</p>
 <figure>
   <img src="assets/rpvla_arch.png" alt="RPVLA Recurrence Prompt Vision Language Action Model 架构草图">
@@ -444,7 +499,7 @@ a.link{color:var(--accent3);text-decoration:none;border-bottom:1px dashed var(--
 </ul></div>
 <p style="margin-top:12px">简单说: <b>LMWAM = CRAVE 的 latent milestone world model + VLA 的 action model</b>。CRAVE 不替代 VLA,而是为 VLA 提供可审计、可规划、来自真实数据的 latent milestone 级提示;同时它也能为 PI07 类训练流程提供子任务指令、任务质量标签与规划先验。</p>
 
-<h3>6.4 为什么要这样做</h3>
+<h3>7.4 为什么要这样做</h3>
 <div class="cols2">
   <div class="col good"><h4>🎯 核心价值</h4><ul>
     <li><b>非两端</b>:CRAVE 的 latent milestone 既不是过细的像素,也不是无保障的"物理",而是任务语义中介——<b>看得见、分得开、预测得了</b></li>
