@@ -331,7 +331,11 @@ a.link{color:var(--accent3);text-decoration:none;border-bottom:1px dashed var(--
 <div class="callout ok"><b>首帧冷启动已修:</b>单向 GRU 在 t=0 时 h₀=0 无时序上下文 → 首帧输出冷启动默认值(跨任务一致的架构性小尖峰)。<b>推理时 warmup</b>(首帧复制 ~20 步前置进 GRU、丢弃预热输出)把首帧 pred 从 0.057→0.009 直接消除,零重训、因果友好。</div>
 
 <h3>5.3 vs 监督 AE:架构代价与优缺点对比</h3>
-<p>报告开头的三大痛点都来自<b>监督 value 头</b>(KAI0-AE):它是一个 3 层 value MLP,挂在<b>完整 pi0 VLA</b>(PaliGemma 2B + SigLIP + action expert,<b>~3B+ 参数</b>)之上——每帧要跑整条 VLA 前向、每个任务要用 GT/reward 重训整套。CRAVE 在线 value 走的是完全相反的路线:<b>冻结共享编码器 + 0.735M 因果小头</b>。逐维度对比:</p>
+<p>报告开头的三大痛点都来自<b>监督 value 头</b>(KAI0-AE):它是一个 3 层 value MLP,挂在<b>完整 pi0 VLA</b>(PaliGemma 2B + SigLIP + action expert,<b>~3B+ 参数</b>)之上——每帧要跑整条 VLA 前向、每个任务要用 GT/reward 重训整套。CRAVE 在线 value 走的是完全相反的路线:<b>冻结共享编码器 + 0.735M 因果小头</b>。</p>
+<figure><video src="assets/online_vs_ae_ep2238.mp4" controls preload="metadata"></video>
+  <figcaption><b>同一条成功叠衣 ep2238(严格 held-out,未参与 GRU 训练)· 在线因果 GRU 推理 vs KAI0-AE 监督</b>:上=两条 value 曲线——<b>绿=在线 GRU progress</b>(严格因果逐帧,平滑单调登顶 ~0.98);<b>红=KAI0-AE value</b>(全程抖动,且<b>末端从 0.89 骤跌到 0.08</b> = 相似度末端假跌痛点③,GRU 无此问题);中/下=各自 P/N 分类条(绿 POS / 灰 NORMAL / 红 NEG)。成功 episode 理应几乎无红——<b>在线 GRU neg 12%、正负翻转 18 次</b>,而 <b>KAI0-AE neg 23%、翻转 49 次</b>:同一条轨迹,监督 AE 的分类噪声约 <b>2×</b> 于在线 GRU。<span style="color:var(--text3)">(P/N 各按部署真实口径:GRU 由 Δprogress 派生,AE 用其相对头 relative_advantage 直出。)</span></figcaption>
+</figure>
+<p>逐维度对比:</p>
 <table>
 <thead><tr><th>维度</th><th>KAI0-AE(监督 value 头)</th><th>CRAVE 在线 GRU</th></tr></thead>
 <tbody>
