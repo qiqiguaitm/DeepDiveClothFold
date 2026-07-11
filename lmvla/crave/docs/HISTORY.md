@@ -88,7 +88,7 @@
 | # | 已淘汰 | 为何 | 取代为 | 旧脚本/图 |
 |---|---|---|---|---|
 | D1 | **固定滞后 Viterbi** | 要输出第 t−L 帧必须先见第 t 帧 = **偷看 L 帧未来**,非完全在线 | forward-DP(①②)/ 因果 GRU(③) | online_readout §0;图 `visualization/online_value/online_fixedlag_9ep.png` |
-| D2 | 对称 forward-DP(①) | 无末帧强制 → 泊中段 0.5 登不了顶(corr 0.83) | 非对称 forward-DP(②, 甜点 0.86)/ GRU(③) | online_readout §1 |
+| D2 | **零训练 forward-DP 路线(①对称 + ②非对称前向偏置)** | 只靠手写因果先验补未来 → 末段登顶抬不上去(①末值泊 0.5/corr 0.83;②甜点末值封顶 ~0.82/corr 0.86)。**整条零训练路线已弃用**,不再作为并列上线选项(2026-07-11 本会话) | **因果 GRU 蒸馏 polyline teacher(③)** = `render_kai_online_gru.py` | online_readout §1;图 `visualization/online_value/online_vs_offline_curves.png` |
 | D3 | **阶梯-teacher GRU 蒸馏** | 蒸硬阶梯 → student 需后处理平滑;**最终蒸【去阶梯 polyline】teacher**(2026-07-11 本会话修正) | **polyline-teacher GRU** = `render_kai_online_gru.py`(142D img⊕proprio + warmup) | 旧 `train_online_gru.py`(`offline_teacher`=硬阶梯);旧图已被 `visualization/online_value/gru_polyline_heldout.png` 取代 |
 
 ### E. 解码器 / 簇中心

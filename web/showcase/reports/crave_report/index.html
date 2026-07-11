@@ -282,7 +282,7 @@ a.link{color:var(--accent3);text-decoration:none;border-bottom:1px dashed var(--
 <p><b>转移概率(压末端假跌)：</b>从大量 demo 中学到"任务只能往前推进",所以当某帧突然像起始态(折叠时画面骤变→相似度假跌),Viterbi 会说"末段跳到起始的概率极低",不会真的跟丢、progress 不会随之暴跌——直接解掉痛点③。</p>
 
 <p><b>双锚(替代 per-ep norm01,关键修正)：</b>起点锚=全 ep 首 3 帧均值→固定为 <b>0</b>,终点锚=全 ep 末 3 帧均值→固定为 <b>1</b>;Viterbi 强制首帧=bin0、末帧=bin1.0。这样 raw 值天然 0→1(不再靠 per-ep min-max 拉伸掩盖"达顶失败"),且 DP 为登顶<b>必阶梯经过高 milestone</b>(0.6→0.83→0.96)→ 高 milestone 被激活、中段形状诚实。标准读出<b>不加 smooth、不加 norm01</b>,vs 监督 stage_gt corr <b>0.943</b>、单调 0.981、末值 0.999。</p>
-<p><b>去阶梯 polyline(平滑版)：</b>硬阶梯可再<b>去阶梯</b>成平滑曲线——每个连续 milestone 段取离簇心最近的<b>代表帧</b>钉在簇值,相邻代表帧之间<b>线性连成折线</b>。得到锚在"最典型帧"上的分段线性 ramp(vs 监督 GT corr <b>0.957</b>,更贴平滑 GT)。<b>下一节 §5.3 的在线 GRU 蒸馏的正是这条去阶梯 polyline teacher</b>。</p>
+<p><b>去阶梯 polyline(平滑版)：</b>硬阶梯可再<b>去阶梯</b>成平滑曲线——每个连续 milestone 段取离簇心最近的<b>代表帧</b>钉在簇值,相邻代表帧之间<b>线性连成折线</b>。得到锚在"最典型帧"上的分段线性 ramp(vs 监督 GT corr <b>0.957</b>,更贴平滑 GT)。<b>下一节 §5.2 的在线 GRU 蒸馏的正是这条去阶梯 polyline teacher</b>。</p>
 
 <figure><img src="assets/viterbi_mechanism.png" alt="Viterbi 机制"><figcaption><b>① 无 Viterbi</b>(逐帧最近 milestone,乱抖)<b>→ ② Viterbi</b>(平滑单调 mono≈0.8→0.98);双锚 + 转移概率进一步保证 0→1 登顶、压末端假跌。</figcaption></figure>
 <p style="color:var(--text2);font-size:13.5px">以上是<b>离线</b>读出(需整条 episode)。真机部署要<b>完全因果、零未来</b>的在线读出 —— 见下一节 §5。</p>
@@ -291,33 +291,25 @@ a.link{color:var(--accent3);text-decoration:none;border-bottom:1px dashed var(--
 <!-- ════ 5. 在线推理 ════ -->
 <section id="online">
 <h2><span class="n">5</span>在线推理(完全因果 · 零未来)</h2>
-<p class="lead">§4 的双锚 Viterbi 是<b>离线</b>读出——它的全部威力来自"知道未来"(全局回溯 + 强制末帧=1)。真机部署要<b>完全因果</b>:每来一帧只用 ≤t 的信息、零延迟输出 progress。本节讲怎么在不偷看未来的前提下逼近离线效果。</p>
+<p class="lead">§4 的双锚 Viterbi 是<b>离线</b>读出——它的全部威力来自"知道未来"(全局回溯 + 强制末帧=1)。真机部署要<b>完全因果</b>:每来一帧只用 ≤t 的信息、零延迟输出 progress。CRAVE 的落地做法很直接:把 §4 的<b>去阶梯 polyline 读出</b>当 teacher,<b>蒸馏进一个严格因果的 GRU</b>——推理时零未来,却用"学到的未来预期"追平离线。</p>
 
-<h3>5.1 核心矛盾:离线的威力=知道未来</h3>
-<p>离线 Viterbi 靠两件事拿到干净 progress:① 全局回溯把每个转变提前锁定;② "强制末帧=1"反向激活高 milestone 登顶。<b>完全在线两者都没有</b>。三档方案逐步用<b>因果先验</b>替代"偷看未来",最终用<b>学到的未来预期</b>追平离线:</p>
-<table>
-<thead><tr><th>档</th><th>方法</th><th>用什么替代"未来"</th><th>corr vs 监督GT</th><th>末值(登顶)</th></tr></thead>
-<tbody>
-<tr><td>⓪</td><td><s>固定滞后 Viterbi</s>(否决)</td><td>偷看 L 帧未来 → <b>不是完全在线</b></td><td>0.74</td><td>0.50</td></tr>
-<tr><td>①</td><td>对称 forward-DP(流式 Viterbi)+ratchet</td><td>转移罚(因果抗跳变)+ 单调</td><td>0.83</td><td>0.54</td></tr>
-<tr><td>②</td><td>非对称 forward-DP(前向偏置)+ratchet</td><td>"进度多半向前"的因果先验</td><td>0.86</td><td>0.82</td></tr>
-<tr><td><b>③ ★</b></td><td><b>因果 GRU 蒸馏</b></td><td><b>从训练数据学到的未来预期</b></td><td><b>0.955</b></td><td><b>0.986</b></td></tr>
-<tr><td>—</td><td>离线双锚 Viterbi(基准,偷看未来)</td><td>—</td><td>0.943</td><td>1.00</td></tr>
-</tbody>
-</table>
-<div class="callout warn"><b>为什么否决固定滞后(档⓪):</b>要输出第 t−L 帧必须先见到第 t 帧 → <b>偷看了 L 帧未来</b>,不是完全在线;且实测 L 越大越差(不强制末帧时高 L 只把"泊 0.5"的错误抹得更平)。完全因果只能 L=0。</div>
+<h3>5.1 核心矛盾:离线靠未来,在线必须因果</h3>
+<p>离线 Viterbi 靠两件事拿到干净 progress:① 全局回溯把每个转变提前锁定;② "强制末帧=1"反向激活高 milestone 登顶。<b>完全在线两者都没有</b>——只能凭已见帧、当场输出。补"未来"有两条路,我们都试过,最终收口到"学到的未来":</p>
+<div class="cols2">
+  <div class="col bad"><h4>⚠️ 因果先验(零训练,已弃用)</h4><ul>
+    <li>流式 forward-DP + 前向偏置(上升便宜/下降贵)+ 单调 ratchet。</li>
+    <li>无需训练、微秒级;但只靠手写先验补未来 → <b>末段登顶抬不上去</b>(末值封顶 ~0.82、corr 0.86 就到顶)。</li>
+    <li><b>已被右侧 GRU 取代,不再采用</b>(细节见 <code>docs/HISTORY.md</code> D2)。</li>
+  </ul></div>
+  <div class="col good"><h4>✅ 学到的未来预期(蒸馏)★</h4><ul>
+    <li>把离线 polyline teacher 蒸馏进单向 GRU。</li>
+    <li>GRU 从几千条同类轨迹里学"这个状态之后通常怎么走"——用学到的先验补滞后、选级、登顶。</li>
+    <li><b>最终方案,corr 追平离线(下 5.2)。</b></li>
+  </ul></div>
+</div>
+<div class="callout warn"><b>为什么不能简单"延迟 L 帧再输出":</b>要给第 t−L 帧,必须先见到第 t 帧 → <b>偷看了 L 帧未来</b>,不是完全在线;且实测 L 越大越差(不强制末帧时高 L 只把"泊 0.5"的错误抹得更平)。完全因果只能 L=0。</div>
 
-<h3>5.2 零训练两档:流式 forward-DP + 前向偏置</h3>
-<p>离线 Viterbi 的<b>前向递推</b>照跑,但每帧即时输出当前 forward-cost 的 argmin、<b>不做后向回溯</b>(后向才需未来),再加单调 ratchet:</p>
-<ul>
-  <li><b>① 对称 forward-DP</b>:转移罚 λ|Δbin| 在因果方向就压住跳变(相比逐帧投票无毛刺);但无末帧强制 → 泊中段 0.5 登不了顶(corr 0.83)。</li>
-  <li><b>② 非对称 forward-DP</b>:转移罚拆方向——上升便宜 λf、下降贵 λb(λf&lt;λb),编码"进度多半向前"的<b>合法因果先验</b>(不偷看未来)。前向便宜 → 敢爬高 milestone(末值 0.54→0.82);后向贵 → 强单调。<b>λf8/λb32 是零训练甜点</b>(corr 0.86)。</li>
-</ul>
-<figure><img src="assets/online_vs_offline_curves.png" alt="在线 forward-DP vs 离线 Viterbi">
-  <figcaption><b>档① 完全在线(红)vs 离线(蓝)</b>:前中段贴合(前 80% 一致性 0.84、单调持平、零毛刺),分歧集中在<b>末段登顶</b>(粉阴影)——零训练档只能到此,要抹平末段登顶需档③。</figcaption>
-</figure>
-
-<h3>5.3 追平离线:因果 GRU 蒸馏 ★</h3>
+<h3>5.2 因果 GRU 蒸馏 polyline teacher ★</h3>
 <p>把离线双锚 Viterbi 的<b>去阶梯 polyline 读出</b>(§4.3 末,代表帧分段线性、平滑 ramp)当 <b>teacher</b>,训一个<b>单向 GRU(结构上严格因果)</b> 当 student 回归它。GRU 见过几千条同类轨迹,内化了"这个状态之后进度通常跳到 X / 平台还剩多久 / 这类轨迹会完成"——用<b>学到的未来预期</b>补上滞后、中段选级、甚至登顶,而<b>推理时零未来</b>。蒸馏 polyline(而非硬阶梯)让 student 输出天然平滑,无需再做后处理平滑。</p>
 <ul>
   <li><b>严格因果</b>:第 t 帧输出只依赖隐状态 h<sub>t</sub>(累积自 1..t),零未来;真机逐帧复用隐状态,<b>O(1)/帧</b>实时。</li>
@@ -325,19 +317,13 @@ a.link{color:var(--accent3);text-decoration:none;border-bottom:1px dashed var(--
   <li><b>效果</b>:留出集(严格未见)corr vs 监督GT <b>0.955 ≥ 离线本身 0.943</b> → gap 归零,还平滑掉了离散阶梯噪声。</li>
 </ul>
 <figure><img src="assets/online_gru_heldout.png" alt="因果 GRU 留出集">
-  <figcaption><b>档③ 因果 GRU(蓝,零未来+warmup)蒸馏「去阶梯 polyline 双锚 Viterbi」teacher(绿)· 6 条 kai 严格留出 ep(img PCA128 ⊕ proprio14,M=10 milestone)</b>:teacher 明显偏离橙色时间对角线——<b>~0.4 处的折叠停留平台</b>(主 milestone)、中段拐点、个别 ep 的再抓回落,正是 CRAVE 相对"朴素时间"的增量;student 平滑贴合(mean corr <b>0.975</b>,首帧 warmup 消除冷启动尖峰、从 0 起步)。同一因果模型可跨 12 任务共享(见 §6 复用与选型)。</figcaption>
+  <figcaption><b>因果 GRU(蓝,零未来+warmup)蒸馏「去阶梯 polyline 双锚 Viterbi」teacher(绿)· 6 条 kai 严格留出 ep(img PCA128 ⊕ proprio14,M=10 milestone)</b>:teacher 明显偏离橙色时间对角线——<b>~0.4 处的折叠停留平台</b>(主 milestone)、中段拐点、个别 ep 的再抓回落,正是 CRAVE 相对"朴素时间"的增量;student 平滑贴合(mean corr <b>0.975</b>,首帧 warmup 消除冷启动尖峰、从 0 起步)。同一因果模型可跨 12 任务共享(见 §6)。</figcaption>
 </figure>
 <div class="callout ok"><b>首帧冷启动已修:</b>单向 GRU 在 t=0 时 h₀=0 无时序上下文 → 首帧输出冷启动默认值(跨任务一致的架构性小尖峰)。<b>推理时 warmup</b>(首帧复制 ~20 步前置进 GRU、丢弃预热输出)把首帧 pred 从 0.057→0.009 直接消除,零重训、因果友好。</div>
 
-<h3>5.4 选型</h3>
-<table>
-<thead><tr><th>场景</th><th>选择</th><th>理由</th></tr></thead>
-<tbody>
-<tr><td>零训练 / 快速上线</td><td><span class="tag y">档② 非对称 forward-DP</span></td><td>corr 0.86,无毛刺,微秒级/帧,无需训练</td></tr>
-<tr><td>追平离线 / 有训练预算</td><td><span class="tag g">档③ 因果 GRU 蒸馏 ★</span></td><td>corr 0.955=离线水平,0.735M,真机实时,可跨任务共享</td></tr>
-</tbody>
-</table>
-<div class="callout warn"><b>诚实边界:</b>档③末端登顶靠"训练全是成功 demo"学到的先验;真机遇失败 rollout 仍可能高估(所有在线法通病),但这是<b>学出来、更好校准</b>的先验,非硬编码强制。若部署有外部成功/终止信号,可作 end-trigger 进一步校准。</div>
+<h3>5.3 选型与诚实边界</h3>
+<p>在线因果 value <b>只有一档收口方案:因果 GRU 蒸馏 polyline teacher</b> —— corr vs 监督GT <b>0.955</b>=离线水平,0.735M 参数、<b>O(1)/帧</b>真机实时,且同一模型可<b>跨 12 任务共享</b>(见 §6)。此前的零训练因果先验档(forward-DP)已被它取代,不再作为并列选项。</p>
+<div class="callout warn"><b>诚实边界:</b>GRU 末端登顶靠"训练全是成功 demo"学到的先验;真机遇失败 rollout 仍可能高估(所有在线法通病),但这是<b>学出来、更好校准</b>的先验,非硬编码强制。若部署有外部成功/终止信号,可作 end-trigger 进一步校准。</div>
 </section>
 
 <!-- ════ 6. 优缺点 ════ -->
