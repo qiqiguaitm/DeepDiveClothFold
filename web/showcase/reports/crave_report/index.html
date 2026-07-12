@@ -140,7 +140,7 @@ a.link{color:var(--accent3);text-decoration:none;border-bottom:1px dashed var(--
   <a href="#pain">1 · 现状与三大痛点</a>
   <a href="#idea">2 · CRAVE 核心思想</a>
   <a href="#compare">3 · 效果对比</a>
-  <a href="#mech">4 · 实现原理(离线)</a>
+  <a href="#mech">4 · 实现原理(milestone 挖矿)</a>
   <a href="#online">5 · 在线推理(因果)</a>
   <a href="#summary">6 · 优缺点与选型</a>
   <a href="#next">7 · 下一步计划</a>
@@ -237,6 +237,15 @@ a.link{color:var(--accent3);text-decoration:none;border-bottom:1px dashed var(--
   <figcaption><b>经验簇间转移矩阵</b> <code>P(next|cur)</code>:对角线右上为主(任务单向前进),"中段→起始"≈0 → 循环态 alias 被先验重罚。</figcaption>
 </figure>
 
+<h3>2.4 读出:双锚 Viterbi-DP(离线标准)</h3>
+<p>有了 milestone(§2.2)与簇间转移概率(§2.3),最后一步用 <b>Viterbi 动态规划</b>把每帧读出为稠密单调 progress —— 这是 CRAVE 的<b>离线标准读出</b>:</p>
+<p><b>Viterbi(全局最优路径)：</b>不是单帧独立决策,而是用全局动态规划把整条轨迹的 milestone 序列一次解出——单帧因光照/褶皱/角度突变导致的抖动,被路径连贯性(转移罚 λ|Δbin|)平滑掉,得到平滑单调的阶梯 progress。</p>
+<p><b>转移概率(压末端假跌)：</b>从大量 demo 中学到"任务只能往前推进",所以当某帧突然像起始态(折叠时画面骤变→相似度假跌),Viterbi 会说"末段跳到起始的概率极低",不会真的跟丢、progress 不会随之暴跌——直接解掉痛点③。</p>
+<p><b>双锚(替代 per-ep norm01,关键修正)：</b>起点锚=全 ep 首 3 帧均值→固定为 <b>0</b>,终点锚=全 ep 末 3 帧均值→固定为 <b>1</b>;Viterbi 强制首帧=bin0、末帧=bin1.0。这样 raw 值天然 0→1(不再靠 per-ep min-max 拉伸掩盖"达顶失败"),且 DP 为登顶<b>必阶梯经过高 milestone</b>(0.6→0.83→0.96)→ 高 milestone 被激活、中段形状诚实。标准读出<b>不加 smooth、不加 norm01</b>,vs 监督 stage_gt corr <b>0.943</b>、单调 0.981、末值 0.999。</p>
+<p><b>去阶梯 polyline(平滑版)：</b>硬阶梯可再<b>去阶梯</b>成平滑曲线——每个连续 milestone 段取离簇心最近的<b>代表帧</b>钉在簇值,相邻代表帧之间<b>线性连成折线</b>。得到锚在"最典型帧"上的分段线性 ramp(vs 监督 GT corr <b>0.957</b>,更贴平滑 GT)。<b>§5.2 的在线 GRU 蒸馏的正是这条去阶梯 polyline teacher</b>。</p>
+<figure><img src="assets/viterbi_mechanism.png" alt="Viterbi 机制"><figcaption><b>① 无 Viterbi</b>(逐帧最近 milestone,乱抖)<b>→ ② Viterbi</b>(平滑单调 mono≈0.8→0.98);双锚 + 转移概率进一步保证 0→1 登顶、压末端假跌。</figcaption></figure>
+<p style="color:var(--text2);font-size:13.5px">以上是<b>离线</b>读出(需整条 episode)。真机部署要<b>完全因果、零未来</b>的在线读出 —— 见 §5。</p>
+
 </section>
 
 <!-- ════ 3. 机制(折叠) ════ -->
@@ -278,23 +287,13 @@ a.link{color:var(--accent3);text-decoration:none;border-bottom:1px dashed var(--
 <figure><img src="assets/value_consistency_proof.png" alt="progress 一致性证明">
   <figcaption><b>DINO 聚类的 progress 一致性证明</b>:(A)置信度过滤 t-SNE(CQ=0.85),仅高置信点训练降维,低置信点灰色投影,各簇一色;(B)每帧 progress vs 其所在簇平均 progress,相干簇(各色)紧贴对角线,R²=0.84,证明簇均/中位数可以可靠代表 milestone 进度。<span style="color:var(--text3)">(t-SNE 用早期 DINOv3-H/K=10 渲染;一致性 R² 对编码器不敏感,base 下同样成立。)</span></figcaption>
 </figure>
-<h3>4.3 progress 读出:双锚 Viterbi(离线标准)</h3>
-
-<p><b>Viterbi(全局最优路径)：</b>不是单帧独立决策,而是用全局动态规划把整条轨迹的 milestone 序列一次解出——单帧因光照/褶皱/角度突变导致的抖动,被路径连贯性(转移罚 λ|Δbin|)平滑掉,得到平滑单调的阶梯 progress。</p>
-
-<p><b>转移概率(压末端假跌)：</b>从大量 demo 中学到"任务只能往前推进",所以当某帧突然像起始态(折叠时画面骤变→相似度假跌),Viterbi 会说"末段跳到起始的概率极低",不会真的跟丢、progress 不会随之暴跌——直接解掉痛点③。</p>
-
-<p><b>双锚(替代 per-ep norm01,关键修正)：</b>起点锚=全 ep 首 3 帧均值→固定为 <b>0</b>,终点锚=全 ep 末 3 帧均值→固定为 <b>1</b>;Viterbi 强制首帧=bin0、末帧=bin1.0。这样 raw 值天然 0→1(不再靠 per-ep min-max 拉伸掩盖"达顶失败"),且 DP 为登顶<b>必阶梯经过高 milestone</b>(0.6→0.83→0.96)→ 高 milestone 被激活、中段形状诚实。标准读出<b>不加 smooth、不加 norm01</b>,vs 监督 stage_gt corr <b>0.943</b>、单调 0.981、末值 0.999。</p>
-<p><b>去阶梯 polyline(平滑版)：</b>硬阶梯可再<b>去阶梯</b>成平滑曲线——每个连续 milestone 段取离簇心最近的<b>代表帧</b>钉在簇值,相邻代表帧之间<b>线性连成折线</b>。得到锚在"最典型帧"上的分段线性 ramp(vs 监督 GT corr <b>0.957</b>,更贴平滑 GT)。<b>下一节 §5.2 的在线 GRU 蒸馏的正是这条去阶梯 polyline teacher</b>。</p>
-
-<figure><img src="assets/viterbi_mechanism.png" alt="Viterbi 机制"><figcaption><b>① 无 Viterbi</b>(逐帧最近 milestone,乱抖)<b>→ ② Viterbi</b>(平滑单调 mono≈0.8→0.98);双锚 + 转移概率进一步保证 0→1 登顶、压末端假跌。</figcaption></figure>
-<p style="color:var(--text2);font-size:13.5px">以上是<b>离线</b>读出(需整条 episode)。真机部署要<b>完全因果、零未来</b>的在线读出 —— 见下一节 §5。</p>
+<p style="color:var(--text2);font-size:13.5px">milestone 如何浮现(§4.1)、簇均 progress 为何可靠(§4.2)是<b>离线挖矿</b>的实现细节;把每帧读出为稠密单调 progress 的<b>双锚 Viterbi</b> 已在 <a class="link" href="#idea">§2.4</a> 讲清。真机部署要<b>完全因果、零未来</b>的在线读出 —— 见 §5。</p>
 </section>
 
 <!-- ════ 5. 在线推理 ════ -->
 <section id="online">
 <h2><span class="n">5</span>在线推理(完全因果 · 零未来)</h2>
-<p class="lead">§4 的双锚 Viterbi 是<b>离线</b>读出——它的全部威力来自"知道未来"(全局回溯 + 强制末帧=1)。真机部署要<b>完全因果</b>:每来一帧只用 ≤t 的信息、零延迟输出 progress。CRAVE 的落地做法很直接:把 §4 的<b>去阶梯 polyline 读出</b>当 teacher,<b>蒸馏进一个严格因果的 GRU</b>——推理时零未来,却用"学到的未来预期"追平离线。</p>
+<p class="lead">§2.4 的双锚 Viterbi 是<b>离线</b>读出——它的全部威力来自"知道未来"(全局回溯 + 强制末帧=1)。真机部署要<b>完全因果</b>:每来一帧只用 ≤t 的信息、零延迟输出 progress。CRAVE 的落地做法很直接:把 §2.4 的<b>去阶梯 polyline 读出</b>当 teacher,<b>蒸馏进一个严格因果的 GRU</b>——推理时零未来,却用"学到的未来预期"追平离线。</p>
 
 <h3>5.1 核心矛盾:离线靠未来,在线必须因果</h3>
 <p>离线 Viterbi 靠两件事拿到干净 progress:① 全局回溯把每个转变提前锁定;② "强制末帧=1"反向激活高 milestone 登顶。<b>完全在线两者都没有</b>——只能凭已见帧、当场输出。补"未来"有两条路,我们都试过,最终收口到"学到的未来":</p>
@@ -313,7 +312,7 @@ a.link{color:var(--accent3);text-decoration:none;border-bottom:1px dashed var(--
 <div class="callout warn"><b>为什么不能简单"延迟 L 帧再输出":</b>要给第 t−L 帧,必须先见到第 t 帧 → <b>偷看了 L 帧未来</b>,不是完全在线;且实测 L 越大越差(不强制末帧时高 L 只把"泊 0.5"的错误抹得更平)。完全因果只能 L=0。</div>
 
 <h3>5.2 因果 GRU 蒸馏 polyline teacher ★</h3>
-<p>把离线双锚 Viterbi 的<b>去阶梯 polyline 读出</b>(§4.3 末,代表帧分段线性、平滑 ramp)当 <b>teacher</b>,训一个<b>单向 GRU(结构上严格因果)</b> 当 student 回归它。GRU 见过几千条同类轨迹,内化了"这个状态之后进度通常跳到 X / 平台还剩多久 / 这类轨迹会完成"——用<b>学到的未来预期</b>补上滞后、中段选级、甚至登顶,而<b>推理时零未来</b>。蒸馏 polyline(而非硬阶梯)让 student 输出天然平滑,无需再做后处理平滑。</p>
+<p>把离线双锚 Viterbi 的<b>去阶梯 polyline 读出</b>(§2.4 末,代表帧分段线性、平滑 ramp)当 <b>teacher</b>,训一个<b>单向 GRU(结构上严格因果)</b> 当 student 回归它。GRU 见过几千条同类轨迹,内化了"这个状态之后进度通常跳到 X / 平台还剩多久 / 这类轨迹会完成"——用<b>学到的未来预期</b>补上滞后、中段选级、甚至登顶,而<b>推理时零未来</b>。蒸馏 polyline(而非硬阶梯)让 student 输出天然平滑,无需再做后处理平滑。</p>
 <div class="card"><h4>模型架构 · 参数量(在线因果 value 头)</h4>
 <div class="flow">
   <div class="node"><div class="ix">输入 / 帧</div><div class="t">142D</div><div class="d">img PCA128(DINOv3-base 768D→PCA,L2)⊕ proprio 位置14(标准化+L2,能量 1:1)</div></div>
