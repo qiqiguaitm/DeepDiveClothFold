@@ -148,25 +148,19 @@ if len(fail) < 2:
     fail = sorted(rows, key=lambda r: -(r[1] - r[2]))[:2]
 print(f"  fail-case eps {[r[0] for r in fail]} (norm01 corr {[round(r[2],2) for r in fail]} vs anchor {[round(r[1],2) for r in fail]})", flush=True)
 
-# ══════ 画图: 左=corr 散点(全 1000 ep) + 右=2 条失败案例曲线 ══════
-fig = plt.figure(figsize=(14, 6.2))
-gs = fig.add_gridspec(2, 3, width_ratios=[1.15, 1.15, 1.0], hspace=0.32, wspace=0.28)
-axs = fig.add_subplot(gs[:, 0:2])
-axs.scatter(CN, CA, s=9, c="#7c3aed", alpha=.35, edgecolors="none")
-axs.plot([-.6, 1], [-.6, 1], color="#888", lw=1, ls="--", label="y = x (equal)")
-axs.axhline(CA.mean(), color="#2ca02c", lw=1.2, ls=":", label=f"double-anchor mean {CA.mean():.3f}")
-axs.axvline(CN.mean(), color="#d98b00", lw=1.2, ls=":", label=f"no-anchor+norm01 mean {CN.mean():.3f}")
-axs.set_xlim(-.65, 1.02); axs.set_ylim(-.65, 1.02); axs.set_xlabel("corr(no-anchor + per-ep norm01, progress_gt)", fontsize=10)
-axs.set_ylabel("corr(double-anchor, progress_gt)", fontsize=10); axs.grid(alpha=.22); axs.legend(fontsize=9, loc="lower right")
-axs.set_title(f"Per-ep corr vs supervised GT (1000 eps) · anchor>=norm01 on {np.mean(CA>=CN)*100:.0f}% · "
-              f"norm01 has a failure tail (corr->neg) where anchor stays robust", fontsize=9.3)
-for ax, r in zip([fig.add_subplot(gs[0, 2]), fig.add_subplot(gs[1, 2])], fail):
+# ══════ 画图: 2 条失败案例曲线(norm01 崩 / 双锚稳) ══════
+fig, axes = plt.subplots(1, 2, figsize=(13, 4.8))
+for ax, r in zip(axes, fail):
     e, ca, cn, n, gt, raw, nrm, anc = r
-    ax.plot(gt, color="#333", lw=1.6, label="supervised progress_gt")
-    ax.plot(nrm, color="#d98b00", lw=1.4, alpha=.9, label=f"no-anchor+norm01 (corr {cn:.2f})")
-    ax.plot(anc, color="#2ca02c", lw=2.0, label=f"double-anchor (corr {ca:.2f})")
-    ax.set_title(f"fail case · kai ep{e}", fontsize=9); ax.set_ylim(-.05, 1.06); ax.grid(alpha=.25); ax.legend(fontsize=6.6, loc="upper left")
-fig.suptitle("Double-anchor vs no-anchor(+norm01) Viterbi readout — quantified against supervised progress_gt", fontsize=11)
+    ax.plot(gt, color="#333", lw=1.9, label="supervised progress_gt")
+    ax.plot(nrm, color="#d98b00", lw=1.6, alpha=.9, label=f"no-anchor + per-ep norm01 (corr {cn:.2f})")
+    ax.plot(anc, color="#2ca02c", lw=2.4, label=f"double-anchor (corr {ca:.2f})")
+    ax.set_title(f"fail case · kai ep{e}", fontsize=11); ax.set_ylim(-.05, 1.06); ax.grid(alpha=.25)
+    ax.set_xlabel("frame", fontsize=9); ax.legend(fontsize=8.5, loc="upper left")
+fig.suptitle(f"Double-anchor vs no-anchor(+per-ep norm01): fail cases where norm01 collapses "
+             f"(small raw range -> noise blown into square wave), double-anchor stays faithful to GT  ·  "
+             f"overall mean corr vs GT: anchor {CA.mean():.3f} vs norm01 {CN.mean():.3f}", fontsize=9.2)
+fig.tight_layout()
 outp = REPO / "lmvla/crave/temp/anchor_vs_noanchor.png"; outp.parent.mkdir(parents=True, exist_ok=True)
 fig.savefig(outp, dpi=115, bbox_inches="tight")
 print(f"SAVED {outp} ({time.time()-t0:.0f}s)", flush=True)
