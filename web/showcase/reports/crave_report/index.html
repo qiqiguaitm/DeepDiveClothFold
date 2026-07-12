@@ -239,11 +239,20 @@ a.link{color:var(--accent3);text-decoration:none;border-bottom:1px dashed var(--
 
 <h3>2.4 读出:双锚 Viterbi-DP(离线标准)</h3>
 <p>有了 milestone(§2.2)与簇间转移概率(§2.3),最后一步用 <b>Viterbi 动态规划</b>把每帧读出为稠密单调 progress —— 这是 CRAVE 的<b>离线标准读出</b>:</p>
-<p><b>Viterbi(全局最优路径)：</b>不是单帧独立决策,而是用全局动态规划把整条轨迹的 milestone 序列一次解出——单帧因光照/褶皱/角度突变导致的抖动,被路径连贯性(转移罚 λ|Δbin|)平滑掉,得到平滑单调的阶梯 progress。</p>
-<p><b>转移概率(压末端假跌)：</b>从大量 demo 中学到"任务只能往前推进",所以当某帧突然像起始态(折叠时画面骤变→相似度假跌),Viterbi 会说"末段跳到起始的概率极低",不会真的跟丢、progress 不会随之暴跌——直接解掉痛点③。</p>
-<p><b>双锚(替代 per-ep norm01,关键修正)：</b>起点锚=全 ep 首 3 帧均值→固定为 <b>0</b>,终点锚=全 ep 末 3 帧均值→固定为 <b>1</b>;Viterbi 强制首帧=bin0、末帧=bin1.0。这样 raw 值天然 0→1(不再靠 per-ep min-max 拉伸掩盖"达顶失败"),且 DP 为登顶<b>必阶梯经过高 milestone</b>(0.6→0.83→0.96)→ 高 milestone 被激活、中段形状诚实。标准读出<b>不加 smooth、不加 norm01</b>,vs 监督 stage_gt corr <b>0.943</b>、单调 0.981、末值 0.999。</p>
-<p><b>去阶梯 polyline(平滑版)：</b>硬阶梯可再<b>去阶梯</b>成平滑曲线——每个连续 milestone 段取离簇心最近的<b>代表帧</b>钉在簇值,相邻代表帧之间<b>线性连成折线</b>。得到锚在"最典型帧"上的分段线性 ramp(vs 监督 GT corr <b>0.957</b>,更贴平滑 GT)。<b>§5.2 的在线 GRU 蒸馏的正是这条去阶梯 polyline teacher</b>。</p>
-<figure><img src="assets/viterbi_mechanism.png" alt="Viterbi 机制"><figcaption><b>① 无 Viterbi</b>(逐帧最近 milestone,乱抖)<b>→ ② Viterbi</b>(平滑单调 mono≈0.8→0.98);双锚 + 转移概率进一步保证 0→1 登顶、压末端假跌。</figcaption></figure>
+<p><b>① Viterbi(全局最优路径)：</b>不是单帧独立决策,而是用全局动态规划把整条轨迹的 milestone 序列一次解出——单帧因光照/褶皱/角度突变导致的抖动,被路径连贯性(转移罚 λ|Δbin|)平滑掉,得到平滑单调的阶梯 progress。</p>
+<figure><img src="assets/viterbi_mechanism.png" alt="Viterbi 机制"><figcaption><b>① 无 Viterbi</b>(逐帧最近 milestone,乱抖)<b>→ ② Viterbi</b>(平滑单调 mono≈0.8→0.98);全局 DP 把整条 milestone 序列一次解出,单帧抖动被路径连贯性抹平。</figcaption></figure>
+
+<p><b>② 转移概率(压末端假跌)：</b>从大量 demo 中学到"任务只能往前推进",所以当某帧突然像起始态(折叠时画面骤变→相似度假跌),Viterbi 会说"末段跳到起始的概率极低",不会真的跟丢、progress 不会随之暴跌——直接解掉痛点③。<span style="color:var(--text3)">(经验转移矩阵见 <a class="link" href="#idea">§2.3</a>:"中段→起始"≈0。)</span></p>
+
+<p><b>③ 双锚(替代 per-ep norm01,关键修正)：</b>起点锚=全 ep 首 3 帧均值→固定为 <b>0</b>,终点锚=全 ep 末 3 帧均值→固定为 <b>1</b>;Viterbi 强制首帧=bin0、末帧=bin1.0。这样 raw 值天然 0→1(不再靠 per-ep min-max 拉伸掩盖"达顶失败"),且 DP 为登顶<b>必阶梯经过高 milestone</b>(0.6→0.83→0.96)→ 高 milestone 被激活、中段形状诚实。标准读出<b>不加 smooth、不加 norm01</b>,vs 监督 stage_gt corr <b>0.943</b>、单调 0.981、末值 0.999。</p>
+<figure><img src="assets/viterbi_complete_vs_crop.png" alt="双锚 raw value 诚实反映完成度:完整 ep→1 / 半截断 ep→0.33">
+  <figcaption><b>③ 双锚 raw value 诚实反映完成度(为何弃用 norm01)</b>:同一批 ep —— <b>实线=完整成功 ep</b> → 双锚 raw value 登顶 <b>~1</b>;<b>虚线=同 ep 半截断(未完成)</b> → raw value 天然封顶 <b>~0.33</b>,不被拉伸假装完成。若用 per-ep min-max norm01,两者都会被抹到 0→1、<b>掩盖"达顶失败"</b>;双锚保留了真实完成度(截断 ep 的 de_end OOD 也能 100% 标记未完成)。</figcaption>
+</figure>
+
+<p><b>④ 去阶梯 polyline(平滑版)：</b>硬阶梯可再<b>去阶梯</b>成平滑曲线——每个连续 milestone 段取离簇心最近的<b>代表帧</b>钉在簇值,相邻代表帧之间<b>线性连成折线</b>。得到锚在"最典型帧"上的分段线性 ramp(vs 监督 GT corr <b>0.957</b>,更贴平滑 GT)。<b>§5.2 的在线 GRU 蒸馏的正是这条去阶梯 polyline teacher</b>。</p>
+<figure><img src="assets/polyline_vs_step.png" alt="去阶梯 polyline vs 硬阶梯 step vs 监督GT · 9 随机 ep">
+  <figcaption><b>④ 去阶梯 polyline vs 硬阶梯 · 9 条随机 ep</b>:<span style="color:#e8830c">橙=监督GT</span>、<span style="color:#7aa8ff">蓝=硬阶梯 step</span>、<span style="color:#d62728">红=代表帧折线 polyline</span>(<b>黑点=各 milestone 段最贴簇心的代表帧锚点</b>)。polyline 把阶梯拉成分段线性 ramp、更贴平滑 GT——折线 vs GT 普遍 ≥ 阶梯 vs GT(如 ep143 0.969&gt;0.951)。这条 polyline 就是 §5.2 在线 GRU 蒸馏的 teacher。</figcaption>
+</figure>
 <p style="color:var(--text2);font-size:13.5px">以上是<b>离线</b>读出(需整条 episode)。真机部署要<b>完全因果、零未来</b>的在线读出 —— 见 §5。</p>
 
 </section>
