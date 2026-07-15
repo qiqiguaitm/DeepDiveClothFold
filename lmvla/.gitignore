@@ -38,3 +38,14 @@ uv.lock
 # but guard against accidental in-tree caches:
 crave/**/_cache/
 crave/**/*.parquet
+
+# dev symlinks (train_multitask REPO=lmvla 解析共享数据)
+/temp
+/kai0
+/xvla
+
+# vendored external LaWAM repo (own .git + HF weights, local-only)
+/lawam/
+
+# cloned LIBERO simulator (external repo)
+/LIBERO/

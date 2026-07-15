@@ -41,6 +41,8 @@ def main():
     ap.add_argument("--episode", type=int, default=8)
     ap.add_argument("--tm_ckpt", default="lmwm/checkpoints/twomodel/milestone_viterbi_K4.pt")
     ap.add_argument("--dec_ckpt", default="lmwm/checkpoints/siglip_decoder/dec.pt")
+    ap.add_argument("--graph", default="lmwm/data/recurrence_graphs/kai0base_dinov3h/recurrence_graph.npz",
+                    help="recurrence graph for Viterbi seg (milestones). Use kai0base_dinov3base for new dinov3-base milestones.")
     ap.add_argument("--feature_dir", default="temp/crave_full_dinov3h", type=Path)
     ap.add_argument("--dataset_root", default="kai0/data/Task_A/kai0_base", type=Path)
     ap.add_argument("--camera", default="observation.images.top_head")
@@ -54,7 +56,7 @@ def main():
     dev = args.device
     npz = args.pi05_npz or (PI05_NPZ if Path(PI05_NPZ).exists() else PI05_NPZ_GF3)
 
-    rg = np.load(REPO / "lmwm/data/recurrence_graphs/kai0base_dinov3h/recurrence_graph.npz")
+    rg = np.load(REPO / args.graph if not Path(args.graph).is_absolute() else args.graph)
     proto = rg["prototype_table"].astype(np.float32); pord = rg["pord"].astype(np.float32)
     protoL = proto / (np.linalg.norm(proto, axis=1, keepdims=True) + 1e-8)
 
@@ -85,7 +87,7 @@ def main():
     # --- two-model + decoder ---
     tm = torch.load(args.tm_ckpt, map_location="cpu", weights_only=False)
     din, cd, gmu, gsd = tm["din"], tm["code_dim"], tm["gmu"], tm["gsd"]
-    if tm.get("arch") == "v2":                                               # inverse-teacher + AdaLN + MDN-code
+    if tm.get("arch") == "v2" or ("predm" in tm and "fwd" in tm and "mdn" not in tm):  # v2 / train_multitask proto ckpt
         from train_twomodel_v2 import MilestonePredictor, MilestoneGenerator
         predm = MilestonePredictor(din, cd, tm["K"]).to(dev); predm.load_state_dict(tm["predm"]); predm.eval()
         fwd = MilestoneGenerator(din, cd).to(dev); fwd.load_state_dict(tm["fwd"]); fwd.eval()

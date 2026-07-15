@@ -35,8 +35,10 @@ from crave.decoding.decoder import train_dec  # noqa: E402
 def load_index(feature_dir: Path):
     idx = np.load(feature_dir / "index.npz")
     e, fr, n = idx["E"].astype(np.int64), idx["FR"].astype(np.int64), int(idx["n"])
-    feat = np.zeros((n, 1280), dtype=np.float16); valid = np.zeros(n, dtype=bool)
-    for shard in sorted(feature_dir.glob("shard_*.npz")):
+    shards = sorted(s for s in feature_dir.glob("shard_*.npz") if "_bak" not in s.name)
+    dim = int(np.load(shards[0])["feat"].shape[1])                       # infer feat dim (768 base / 1280 H)
+    feat = np.zeros((n, dim), dtype=np.float16); valid = np.zeros(n, dtype=bool)
+    for shard in shards:
         z = np.load(shard); gi = z["gidx"].astype(np.int64)
         feat[gi] = z["feat"]; valid[gi] = z["valid"].astype(bool)
     fv = feat[valid].astype(np.float32); fv /= np.linalg.norm(fv, axis=1, keepdims=True) + 1e-8

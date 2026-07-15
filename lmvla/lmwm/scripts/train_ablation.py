@@ -56,6 +56,14 @@ def build_pairs_abl(E, FR, Fn, proto, protoL, pord, mode, val_eps, seed):
             else:                                                          # allframes: every frame in seg i
                 for f in range(spans[i][0], spans[i][1]):
                     dst.append((int(order[f]), tgt, cm, nm))
+        # last segment self-loop: target = own medoid, code = own cluster center (terminal convergence)
+        if len(seg_m) >= 1:
+            li = len(seg_m) - 1; tm = seg_m[li]; ttgt = seg_med[li]
+            if mode == "seglast":
+                dst.append((int(order[spans[li][1] - 1]), ttgt, tm, tm))
+            else:
+                for f in range(spans[li][0], spans[li][1]):
+                    dst.append((int(order[f]), ttgt, tm, tm))
     rng = np.random.default_rng(seed); rng.shuffle(tr); rng.shuffle(va)
     return tr, va
 

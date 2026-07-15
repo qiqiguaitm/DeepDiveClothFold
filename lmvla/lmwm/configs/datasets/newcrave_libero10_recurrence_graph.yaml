@@ -1,0 +1,6 @@
+name: newcrave_libero10_recurrence_graph
+feature_dir: lmvla/crave/data/libero10_dinov3base
+milestone_file: temp/newcrave_specs_base/libero10_milestones_newmethod.npz
+output_dir: lmvla/lmwm/data/recurrence_graphs/libero10_dinov3base
+smoothing_alpha: 0.001
+max_product_horizon: 10

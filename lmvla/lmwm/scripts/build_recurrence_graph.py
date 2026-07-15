@@ -23,9 +23,11 @@ def load_full_features(feature_dir: Path) -> tuple[np.ndarray, np.ndarray, np.nd
     e = idx["E"].astype(np.int64)
     fr = idx["FR"].astype(np.int64)
     n = int(idx["n"])
-    feat = np.zeros((n, 1280), dtype=np.float16)
+    shards = sorted(s for s in feature_dir.glob("shard_*.npz") if "_bak" not in s.name)
+    dim = int(np.load(shards[0])["feat"].shape[1])                       # infer feat dim (768 base / 1280 H)
+    feat = np.zeros((n, dim), dtype=np.float16)
     valid = np.zeros(n, dtype=bool)
-    for shard in sorted(feature_dir.glob("shard_*.npz")):
+    for shard in shards:
         z = np.load(shard)
         gidx = z["gidx"].astype(np.int64)
         feat[gidx] = z["feat"]

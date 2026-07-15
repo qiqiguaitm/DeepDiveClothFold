@@ -1,0 +1,6 @@
+name: newcrave_vis_recurrence_graph
+feature_dir: temp/vis_dinov3h
+milestone_file: temp/newcrave_specs/vis_milestones_newmethod.npz
+output_dir: lmvla/lmwm/data/recurrence_graphs/vis_dinov3h
+smoothing_alpha: 0.001
+max_product_horizon: 10

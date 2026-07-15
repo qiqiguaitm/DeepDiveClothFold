@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -25,7 +26,9 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-REPO = Path(__file__).resolve().parents[2]
+# REPO = the dir containing crave/ + lmwm/ (local: .../deepdive_kai0/lmvla ; gf3: .../deepdive_kai0).
+# Cross-machine portability: set CRAVE_REPO to that dir (see run_gf3_sweep.sh); else infer from file depth.
+REPO = Path(os.environ["CRAVE_REPO"]) if os.environ.get("CRAVE_REPO") else Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(REPO / "crave/src"))
 import cv2  # noqa: E402
@@ -36,12 +39,35 @@ from _siglip_bigvision import SiglipBigVision  # noqa: E402
 
 # per-task data registry: DINOv3-H bank (index+shards) + frames + recurrence graph + frame format
 TASKS = {
-    "kai0":   dict(fdir="temp/crave_full_dinov3h",  root="kai0/data/Task_A/kai0_base",
+    "kai0":   dict(fdir="crave/data/kai_dinov3base",  root="kai0/data/Task_A/kai0_base",
                    cam="observation.images.top_head", fmt="kai0",
-                   graph="lmwm/data/recurrence_graphs/kai0base_dinov3h/recurrence_graph.npz"),
-    "coffee": dict(fdir="temp/coffee_dinov3h",      root="temp/aloha_static_coffee",
+                   graph="lmwm/data/recurrence_graphs/kai0base_dinov3base/recurrence_graph.npz",
+                   spec="temp/newcrave_specs_base/kai0_milestones_newmethod.npz"),  # CRAVE PCA128 (pca_mean/components)
+    "coffee": dict(fdir="crave/data/coffee_dinov3base", root="temp/aloha_static_coffee",
                    cam="observation.images.cam_high", fmt="lerobotv3",
-                   graph="lmwm/data/recurrence_graphs/coffee_dinov3h/recurrence_graph.npz"),
+                   graph="lmwm/data/recurrence_graphs/coffee_dinov3base/recurrence_graph.npz",
+                   spec="temp/newcrave_specs_base/coffee_milestones_newmethod.npz"),
+    "libero10": dict(fdir="crave/data/libero10_dinov3base",
+                     root="/vePFS/tim/workspace/LIBERO_fastwam/libero_10_no_noops_lerobot",
+                     cam="observation.images.image", fmt="libero",   # AV1 -> frame_cache npy (LaWM's in-dist data)
+                     graph="lmwm/data/recurrence_graphs/libero10_dinov3base/recurrence_graph.npz",
+                     spec="temp/newcrave_specs_base/libero10_milestones_newmethod.npz"),
+    "libero_spatial": dict(fdir="crave/data/liberospatial_dinov3base",
+                     root="/vePFS/tim/workspace/LIBERO_fastwam/libero_spatial_no_noops_lerobot",
+                     cam="observation.images.image", fmt="libero",
+                     graph="lmwm/data/recurrence_graphs/liberospatial_dinov3base/recurrence_graph.npz",
+                     spec="temp/newcrave_specs_base/liberospatial_milestones_newmethod.npz"),
+    "libero_goal": dict(fdir="crave/data/liberogoal_dinov3base",
+                     root="/vePFS/tim/workspace/LIBERO_fastwam/libero_goal_no_noops_lerobot",
+                     cam="observation.images.image", fmt="libero",
+                     graph="lmwm/data/recurrence_graphs/liberogoal_dinov3base/recurrence_graph.npz",
+                     spec="temp/newcrave_specs_base/liberogoal_milestones_newmethod.npz"),
+    # aloha_static single-task arenas (gf3: banks + raw frames in temp/aloha_tasks; LeRobot v3 concat AV1, 50fps, cam_high)
+    **{f"aloha_{k}": dict(fdir=f"crave/data/aloha_static_{v}_dinov3base",
+                     root=f"temp/aloha_tasks/aloha_static_{v}", cam="observation.images.cam_high", fmt="lerobotv3",
+                     graph=f"lmwm/data/recurrence_graphs/aloha_{k}_dinov3base/recurrence_graph.npz",
+                     spec=f"temp/newcrave_specs_base/aloha_{k}_milestones_newmethod.npz")
+       for k, v in {"candy": "candy", "cups": "cups_open", "ziploc": "ziploc_slide", "screw": "screw_driver"}.items()},
     "vis":    dict(fdir="temp/vis_dinov3h",         root="kai0/data/Task_A/vis_base/v1/2026-04-24",
                    cam="observation.images.top_head", fmt="kai0",
                    graph="lmwm/data/recurrence_graphs/vis_dinov3h/recurrence_graph.npz"),
@@ -59,7 +85,29 @@ def read_frames(cfg, E, FR, gidx, enc_res, tgt_res):
         return _read_lerobotv3(Path(cfg["root"]), cfg["cam"], E, FR, gidx, enc_res, tgt_res)
     if cfg["fmt"] == "hdf5":
         return _read_hdf5(Path(cfg["root"]), cfg["cam"], E, FR, gidx, enc_res, tgt_res)
+    if cfg["fmt"] == "libero":
+        return _read_libero(Path(cfg["root"]), cfg["cam"], E, FR, gidx, enc_res, tgt_res)
     raise NotImplementedError(cfg["fmt"])
+
+
+def _read_libero(root, camera, E, FR, gidx, enc_res, tgt_res):
+    """LIBERO: AV1 videos cv2 can't decode -> use pre-decoded frame_cache npy (T,256,256,3 uint8 RGB)."""
+    from collections import defaultdict
+    fc = root / "frame_cache/resize_256x256"
+    ie = np.zeros((len(gidx), enc_res, enc_res, 3), np.uint8)
+    it = np.zeros((len(gidx), tgt_res, tgt_res, 3), np.uint8)
+    by_ep = defaultdict(list)
+    for k, g in enumerate(gidx):
+        by_ep[int(E[g])].append((k, int(FR[g])))
+    for ep, items in by_ep.items():
+        fp = fc / f"chunk-{ep // 1000:03d}/{camera}/episode_{ep:06d}.npy"
+        if not fp.exists():
+            continue
+        arr = np.load(fp)                                                   # (T,256,256,3) uint8 RGB
+        for k, fr in items:
+            if fr < len(arr):
+                ie[k] = cv2.resize(arr[fr], (enc_res, enc_res)); it[k] = cv2.resize(arr[fr], (tgt_res, tgt_res))
+    return ie, it
 
 
 def _read_hdf5(root, camera, E, FR, gidx, enc_res, tgt_res):
@@ -95,8 +143,17 @@ def _read_lerobotv3(root, camera, E, FR, gidx, enc_res, tgt_res):
     import glob
     from collections import defaultdict
     starts, cum = {}, 0                                                     # per-episode global start offset
-    for line in (root / "meta/episodes.jsonl").read_text().splitlines():
-        d = json.loads(line); starts[int(d["episode_index"])] = cum; cum += int(d["length"])
+    ejsonl = root / "meta/episodes.jsonl"
+    if ejsonl.exists():                                                     # LeRobot v2.1-ish meta (coffee)
+        for line in ejsonl.read_text().splitlines():
+            d = json.loads(line); starts[int(d["episode_index"])] = cum; cum += int(d["length"])
+    else:                                                                   # true v3.0: meta/episodes/*.parquet
+        import glob as _g
+        import pandas as pd
+        ed = pd.concat([pd.read_parquet(f, columns=["episode_index", "length"])
+                        for f in sorted(_g.glob(str(root / "meta/episodes/**/*.parquet"), recursive=True))])
+        for _, r in ed.sort_values("episode_index").iterrows():
+            starts[int(r["episode_index"])] = cum; cum += int(r["length"])
     vids = sorted(glob.glob(str(root / f"videos/{camera}/chunk-*/file-*.mp4")))
     ie = np.zeros((len(gidx), enc_res, enc_res, 3), np.uint8)
     it = np.zeros((len(gidx), tgt_res, tgt_res, 3), np.uint8)
@@ -154,14 +211,23 @@ def main():
     ap.add_argument("--tag", required=True)
     ap.add_argument("--save_ckpt", action="store_true", help="save the trained cross-task predictor (fwd+predm+inv+anchor)")
     ap.add_argument("--pi05_npz", default="")
+    ap.add_argument("--encoder", default="siglip", choices=["siglip", "dinov3base"],
+                    help="frame encoder: siglip(pi0.5 tower, 1152) or dinov3base(crave DINOv3-base, 768 — unified DINO space, decodable)")
+    ap.add_argument("--teacher_code", default="shared_pca", choices=["shared_pca", "rand", "pca"],
+                    help="proto teacher code (default shared_pca): shared_pca(ONE PCA fit jointly on all tasks -> clean+shared, single-task→per-task PCA) | rand(random 768->128) | pca(per-task CRAVE PCA128 from spec)")
     ap.add_argument("--seed", type=int, default=2026)
     ap.add_argument("--device", default="cuda")
     args = ap.parse_args()
     dev = args.device
-    npz = args.pi05_npz or (PI05_NPZ if Path(PI05_NPZ).exists() else PI05_NPZ_GF3)
     datasets = args.datasets.split(",")
     rng = np.random.default_rng(args.seed)
-    enc = SiglipBigVision(npz, device=dev)
+    if args.encoder == "dinov3base":                                       # unified DINOv3-base space (768) — decodable, no SigLIP
+        sys.path.insert(0, str(REPO / "lmvla/crave/src"))
+        from crave.encoders import load_encoder
+        enc = load_encoder("dinov3-base", device=dev)                      # .encode_grid(imgs) -> (N,768,16,16), same interface
+    else:
+        npz = args.pi05_npz or (PI05_NPZ if Path(PI05_NPZ).exists() else PI05_NPZ_GF3)
+        enc = SiglipBigVision(npz, device=dev)
 
     heldout = [h for h in args.heldout.split(",") if h]
     all_tasks = [(n, False) for n in datasets] + [(n, True) for n in heldout]
@@ -183,6 +249,9 @@ def main():
         uniq = sorted(set([p[0] for p in tr + va] + [p[1] for p in tr + va])); u2k = {gi: k for k, gi in enumerate(uniq)}
         ie, _ = read_frames(cfg, E, FR, np.array(uniq), 224, 128)
         grids = enc.encode_grid(ie, bs=32); din = grids.shape[1]
+        if args.encoder == "dinov3base":                                   # DINOv3 patch tokens are large/unnormalized ->
+            gf32 = grids.astype(np.float32)                                # L2-norm per patch (CRAVE convention): fixes
+            grids = (gf32 / (np.linalg.norm(gf32, axis=1, keepdims=True) + 1e-8)).astype(np.float16)  # fp16 std overflow + conditions space
         progn = ((pord - pord.min()) / (pord.max() - pord.min() + 1e-8)).astype(np.float32)
         pdim = proto.shape[1]                                             # DINOv3-H prototype dim (1280), NOT SigLIP grid dim
         idproj = (rng.standard_normal((pdim, args.id_dim)).astype(np.float32) / np.sqrt(pdim)) if ti == 0 else tasks_meta[0]["idproj"]
@@ -203,7 +272,7 @@ def main():
 
     train_metas = [m for m in tasks_meta if not m["is_heldout"]]
     G = np.concatenate(grids_all); din = G.shape[1]; total_M = msoff
-    gmu, gsd = float(G.mean()), float(G.std() + 1e-6)                       # SHARED normalization across tasks
+    gmu, gsd = float(np.mean(G, dtype=np.float32)), float(np.std(G, dtype=np.float32) + 1e-6)  # SHARED norm; fp32 accum (fp16 overflows)
     GZ = torch.from_numpy(((G - gmu) / gsd).astype(np.float32)).half(); del G, grids_all
     gist_all = GZ.float().mean((2, 3))
     idproj = train_metas[0]["idproj"]
@@ -211,10 +280,34 @@ def main():
     progn_g = np.concatenate([m["progn"] for m in train_metas])             # (total_M,), TRAINING global-ms
     TR = [p for m in train_metas for p in m["tr"]]; rng.shuffle(TR); TR = np.array(TR)
     zteach_t = None
-    if args.teacher == "proto":                                            # code = fixed projection of next-milestone SigLIP center
-        Wproj = (rng.standard_normal((din, args.code_dim)).astype(np.float32) / np.sqrt(din))
-        sp_g = np.concatenate([m["spL"] for m in train_metas])             # (total_M, din) SigLIP milestone centers
-        zteach_t = torch.from_numpy((sp_g @ Wproj).astype(np.float32)).to(dev)  # (total_M, code_dim) center-code per milestone
+    if args.teacher == "proto":                                            # code = fixed projection of next-milestone center
+        sp_g = np.concatenate([m["spL"] for m in train_metas])             # (total_M, din) milestone centers (L2)
+        if args.teacher_code == "pca":                                     # per-task CRAVE PCA128 (each task's own basis)
+            assert args.code_dim == 128, "pca teacher_code requires code_dim=128"
+            zc_list = []
+            for m in train_metas:
+                spec = np.load(REPO / TASKS[m["name"]]["spec"])
+                pm, pc = spec["pca_mean"].astype(np.float32), spec["pca_components"].astype(np.float32)
+                zc_list.append(((m["spL"] - pm) @ pc.T).astype(np.float32))
+            zteach_np = np.concatenate(zc_list)
+            tag_note = "per-task PCA128"
+        elif args.teacher_code == "shared_pca":                            # ONE PCA fit jointly on all tasks -> clean + shared
+            from sklearn.decomposition import PCA
+            graw = gist_all * gsd + gmu                                    # un-standardize gist -> raw (matches spL space)
+            gl2 = (graw / (graw.norm(dim=1, keepdim=True) + 1e-8)).cpu().numpy()  # all-task L2 gists (shared basis)
+            pca = PCA(n_components=args.code_dim, random_state=args.seed).fit(gl2)
+            zteach_np = pca.transform(sp_g).astype(np.float32)             # milestone centers -> shared discriminative 128D
+            tag_note = f"shared PCA128 (explained_var={pca.explained_variance_ratio_.sum():.3f})"
+        else:                                                              # rand: random 768->128 (default, shared, JL)
+            Wproj = (rng.standard_normal((din, args.code_dim)).astype(np.float32) / np.sqrt(din))
+            zteach_np = (sp_g @ Wproj).astype(np.float32); tag_note = "random projection"
+        if args.teacher_code in ("pca", "shared_pca"):                     # scale to mean-norm≈1 (match rand code scale, keep geometry)
+            mnorm = float(np.linalg.norm(zteach_np, axis=1).mean())
+            zteach_np = (zteach_np / (mnorm + 1e-8)).astype(np.float32)
+            print(f"teacher_code={args.teacher_code}: {tag_note}, raw norm {mnorm:.3f} -> scaled ~1", flush=True)
+        else:
+            print(f"teacher_code=rand: {tag_note}", flush=True)
+        zteach_t = torch.from_numpy(zteach_np).to(dev)                      # (total_M, code_dim) center-code per milestone
 
     inv = InverseEnc(din, args.code_dim).to(dev) if args.teacher == "inv" else None
     fwd = MilestoneGenerator(din, args.code_dim).to(dev)
