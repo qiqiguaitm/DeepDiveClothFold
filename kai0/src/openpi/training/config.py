@@ -1050,7 +1050,7 @@ _CONFIGS = [
             repo_id="/vePFS/tim/workspace/deepdive_kai0/kai0/data/Task_A/self_built/vis_awbc_merged_stage_interp",
             default_prompt="Flatten and fold the cloth.",
         ),
-        pytorch_weight_path="/vePFS/tim/workspace/openpi_cache/modelscope_cache/lerobot/pi05_base",
+        pytorch_weight_path="/vePFS/tim/workspace/deepdive_kai0/kai0/checkpoints/pi05_base/pytorch",
         advantage_estimator=True,
         num_train_steps=100_000,
         save_interval=10_000,
@@ -1073,7 +1073,7 @@ _CONFIGS = [
             repo_id="/vePFS/tim/workspace/deepdive_kai0/kai0/data/Task_A/self_built/vis_awbc_merged_stage_interp",
             default_prompt="Flatten and fold the cloth.",
         ),
-        pytorch_weight_path="/vePFS/tim/workspace/openpi_cache/modelscope_cache/lerobot/pi05_base",
+        pytorch_weight_path="/vePFS/tim/workspace/deepdive_kai0/kai0/checkpoints/pi05_base/pytorch",
         advantage_estimator=True,
         num_train_steps=30_000,
         save_interval=10_000,
@@ -1098,7 +1098,7 @@ _CONFIGS = [
             repo_id="/vePFS/tim/workspace/deepdive_kai0/kai0/data/Task_A/self_built/crave_stage_A",
             default_prompt="Flatten and fold the cloth.",
         ),
-        pytorch_weight_path="/vePFS/tim/workspace/openpi_cache/modelscope_cache/lerobot/pi05_base",
+        pytorch_weight_path="/vePFS/tim/workspace/deepdive_kai0/kai0/checkpoints/pi05_base/pytorch",
         advantage_estimator=True,
         num_train_steps=50_000,
         save_interval=10_000,
@@ -1115,7 +1115,106 @@ _CONFIGS = [
             repo_id="/vePFS/tim/workspace/deepdive_kai0/kai0/data/Task_A/self_built/crave_stage_B",
             default_prompt="Flatten and fold the cloth.",
         ),
-        pytorch_weight_path="/vePFS/tim/workspace/openpi_cache/modelscope_cache/lerobot/pi05_base",
+        pytorch_weight_path="/vePFS/tim/workspace/deepdive_kai0/kai0/checkpoints/pi05_base/pytorch",
+        advantage_estimator=True,
+        num_train_steps=50_000,
+        save_interval=10_000,
+        batch_size=144,
+        num_workers=24,
+    ),
+
+    # ===== CRAVE polyline(去阶梯)重训 (plan: crave_polyline_kai_ae_retrain_plan.md) =====
+    # 前身 CRAVE_A/B 用已淘汰的 DINOv3-H + norm01 标签(HISTORY A1/C1/F3), 效果不理想 → 本 config 换成
+    # CRAVE 收口后的 polyline 标签: DINOv3-base img⊕proprio(142D)→ BGMM(M≈12)→ 双锚 Viterbi → 去阶梯折线
+    # (corr 0.957 vs 阶梯 0.944; 是在线 GRU 蒸馏的 teacher, gru_polyline_heldout mean corr 0.975).
+    # 数据 crave_stage_poly(3055ep, 底座 kai0_base, stage_progress_gt=polyline value 0→1, videos symlink,
+    # norm_stats copy 自 crave_stage_A). 由 lmvla/crave/experiments/{dump_polyline_labels_kai_full,
+    # write_crave_stage_poly}.py 生成. 唯一变量 vs CRAVE_A/B = 标签构造法(polyline). 其余同参.
+    # ⚠️ polyline 段内连续 → 避开阶跃标签的段内 Δ≡0 dead-value 塌缩(memory ae-stage-label-collapse).
+    TrainConfig(
+        name="ADVANTAGE_TORCH_CRAVE_POLY",
+        model=pi0_config.AdvantageEstimatorConfig(
+            pi05=True, action_dim=32, action_horizon=50, max_token_len=200,
+            loss_action_weight=0.0, loss_value_weight=1.0,
+        ),
+        data=LerobotAgilexDataConfig(
+            repo_id="/vePFS/tim/workspace/deepdive_kai0/kai0/data/Task_A/self_built/crave_stage_poly",
+            default_prompt="Flatten and fold the cloth.",
+        ),
+        pytorch_weight_path="/vePFS/tim/workspace/deepdive_kai0/kai0/checkpoints/pi05_base/pytorch",
+        advantage_estimator=True,
+        num_train_steps=50_000,
+        save_interval=10_000,
+        batch_size=144,
+        num_workers=24,
+    ),
+
+    # CRAVE-KAI-AE mono 消融变体 (crave_polyline_kai_ae_retrain_plan §3/§8.3): = ADVANTAGE_TORCH_CRAVE_POLY
+    # 唯一改 repo_id → crave_stage_poly_mono (cummax 单调标签, 只进不退). 作 raw-vs-mono 对照:
+    # 量化"polyline 真实回落是否干扰 advantage 符号". 其余(model/init/loss/规格)逐字段同 POLY.
+    TrainConfig(
+        name="ADVANTAGE_TORCH_CRAVE_POLY_MONO",
+        model=pi0_config.AdvantageEstimatorConfig(
+            pi05=True, action_dim=32, action_horizon=50, max_token_len=200,
+            loss_action_weight=0.0, loss_value_weight=1.0,
+        ),
+        data=LerobotAgilexDataConfig(
+            repo_id="/vePFS/tim/workspace/deepdive_kai0/kai0/data/Task_A/self_built/crave_stage_poly_mono",
+            default_prompt="Flatten and fold the cloth.",
+        ),
+        pytorch_weight_path="/vePFS/tim/workspace/deepdive_kai0/kai0/checkpoints/pi05_base/pytorch",
+        advantage_estimator=True,
+        num_train_steps=50_000,
+        save_interval=10_000,
+        batch_size=144,
+        num_workers=24,
+    ),
+
+    # ===== ⚠️ 已弃用: CRAVE polyline value-only configs (loss_action=0) — 2026-07-14 确诊 dead-value =====
+    # 根因: value-only (loss_action_weight=0.0) 让 Gemma-2B backbone 无视觉监督 → 输出常数 ≈0.
+    # 老 AE-C (ADVANTAGE_TORCH_KAI0_FLATTEN_FOLD) 是 JAX 多任务(action+value)训的, 所以能用(value-vs-GT corr=0.93).
+    # 见 config.py:1061 ADVANTAGE_TORCH_VIS_AWBC_MT (前人已诊断并预留了修法: loss_action_weight 0.0→1.0).
+    # 修法 = ADVANTAGE_TORCH_CRAVE_POLY_MT / _MONO_MT (下方), 唯一改动 loss_action_weight=1.0.
+    # 原 POLY / POLY_MONO 的 ckpt (mono 50k + raw 20k 在训) 已确认 dead, 不可用于 downstream.
+    # 详细诊断见 crave_polyline_kai_ae_retrain_plan.md §0a.
+
+    # ===== CRAVE polyline × multi-task AE (action+value) — dead-value 修法 (2026-07-14) =====
+    # 克隆 ADVANTAGE_TORCH_CRAVE_POLY, 唯一改动: loss_action_weight 0.0→1.0 (加回 action flow-matching 辅助任务,
+    # 防 backbone 视觉特征饿瘦 → dead value). 其余逐字段同 POLY.
+    # 数据 crave_stage_poly 不变 (3055ep, polyline raw labels 0→1, videos symlink→kai0_base).
+    # ⚠️ kai0_base 数据 action==state (14D 绝对关节位置), 作为辅助任务够用 — backbone 只需从图像预测关节
+    #   位置就能得到丰富梯度, value head 搭在这个表征上学习进度.
+    TrainConfig(
+        name="ADVANTAGE_TORCH_CRAVE_POLY_MT",
+        model=pi0_config.AdvantageEstimatorConfig(
+            pi05=True, action_dim=32, action_horizon=50, max_token_len=200,
+            loss_action_weight=1.0, loss_value_weight=1.0,   # ⭐ 修法: action loss 开
+        ),
+        data=LerobotAgilexDataConfig(
+            repo_id="/vePFS/tim/workspace/deepdive_kai0/kai0/data/Task_A/self_built/crave_stage_poly",
+            default_prompt="Flatten and fold the cloth.",
+        ),
+        pytorch_weight_path="/vePFS/tim/workspace/deepdive_kai0/kai0/checkpoints/pi05_base/pytorch",
+        advantage_estimator=True,
+        num_train_steps=50_000,
+        save_interval=10_000,
+        batch_size=144,
+        num_workers=24,
+    ),
+
+    # CRAVE polyline mono × multi-task AE — raw-vs-mono 对照 (MT 版)
+    # 克隆 ADVANTAGE_TORCH_CRAVE_POLY_MONO, 唯一改动: loss_action_weight 1.0. 数据 crave_stage_poly_mono.
+    TrainConfig(
+        name="ADVANTAGE_TORCH_CRAVE_POLY_MONO_MT",
+        model=pi0_config.AdvantageEstimatorConfig(
+            pi05=True, action_dim=32, action_horizon=50, max_token_len=200,
+            loss_action_weight=1.0, loss_value_weight=1.0,
+        ),
+        data=LerobotAgilexDataConfig(
+            repo_id="/vePFS/tim/workspace/deepdive_kai0/kai0/data/Task_A/self_built/crave_stage_poly_mono",
+            default_prompt="Flatten and fold the cloth.",
+        ),
+        pytorch_weight_path="/vePFS/tim/workspace/deepdive_kai0/kai0/checkpoints/pi05_base/pytorch",
         advantage_estimator=True,
         num_train_steps=50_000,
         save_interval=10_000,
@@ -1140,7 +1239,7 @@ _CONFIGS = [
             domain_weights=(1.0, 3.970),  # FRAME-level 1:1: kai 5.78M frames / vis 1.46M frames = 3.970 (NOT ep ratio 6.30; kai eps longer)
         ),
         weight_loader=weight_loaders.CheckpointWeightLoader(
-            "/vePFS/tim/workspace/openpi_cache/openpi-assets/checkpoints/pi05_base/params"
+            "/vePFS/tim/workspace/deepdive_kai0/kai0/checkpoints/pi05_base/params"
         ),
         lr_schedule=_optimizer.CosineDecaySchedule(warmup_steps=1_000, peak_lr=1.5e-5, decay_steps=50_000, decay_lr=1.5e-6),
         ema_decay=0.9999,
@@ -1235,7 +1334,7 @@ _CONFIGS = [
             domain_weights=(1.0, 6.246),  # FRAME-level 1:1: kai 5,777,710 frames / vis(pure smooth800) 925,055 = 6.246 (norm-build exact)
         ),
         weight_loader=weight_loaders.CheckpointWeightLoader(
-            "/vePFS/tim/workspace/openpi_cache/openpi-assets/checkpoints/pi05_base/params"
+            "/vePFS/tim/workspace/deepdive_kai0/kai0/checkpoints/pi05_base/params"
         ),
         lr_schedule=_optimizer.CosineDecaySchedule(warmup_steps=1_000, peak_lr=1.5e-5, decay_steps=50_000, decay_lr=1.5e-6),
         ema_decay=0.9999,
@@ -1264,7 +1363,7 @@ _CONFIGS = [
             use_delta_joint_actions=False,
         ),
         weight_loader=weight_loaders.CheckpointWeightLoader(
-            "/vePFS/tim/workspace/openpi_cache/openpi-assets/checkpoints/pi05_base/params"
+            "/vePFS/tim/workspace/deepdive_kai0/kai0/checkpoints/pi05_base/params"
         ),
         lr_schedule=_optimizer.CosineDecaySchedule(warmup_steps=1_000, peak_lr=1.5e-5, decay_steps=50_000, decay_lr=1.5e-6),
         ema_decay=0.9999,
@@ -1355,7 +1454,7 @@ _CONFIGS = [
             use_delta_joint_actions=False,
         ),
         weight_loader=weight_loaders.CheckpointWeightLoader(
-            "/vePFS/tim/workspace/openpi_cache/openpi-assets/checkpoints/pi05_base/params"
+            "/vePFS/tim/workspace/deepdive_kai0/kai0/checkpoints/pi05_base/params"
         ),
         lr_schedule=_optimizer.CosineDecaySchedule(warmup_steps=1_000, peak_lr=1.5e-5, decay_steps=50_000, decay_lr=1.5e-6),
         ema_decay=0.9999,
@@ -1457,7 +1556,7 @@ _CONFIGS = [
             use_delta_joint_actions=True,  # ← 关键: delta 训练
         ),
         weight_loader=weight_loaders.CheckpointWeightLoader(
-            "/vePFS/tim/workspace/openpi_cache/openpi-assets/checkpoints/pi05_base/params"
+            "/vePFS/tim/workspace/deepdive_kai0/kai0/checkpoints/pi05_base/params"
         ),
         lr_schedule=_optimizer.CosineDecaySchedule(warmup_steps=1_000, peak_lr=1.5e-5, decay_steps=50_000, decay_lr=1.5e-6),
         ema_decay=0.9999,
@@ -1496,7 +1595,7 @@ _CONFIGS = [
             use_delta_joint_actions=False,
         ),
         weight_loader=weight_loaders.CheckpointWeightLoader(
-            "/vePFS/tim/workspace/openpi_cache/openpi-assets/checkpoints/pi05_base/params"
+            "/vePFS/tim/workspace/deepdive_kai0/kai0/checkpoints/pi05_base/params"
         ),
         lr_schedule=_optimizer.CosineDecaySchedule(warmup_steps=1_000, peak_lr=1.5e-5, decay_steps=50_000, decay_lr=1.5e-6),
         ema_decay=0.9999,
@@ -1535,7 +1634,7 @@ _CONFIGS = [
             use_delta_joint_actions=False,
         ),
         weight_loader=weight_loaders.CheckpointWeightLoader(
-            "/vePFS/tim/workspace/openpi_cache/openpi-assets/checkpoints/pi05_base/params"
+            "/vePFS/tim/workspace/deepdive_kai0/kai0/checkpoints/pi05_base/params"
         ),
         lr_schedule=_optimizer.CosineDecaySchedule(warmup_steps=1_000, peak_lr=1.5e-5, decay_steps=50_000, decay_lr=1.5e-6),
         ema_decay=0.9999,
@@ -1636,7 +1735,7 @@ _CONFIGS = [
             use_delta_joint_actions=False,
         ),
         weight_loader=weight_loaders.CheckpointWeightLoader(
-            "/vePFS/tim/workspace/openpi_cache/openpi-assets/checkpoints/pi05_base/params"
+            "/vePFS/tim/workspace/deepdive_kai0/kai0/checkpoints/pi05_base/params"
         ),
         lr_schedule=_optimizer.CosineDecaySchedule(
             warmup_steps=1_000, peak_lr=1.5e-5, decay_steps=50_000, decay_lr=1.5e-6,
@@ -1731,9 +1830,9 @@ _CONFIGS = [
             use_delta_joint_actions=True,
         ),
         weight_loader=weight_loaders.CheckpointWeightLoader(
-            "/vePFS/tim/workspace/openpi_cache/openpi-assets/checkpoints/pi05_base/params"
+            "/vePFS/tim/workspace/deepdive_kai0/kai0/checkpoints/pi05_base/params"
         ),
-        pytorch_weight_path="/vePFS/tim/workspace/openpi_cache/modelscope_cache/lerobot/pi05_base",
+        pytorch_weight_path="/vePFS/tim/workspace/deepdive_kai0/kai0/checkpoints/pi05_base/pytorch",
         pytorch_training_precision="bfloat16",
         lr_schedule=_optimizer.CosineDecaySchedule(
             warmup_steps=1_000, peak_lr=1.5e-5, decay_steps=50_000, decay_lr=1.5e-6,
@@ -1793,9 +1892,9 @@ _CONFIGS = [
             use_delta_joint_actions=False,
         ),
         weight_loader=weight_loaders.CheckpointWeightLoader(
-            "/vePFS/tim/workspace/openpi_cache/openpi-assets/checkpoints/pi05_base/params"
+            "/vePFS/tim/workspace/deepdive_kai0/kai0/checkpoints/pi05_base/params"
         ),
-        pytorch_weight_path="/vePFS/tim/workspace/openpi_cache/modelscope_cache/lerobot/pi05_base",
+        pytorch_weight_path="/vePFS/tim/workspace/deepdive_kai0/kai0/checkpoints/pi05_base/pytorch",
         pytorch_training_precision="bfloat16",
         lr_schedule=_optimizer.CosineDecaySchedule(
             warmup_steps=1_000, peak_lr=1.5e-5, decay_steps=50_000, decay_lr=1.5e-6,
@@ -2173,7 +2272,7 @@ _CONFIGS = [
             use_delta_joint_actions=False,
         ),
         weight_loader=weight_loaders.CheckpointWeightLoader(
-            "/vePFS/tim/workspace/openpi_cache/openpi-assets/checkpoints/pi05_base/params"
+            "/vePFS/tim/workspace/deepdive_kai0/kai0/checkpoints/pi05_base/params"
         ),
         lr_schedule=_optimizer.CosineDecaySchedule(
             warmup_steps=1_000, peak_lr=1.5e-5, decay_steps=50_000, decay_lr=1.5e-6,
@@ -2203,7 +2302,7 @@ _CONFIGS = [
             use_delta_joint_actions=False,
         ),
         weight_loader=weight_loaders.CheckpointWeightLoader(
-            "/vePFS/tim/workspace/openpi_cache/openpi-assets/checkpoints/pi05_base/params"
+            "/vePFS/tim/workspace/deepdive_kai0/kai0/checkpoints/pi05_base/params"
         ),
         lr_schedule=_optimizer.CosineDecaySchedule(
             warmup_steps=1_000, peak_lr=1.5e-5, decay_steps=50_000, decay_lr=1.5e-6,
@@ -2246,6 +2345,34 @@ _CONFIGS = [
         fsdp_devices=8,
     ),
 
+    # launchpoint-trim plan §3 主实验: base(不裁) + 裁后 dagger(双向起爆点前裁: 前砍迟疑起手+后砍静止收尾).
+    # 唯一变量 vs 任务② plus_freshdagger = dagger clip 起爆点前裁; 其余逐字段同. 无 DCT. init pi05_base.
+    # 北京 Robot-North-H20 8卡 → North-E 路径; A_v4_base_dagger_launchtrim(~2511ep, AE adv_est_v1 打标+top30 discretize).
+    # inline_eval 关(val 集不在 North-E, 且 AWBC 无 val MAE), 同 pi05_v4_awbc_gf3. 判据: 真机回折不冻 + 夹爪修复.
+    TrainConfig(
+        name="pi05_v4_awbc_launchtrim",
+        model=pi0_config.Pi0Config(pi05=True),   # 无 DCT
+        data=LerobotAgilexDataConfig(
+            repo_id="/vePFS-North-E/vis_robot/workspace/deepdive_kai0/kai0/data/Task_A/self_built/A_v4_base_dagger_launchtrim",
+            default_prompt=None,
+            base_config=DataConfig(prompt_from_task=True),
+            use_delta_joint_actions=False,
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader(
+            "/vePFS-North-E/vis_robot/base_init_ckpts/extracted/pi05_base/params"
+        ),
+        lr_schedule=_optimizer.CosineDecaySchedule(
+            warmup_steps=1_000, peak_lr=1.5e-5, decay_steps=50_000, decay_lr=1.5e-6,
+        ),
+        ema_decay=0.9999,
+        num_train_steps=50_000,
+        keep_period=10_000,
+        save_interval=2_000,
+        num_workers=16,
+        batch_size=128,
+        fsdp_devices=8,
+    ),
+
     # VLANeXt #12 频域 DCT loss (vlanext_dct_then_soft_connection_plan.md Step 1): 与 pi05_v4_awbc 逐字段一致,
     # 唯一变量 = model 开 use_dct_loss=True (weight/freq 用论文默认 0.1/1.0/0.2). 压动作 chunk 高频抖动 → 更平滑.
     # DCT loss 已端到端实现 (pi0.py + train.py), 默认关 → 此 config 是唯一启用处, 不影响任何旧 config (向后兼容).
@@ -2259,7 +2386,7 @@ _CONFIGS = [
             use_delta_joint_actions=False,
         ),
         weight_loader=weight_loaders.CheckpointWeightLoader(
-            "/vePFS/tim/workspace/openpi_cache/openpi-assets/checkpoints/pi05_base/params"
+            "/vePFS/tim/workspace/deepdive_kai0/kai0/checkpoints/pi05_base/params"
         ),
         lr_schedule=_optimizer.CosineDecaySchedule(
             warmup_steps=1_000, peak_lr=1.5e-5, decay_steps=50_000, decay_lr=1.5e-6,
@@ -2585,7 +2712,7 @@ _CONFIGS = [
         # Default init: pi05_base (Run-A: A_0423_0527_pi05_JAX).
         # For Run-B (mixed_1 init), override --weight-loader.params-path on CLI.
         weight_loader=weight_loaders.CheckpointWeightLoader(
-            "/vePFS/tim/workspace/openpi_cache/openpi-assets/checkpoints/pi05_base/params"
+            "/vePFS/tim/workspace/deepdive_kai0/kai0/checkpoints/pi05_base/params"
         ),
         lr_schedule=_optimizer.CosineDecaySchedule(
             warmup_steps=1_000, peak_lr=1.5e-5, decay_steps=50_000, decay_lr=1.5e-6,
@@ -2614,7 +2741,7 @@ _CONFIGS = [
             use_delta_joint_actions=False,
         ),
         weight_loader=weight_loaders.CheckpointWeightLoader(
-            "/vePFS/tim/workspace/openpi_cache/openpi-assets/checkpoints/pi05_base/params"
+            "/vePFS/tim/workspace/deepdive_kai0/kai0/checkpoints/pi05_base/params"
         ),
         lr_schedule=_optimizer.CosineDecaySchedule(
             warmup_steps=1_000, peak_lr=1.5e-5, decay_steps=50_000, decay_lr=1.5e-6,
@@ -2642,7 +2769,7 @@ _CONFIGS = [
             use_delta_joint_actions=False,
         ),
         weight_loader=weight_loaders.CheckpointWeightLoader(
-            "/vePFS/tim/workspace/openpi_cache/openpi-assets/checkpoints/pi05_base/params"
+            "/vePFS/tim/workspace/deepdive_kai0/kai0/checkpoints/pi05_base/params"
         ),
         lr_schedule=_optimizer.CosineDecaySchedule(
             warmup_steps=1_000, peak_lr=1.5e-5, decay_steps=50_000, decay_lr=1.5e-6,
@@ -2674,7 +2801,7 @@ _CONFIGS = [
             use_delta_joint_actions=True,  # ← 关键变化: delta joints (gripper 仍 absolute via mask)
         ),
         weight_loader=weight_loaders.CheckpointWeightLoader(
-            "/vePFS/tim/workspace/openpi_cache/openpi-assets/checkpoints/pi05_base/params"
+            "/vePFS/tim/workspace/deepdive_kai0/kai0/checkpoints/pi05_base/params"
         ),
         lr_schedule=_optimizer.CosineDecaySchedule(warmup_steps=1_000, peak_lr=1.5e-5, decay_steps=50_000, decay_lr=1.5e-6),
         ema_decay=0.9999,
@@ -2708,7 +2835,7 @@ _CONFIGS = [
             use_delta_joint_actions=False,
         ),
         weight_loader=weight_loaders.CheckpointWeightLoader(
-            "/vePFS/tim/workspace/openpi_cache/openpi-assets/checkpoints/pi05_base/params"
+            "/vePFS/tim/workspace/deepdive_kai0/kai0/checkpoints/pi05_base/params"
         ),
         lr_schedule=_optimizer.CosineDecaySchedule(warmup_steps=1_000, peak_lr=1.5e-5, decay_steps=50_000, decay_lr=1.5e-6),
         ema_decay=0.9999,
@@ -2867,7 +2994,7 @@ _CONFIGS = [
             use_delta_joint_actions=False,
         ),
         weight_loader=weight_loaders.CheckpointWeightLoader(
-            "/vePFS/tim/workspace/openpi_cache/openpi-assets/checkpoints/pi05_base/params"
+            "/vePFS/tim/workspace/deepdive_kai0/kai0/checkpoints/pi05_base/params"
         ),
         lr_schedule=_optimizer.CosineDecaySchedule(
             warmup_steps=1_000, peak_lr=1.5e-5, decay_steps=50_000, decay_lr=1.5e-6
@@ -2894,7 +3021,7 @@ _CONFIGS = [
             use_delta_joint_actions=False,
         ),
         weight_loader=weight_loaders.CheckpointWeightLoader(
-            "/vePFS/tim/workspace/openpi_cache/openpi-assets/checkpoints/pi05_base/params"
+            "/vePFS/tim/workspace/deepdive_kai0/kai0/checkpoints/pi05_base/params"
         ),
         lr_schedule=_optimizer.CosineDecaySchedule(
             warmup_steps=1_000, peak_lr=1.5e-5, decay_steps=50_000, decay_lr=1.5e-6
