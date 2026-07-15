@@ -3,6 +3,7 @@
 > **建立**: 2026-06-23
 > **目的**: 验证 **TOS v4 新框架数据可用** —— 用**全部 v4 base + dagger** 跑完整 **KAI0 AE AWBC 流程**(Advantage Estimator → 打标 → discretize → AWBC 训练),offline + 真机验证 v4 能训出可部署策略。**重点验证 v4 的新夹爪约定(action≠state,取主臂指令)能否解决"夹持松手"问题。**
 > **状态**: 📋 **核心决策定档(§7)** — 全 v4 / AE=adv_est_v1(最早 kai0 AE)/ init=**pi05_base** / 50k;**仅待 ① discretize 阈值 ② 集群 确认 + 发话"开始实施"**。本次仍只更新文档,不实施。
+> **🔀 变体**: 从 PaliGemma base 冷启动 + 100k + cnbj H20 闲时的 AWBC 变体见 [`pi05_v4_awbc_from_paligemma_plan.md`](pi05_v4_awbc_from_paligemma_plan.md)。
 >
 > ### ⚠️⚠️ v4 两个关键要点(实施时务必)
 > 1. **norm_stats 必须对 v4 重算** —— v4 动作分布变了(夹爪 action≠state,取主臂指令)→ **绝不能复用旧 v2/v3 的 norm**,否则夹爪维归一化错位 → 静默训坏(offline MAE 也看不出)。用 `compute_norm_states_fast.py` 对 merged v4 集重算。

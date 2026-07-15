@@ -35,6 +35,8 @@
 
 ---
 
+> ⚠️ **2026-07-11 更新**:本 Phase 1 的两套 `crave_stage_{A,B}` 数据集(7/3 落地)用的是**已淘汰的 DINOv3-H + norm01 + anchor-linear/时间先验 Viterbi 标签**(见 `lmvla/crave/docs/HISTORY.md` §2 A1/C1/F3),效果不理想。**已由收口后的 polyline(DINOv3-base img⊕proprio→双锚 Viterbi→去阶梯)重训版取代** → 见 [`crave_polyline_kai_ae_retrain_plan.md`](crave_polyline_kai_ae_retrain_plan.md)。下方 Phase 1 叙述保留作背景;实际重跑请走 polyline plan。Phase 2(ranking g_φ)不受影响,仍有效。
+
 ## Phase 1(= **CRAVE_a 任务**,数据就绪待集群):回归蒸馏 AE-A/B vs AE-C
 
 - **配置** `ADVANTAGE_TORCH_KAI0_FLATTEN_FOLD`(pi0-AE `value_head`),Step-1 `train_pytorch.py`,50k;唯一变量=标签。
