@@ -1,48 +1,30 @@
-# LMWM 文档体系(索引)
+# LMWM 文档体系（索引）
 
 > LMWM = Latent Milestone World Model,面向 kai0 π0.5 VLA 的 milestone+1 价值层子目标预测器。
-> 本文件是**唯一入口**:先看这里,按需下钻。**当前版**在顶层,**历史版**在 `archive/`。
-> 最近整理:2026-07-08。
+> 本文件是**唯一入口**。**当前最终版在顶层,历史/被取代/未来阶段的文档在 [`history/`](history/) 且由 [`HISTORY.md`](HISTORY.md) 索引。**
+> 最近整理:2026-07-12（收口到统一 DINOv3-base 版,历史归档 + 索引化)。
 
 ---
 
-## 🎯 想快速了解 → 按这个顺序读
+## ⭐ 当前最终方案（只读这两份 = 单一事实源）
 
-| # | 文档 | 一句话 |
-|---|---|---|
-| 0 | [`LMWM2_FINAL_ARCHITECTURE.md`](LMWM2_FINAL_ARCHITECTURE.md) | ⭐ **最终定档架构**(2026-07-08 P1/P2 数据收敛;9设计赌注逐项裁决表;保留/降级/砍掉全表;组件I/O规范;跨任务机制;编码器耦合;降级阶梯;待SR裁决清单) |
-| 1 | [`REDESIGN_LMWM2_2026-07.md`](REDESIGN_LMWM2_2026-07.md) | 重设计方案 LMWM-2(三路文献调研;优雅性假设部分被实测证伪→定档见 #0) |
-| 2 | [`ARCHITECTURE_AND_BASELINE.md`](ARCHITECTURE_AND_BASELINE.md) | 现 LMWM 架构速查(参数量/I-O/vs LaWM)——作为参照基线 |
-| 3 | [`FINAL_CROSSTASK_PREDICTOR.md`](FINAL_CROSSTASK_PREDICTOR.md) | proto teacher 定案 + 交付 ckpt + 跨任务指标 |
-| 4 | [`PITFALLS_AND_HISTORY.md`](PITFALLS_AND_HISTORY.md) | **版本演进史 + 踩坑/错误路径**(避免重复犯错,踩坑前必看) |
-
-## 📚 专题(深挖时看)
-
-| 文档 | 范围 |
+| 文档 | 一句话 |
 |---|---|
-| [`ABLATION_CONVERGENCE_2026-07.md`](ABLATION_CONVERGENCE_2026-07.md) | 所有控制变量消融全表(teacher/anchor/fwd_arch/lift/code_dim/center_w/pred_input/proto) |
-| [`RESEARCH_DIRECTION_milestone_universal_fusion_2026-07.md`](RESEARCH_DIRECTION_milestone_universal_fusion_2026-07.md) | 研究方向:普适 milestone、身份多峰、命名与模块、融合调研 |
-| [`PROGRESS_lawm_comparison_2026-07.md`](PROGRESS_lawm_comparison_2026-07.md) | LaWM 官方 ckpt 在我们数据上的实测对比 |
+| [`RESULT_newcrave_final_arch_2026-07-11.md`](RESULT_newcrave_final_arch_2026-07-11.md) | **统一 DINOv3-base LMWM**:全链路一个编码器(挖矿/预测器/生成器/teacher/解码同空间)· proto teacher 码=簇中心的 **shared PCA128** 投影 · deploy 0.910/id3 0.940 · 闭环可视化 · 修复表 · teacher 码三方消融(§4.6)|
+| [`DECODER_dinov3base_video_2026-07-11.md`](DECODER_dinov3base_video_2026-07-11.md) | 可视化解码器:**pooled(软) + grid(锐)** 两法 + 视频流时序一致 |
 
-## 🗄️ 历史 / 已归档
-
-`archive/` 下是被上面的当前版**取代**的旧文档(阶段计划、早期架构、单点诊断、迭代日志)。**内容已提炼进 `PITFALLS_AND_HISTORY.md` 的时间线与踩坑表**,除考古外不必读。见 [`archive/README.md`](archive/README.md)。
+**运行**:`train_multitask.py --encoder dinov3base --teacher proto --teacher_code shared_pca`
+**交付 ckpt**:`lmwm/checkpoints/dinov3base_lmwm_sharedpca_kaicoffee.pt` + `dinov3base_decoder/kai_grid_dec.pt`
+**web 展示**:`web/showcase/reports/lmwm_final/index.html`
 
 ---
 
-## 🧭 一句话现状(2026-07-08,最终定档)
+## 🗄️ 历史 / 被取代 / 未来阶段 → 全在 [`history/`](history/),索引见 [`HISTORY.md`](HISTORY.md)
 
-- **最终架构(via P1/P2 数据收敛)**:π0.5 SigLIP 冻结共享塔 → 预测器(proto teacher/MDN K=4,prev_ẑ 条件化,密度弃权)+ 生成器(AdaLN)→ milestone+1 子目标 grid。部署 ~34M,零 CRAVE/零 DINO/零 bank。
-- **teacher = proto(簇中心码,定案)**:开放词表,与 inv 打平但去 InverseEnc+CE 锚;ID 活在 SigLIP 连续流形。
-- **跨任务**:多任务联合训练(kai0/coffee/xvla),prev_ẑ 自递归条件 = 主杠杆,proto 连续码 = 开放词表。
-- **vs LaWM**:reach 1.67s > 1.48s、参数轻 ~10×、同塔嵌入;唯一未覆盖 = 下游 SR → P0。
-- **P1/P2 关键裁决**:价值几何(u·z)证伪/熵门证伪/DINO 沙箱否决/密度弃权成立/proto+prev_ẑ 保留。
-- **下一步:P0 oracle-SR**(子目标条件对 π0.5 是否有正增量;milestone-horizon vs 固定 1.2s 论文主张)。
+⚠️ **动手前先读 [`HISTORY.md`](HISTORY.md)**,防照搬旧方案/旧代码(SigLIP-era 的"FINAL/CROSSTASK/REPORT"、reach 1.67s、deploy 0.753 等都是**旧口径**,已被顶层 RESULT 取代)。HISTORY 分四类:
+- 🔴 **已被取代**(SigLIP-era 旧最终:LMWM2_FINAL / ARCHITECTURE_AND_BASELINE / FINAL_CROSSTASK / FINAL_REPORT / REDESIGN / ABLATION / PROGRESS_lawm / PLAN)——标注了各自"可打捞"的内容
+- 🟡 **未来阶段参考**(SigLIP 融合,尚未做:MASTER_PLAN / INJECTION_DESIGN / INJECTION_DEEP_ANALYSIS)
+- 📌 **仍有价值**(PITFALLS_AND_HISTORY 踩坑表 · RESEARCH_DIRECTION)——**踩坑前必查**
+- 📦 **更早期归档**([`history/archive/`](history/archive/) 27 docs,2026-07-01~04 探索期)
 
-## 🔧 关键产物(代码/模型/数据)
-
-- 训练:`lmwm/scripts/train_multitask.py`(多任务 3锚 3teacher)、`train_twomodel_v2.py`(单任务)、`train_ablation.py`(消融)
-- 模型:`lmwm/checkpoints/teach_proto_3task.pt`(⭐推荐)、`teach_proto_4task.pt`、`final_crosstask_{3,4}task.pt`(inv 对照)
-- bank:`temp/{crave_full_dinov3h(kai0),coffee_dinov3h,xvla_dinov3h,vis_dinov3h}` + `lmwm/data/recurrence_graphs/*`
-- bank 构建:`make_visbase_dinov3h_index.py`(通用)、xreb 缓存捷径(coffee/xvla)
-- 网站 showcase:`web/showcase/reports/lmwm_final/`
+CRAVE 侧对应索引:[`../../crave/docs/HISTORY.md`](../../crave/docs/HISTORY.md)。
