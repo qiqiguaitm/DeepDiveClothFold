@@ -18,6 +18,18 @@
   body{margin:0;background:radial-gradient(1200px 600px at 50% -10%,#12043a 0%,var(--bg) 60%);color:var(--text2);
     font-family:var(--sans);line-height:1.62;-webkit-font-smoothing:antialiased;min-height:100vh}
   .wrap{max-width:1040px;margin:0 auto;padding:0 24px}
+  /* --- doc grid + sticky TOC sidebar (CRAVE-style) --- */
+  .doc{max-width:1300px;margin:0 auto;padding:0 24px;display:grid;grid-template-columns:200px minmax(0,1fr);gap:40px}
+  .toc{position:sticky;top:20px;align-self:start;max-height:calc(100vh - 40px);overflow:auto;font-size:13px;
+    border-left:1px solid var(--border);padding-left:16px}
+  .toc .tt{color:var(--text3);font-size:11px;letter-spacing:.15em;text-transform:uppercase;margin:0 0 12px;font-family:var(--mono)}
+  .toc a{display:block;color:var(--text2);text-decoration:none;padding:5px 0;border-left:2px solid transparent;
+    margin-left:-18px;padding-left:16px;transition:.15s;line-height:1.35}
+  .toc a:hover{color:var(--accent3)}
+  .toc a.active{color:var(--accent3);border-left-color:var(--accent);font-weight:600}
+  .toc a.sub{font-size:12px;color:var(--text3);padding-top:2px;padding-bottom:2px}
+  @media(max-width:980px){.doc{grid-template-columns:1fr;max-width:1040px}.toc{display:none}}
+  html{scroll-behavior:smooth} section[id],h3[id]{scroll-margin-top:18px}
   a{color:var(--accent3);text-decoration:none} a:hover{text-decoration:underline}
   .grad{background:linear-gradient(90deg,#a78bfa,#818cf8);-webkit-background-clip:text;background-clip:text;color:transparent}
 
@@ -25,7 +37,7 @@
   header.top .wrap{padding:48px 24px 36px}
   .eyebrow{font-family:var(--mono);font-size:12px;letter-spacing:.2em;text-transform:uppercase;color:var(--accent3)}
   h1{font-size:clamp(30px,5vw,48px);line-height:1.04;letter-spacing:-.02em;margin:.32em 0 .18em;font-weight:780;text-wrap:balance}
-  .lede{font-size:18px;color:var(--text2);max-width:66ch;margin:.2em 0 0}
+  .lede{font-size:18px;color:var(--text2);max-width:none;margin:.2em 0 0}
   .meta{display:flex;flex-wrap:wrap;gap:8px 10px;margin-top:22px;font-family:var(--mono);font-size:12.5px}
   .tag{border:1px solid var(--border);border-radius:999px;padding:4px 12px;color:var(--text2);background:var(--bg3)}
   .tag b{color:var(--accent3);font-weight:600}
@@ -41,16 +53,17 @@
 
   figure{margin:26px 0 6px;background:var(--bg3);border:1px solid var(--border);border-radius:14px;overflow:hidden}
   figure img,figure video{display:block;width:100%;height:auto;background:#000}
+  figure video{aspect-ratio:8/3}   /* 3-panel decode videos are 384×144 (8:3); reserve space so layout doesn't collapse before metadata loads */
   figcaption{padding:11px 16px;font-size:13px;color:var(--text2);border-top:1px solid var(--border)}
   figcaption b{color:var(--text);font-weight:600}
 
   section{padding:40px 0;border-top:1px solid var(--border)}
   .snum{font-family:var(--mono);font-size:13px;color:var(--accent3);letter-spacing:.04em}
   h2{font-size:25px;color:var(--text);margin:.15em 0 .1em;letter-spacing:-.015em;font-weight:720;text-wrap:balance}
-  h2+.sub{color:var(--text2);margin:.1em 0 1.1em;max-width:74ch}
+  h2+.sub{color:var(--text2);margin:.1em 0 1.1em;max-width:none}
   h3{font-size:19px;margin:30px 0 6px;color:var(--text);font-weight:680}
   h3 .h3n{font-family:var(--mono);font-size:14px;color:var(--accent3);margin-right:8px}
-  p{max-width:74ch} .prose b{color:var(--text)}
+  p{max-width:none} .prose b{color:var(--text)}
 
   .scroll{overflow-x:auto;border:1px solid var(--border);border-radius:12px;background:var(--bg3)}
   table{border-collapse:collapse;width:100%;font-size:14px;min-width:540px}
@@ -84,36 +97,56 @@
 </head>
 <body>
 
-<header class="top"><div class="wrap">
-  <div class="eyebrow">Latent Milestone World Model · for kai0 π0.5 VLA</div>
+<header class="top"><div class="doc"><div></div><div>
+  <div class="eyebrow">Latent Milestone World Model · unified DINOv3-base</div>
   <h1><span class="grad">LMWM</span> — Latent Milestone World Model</h1>
-  <p class="lede">给 VLA 一个 milestone+1 的<b>价值层宏观引导</b>:π0.5 SigLIP 同塔 + <b>预测器(Predictor)+ 生成器(Generator)</b> 两模块。两条硬指标 —— ①解码保真、②预测的 milestone+1 进展价值 &gt; 当前 stage。对照基线 <b>LaWM</b>。</p>
+  <p class="lede">给 VLA 一个 milestone+1 的<b>价值层宏观引导</b>:<b>统一 DINOv3-base 单空间</b> + <b>预测器(Predictor)+ 生成器(Generator)</b> 两模块。全链路一个编码器 —— milestone 挖矿、预测器输入、teacher、生成器、可视化解码<b>同一 DINOv3-base 空间</b>,预测结果可直接解码回帧。对照基线 <b>LaWM</b>。</p>
   <div class="meta">
-    <span class="tag">模型 <b>Predictor + Generator(center_w=0.1)</b></span>
-    <span class="tag">编码器 <b>π0.5 SigLIP(同塔) · DINOv3-H 离线</b></span>
-    <span class="tag">世界模型 <b>~34M CNN</b></span>
+    <span class="tag">模型 <b>Predictor(MDN K=4) + Generator(AdaLN)</b></span>
+    <span class="tag">编码器 <b>DINOv3-base 768(统一单空间)</b></span>
+    <span class="tag">teacher <b>proto(簇中心码)</b></span>
+    <span class="tag">世界模型 <b>~34M</b></span>
     <span class="tag">baseline <b>LaWM</b></span>
-    <span class="tag">2026-07-08</span>
+    <span class="tag">2026-07-11</span>
   </div>
-  <p class="ref" style="margin-top:14px">本页是<b>精简可视化 showcase</b>;完整数据记录、全部消融表与过程迭代见报告 <code>lmwm/docs/FINAL_REPORT.md</code>。</p>
-</div></header>
+  <p class="ref" style="margin-top:14px">本页是<b>最终架构介绍</b> —— 只讲<b>统一 DINOv3-base 世界模型</b>的设计与效果(不含消融/历史探索);完整数据记录见 <code>lmwm/docs/RESULT_newcrave_final_arch_2026-07-11.md</code>。</p>
+</div></div></header>
 
-<div class="wrap">
+<div class="doc">
+<nav class="toc">
+  <div class="tt">目录</div>
+  <a href="#baseline">01 · LaWM 基线</a>
+  <a href="#arch">02 · LMWM 架构</a>
+  <a href="#arch-data" class="sub">2.1 CRAVE milestone</a>
+  <a href="#arch-net" class="sub">2.2 预测器+生成器</a>
+  <a href="#arch-viz" class="sub">2.3 闭环可视化</a>
+  <a href="#compare">03 · 对比分析</a>
+  <a href="#compare-arch" class="sub">3.1 架构对照</a>
+  <a href="#compare-arena" class="sub">3.2 9-arena 头对头</a>
+  <a href="#compare-kai0" class="sub">3.3 kai0 硬指标</a>
+  <a href="#compare-encoder" class="sub">3.4 编码空间对比</a>
+  <a href="#future">04 · 未来计划</a>
+  <a href="#verdict">05 · 客观总评</a>
+</nav>
+<main>
 
   <div class="tiles">
-    <div class="tile hl"><div class="k">deploy grid-cos</div><div class="v">0.728</div><div class="n">实战保真(身份 top3 0.511)</div></div>
-    <div class="tile"><div class="k">oracle 天花板</div><div class="v">0.761</div><div class="n">已知真答案的上限(&gt; deploy)</div></div>
-    <div class="tile"><div class="k">预测 reach</div><div class="v">1.67<small>s</small></div><div class="n">&gt; LaWM 1.48s(更难目标)</div></div>
+    <div class="tile hl"><div class="k">deploy grid-cos</div><div class="v">0.910</div><div class="n">kai0+coffee 均值(kai0 0.866)</div></div>
+    <div class="tile"><div class="k">身份 id top-3</div><div class="v">0.940</div><div class="n">预测下一 milestone 身份(kai0 0.894)</div></div>
+    <div class="tile"><div class="k">解码保真 val-L1</div><div class="v">0.051</div><div class="n">grid 解码器(pooled 0.177)</div></div>
     <div class="tile"><div class="k">世界模型参数</div><div class="v">~34<small>M</small></div><div class="n">vs LaWM ~230M(轻 ~10×)</div></div>
   </div>
 
   <figure>
-    <img alt="LMWM 预测 milestone+1 四栏对比" src="assets/hero_cw01.jpg">
-    <figcaption><b>LMWM(center_w=0.1)预测 milestone+1</b> · 四栏 = 当前帧 │ <b>预测</b> m+1→解码 │ 真实 m+1 编→解码 │ 真实 m+1 帧。预测(第2栏)= 衣物更展开/更平,与真实"进度前进"的下一 milestone 吻合(硬指标①保真)。</figcaption>
+    <video controls playsinline preload="metadata" muted loop>
+      <source src="assets/neural_pred_decode_kai.mp4" type="video/mp4">
+      浏览器无法内嵌播放,<a href="assets/neural_pred_decode_kai.mp4">点此下载视频</a>。
+    </video>
+    <figcaption><b>神经预测器闭环可视化(统一 DINOv3-base)</b> · 三栏 = 当前帧 │ <b>神经预测</b> m+1(生成器输出解码)│ 真实下一 stage 代表帧(同管线 encode→decode)。全在 DINOv3-base 单空间 → 预测直接可解码,可比"预测像不像真实下一 milestone 代表帧"。</figcaption>
   </figure>
 
   <!-- ============ §01 LaWM baseline ============ -->
-  <section>
+  <section id="baseline">
     <div class="snum">01 / baseline</div>
     <h2>Baseline: LaWM(Latent World Model)</h2>
     <p class="sub">对照基线。LaWM 用<b>冻结 DINOv3</b> 编码 + 逆向动力学 latent action + AdaLN-DiT 解码,预测<b>固定 ~1.6s 后</b>的未来观测特征,再蒸馏给 VLA(Alternate-DiT action expert)。下面是其官方两阶段流水线图,以及我们认为的<b>两点不合理性</b>。</p>
@@ -175,13 +208,25 @@
   </section>
 
   <!-- ============ §02 LMWM architecture ============ -->
-  <section>
+  <section id="arch">
     <div class="snum">02 / architecture</div>
-    <h2>LMWM 网络架构 · 两阶段</h2>
-    <p class="sub">针对上面两点,LMWM 分两阶段:<b>2.1 离线构建 milestone 数据集(CRAVE)</b> 给出"价值前向"的监督目标;<b>2.2 在 π0.5 SigLIP 同塔上训练预测器+生成器</b> 消除编码器隔阂。</p>
+    <h2>LMWM 网络架构 · 统一 DINOv3-base 单空间</h2>
+    <p class="sub">针对上面两点,LMWM 全链路统一在 <b>一个 DINOv3-base 编码器</b>上:<b>2.1 CRAVE 挖出"价值前向"的 milestone+1 监督目标</b>(解决 1.2);<b>2.2 预测器+生成器与 milestone 同在 DINOv3-base 空间</b>(解决 1.1,且预测可直接解码可视化)。统一单空间的收益:<b>全链路无跨空间损耗、预测器输出可直接解码回帧</b>。</p>
 
-    <h3><span class="h3n">2.1</span>数据集构建 — CRAVE milestone 数据集(离线 label 工厂)</h3>
-    <p class="sub" style="margin-top:4px">解决 1.2:目标不是"1.6s 后的帧",而是 CRAVE 跨 episode 复现 + Viterbi 单调分配出的 <b>milestone+1</b> —— 保证时间前向、跨集一致、进展价值单调↑。这套 DINOv3-H + CRAVE 只在<b>离线</b>产监督目标,不上线。</p>
+    <h3 id="arch-data"><span class="h3n">2.1</span>数据集构建 — CRAVE milestone 数据集(离线 label 工厂)</h3>
+    <p class="sub" style="margin-top:4px">解决 1.2:目标不是"1.6s 后的帧",而是 CRAVE 跨 episode 复现 + Viterbi 单调分配出的 <b>milestone+1</b> —— 保证时间前向、跨集一致、进展价值单调↑(vs 监督 GT corr <b>0.943</b>)。<b>最新 CRAVE 方法</b>:DINOv3-base pooled → <b>PCA128 ⊕ proprio 位置(能量 1:1)</b> → <b>BayesianGMM(自适应 K)</b> + per-mode 覆盖率筛选 + 中位数值 → 双锚 Viterbi。kai0 得 <b>16 个</b>价值单调 milestone。这套只在<b>离线</b>产监督目标。</p>
+
+    <div class="keybox" style="margin-top:6px"><p style="font-size:14.5px"><b>什么是 milestone?</b> CRAVE 离线把<b>所有 episode 的帧</b>聚成若干<b>跨 episode 复现的"任务阶段"簇</b>(如"抓起衣角 → 对折 → 压平"),每个簇=一个 milestone,并按<b>任务进展价值</b>排序(value-monotone,vs 监督 GT corr 0.943)。kai0 得 16 个。</p></div>
+    <div class="scroll" style="margin-top:10px"><table>
+      <thead><tr><th>需要区分的概念</th><th>是什么 / 我们用哪个</th></tr></thead>
+      <tbody>
+        <tr><td class="term">① <b>价值层</b> milestone+1<br><small class="pos">← 我们的目标</small></td><td>按 CRAVE 的<b>价值序</b>,当前所在阶段的<b>下一个价值阶段</b>。跨 episode 一致、时间前向、进展价值单调↑ —— <b>"任务朝完成方向的下一步"</b>。</td></tr>
+        <tr><td class="term">② <b>进度层</b> milestone+1<br><small class="amb">← 不是目标</small></td><td>单纯按<b>时间/帧进度</b>往后的下一段。可能含回退、相机抖动、与进展无关的变化 —— 这正是 <b>LaWM 固定 1.6s 视野的问题</b>(§01)。价值层用 Viterbi 单调分配把这些排除。</td></tr>
+        <tr><td class="term">③ 预测<b>目标帧</b><br><small class="pos">= 本 episode medoid</small></td><td><b>关键细节:我们预测的不是 milestone+1 的簇中心。</b> 簇中心是<b>跨 episode 的平均</b>(抽象、混了不同 episode 的布色/物体),不能当生成目标。真正的目标 = <b>本 episode 自己</b>被 Viterbi 分段后、<b>下一段内与簇中心最相似的那一帧(medoid)</b> —— 即"<b>这个 episode 的下一阶段长什么样</b>"(布色/物体与当前 episode 一致)。</td></tr>
+        <tr><td class="term">④ 簇中心的<b>两个用途</b></td><td>簇中心只用作<b>身份</b>:预测器蒸馏的 <b>teacher 码</b>=下一 milestone 簇中心的投影(="是哪个阶段"的标识符);而生成器<b>渲染</b>的目标是③的<b>本 episode 代表帧</b>(="这个阶段在本 episode 长什么样")。即 <b>码=抽象身份,目标帧=具体本集样貌</b>,两者分工。</td></tr>
+      </tbody>
+    </table></div>
+    <p class="ref">↑ 训练即 <code>build_pairs_abl</code>:每 episode Viterbi 单调分段 → 每段取本集 medoid → <b>pair=(当前段 medoid, 下一段 medoid)</b>,生成器学"给定当前 grid + 下一阶段身份码 → 渲染本 episode 下一阶段代表帧"。⚠️ medoid <b>必须 per-episode</b>:全局 medoid 会跨到别 episode 的布色 → 颜色错乱。</p>
     <div class="diagram">
       <svg viewBox="0 0 1000 210" role="img" aria-label="CRAVE milestone 数据集构建流水线">
         <defs><marker id="ah2" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#a78bfa"/></marker></defs>
@@ -194,10 +239,10 @@
           .car{stroke:#a78bfa;stroke-width:1.7;fill:none}
         </style>
         <rect class="cbx" x="20" y="78" width="120" height="56" rx="9"/><text class="ct" x="80" y="102">episode 帧</text><text class="cs" x="80" y="120">30Hz</text>
-        <rect class="cfz" x="176" y="78" width="130" height="56" rx="9"/><text class="ct" x="241" y="100">DINOv3-H</text><text class="cs" x="241" y="118">冻结 · pooled 特征</text>
-        <rect class="cbx" x="342" y="78" width="140" height="56" rx="9"/><text class="ct" x="412" y="100">跨 episode 复现图</text><text class="cs" x="412" y="118">recurrence graph</text>
-        <rect class="cbx" x="518" y="78" width="130" height="56" rx="9"/><text class="ct" x="583" y="100">37 原型 milestone</text><text class="cs" x="583" y="118">prototype table</text>
-        <rect class="cbx" x="684" y="78" width="120" height="56" rx="9"/><text class="ct" x="744" y="100">Viterbi 单调</text><text class="cs" x="744" y="118">进度前向分配</text>
+        <rect class="cfz" x="176" y="78" width="130" height="56" rx="9"/><text class="ct" x="241" y="100">DINOv3-base</text><text class="cs" x="241" y="118">PCA128 ⊕ proprio</text>
+        <rect class="cbx" x="342" y="78" width="140" height="56" rx="9"/><text class="ct" x="412" y="100">BayesianGMM</text><text class="cs" x="412" y="118">自适应 K · 覆盖率筛</text>
+        <rect class="cbx" x="518" y="78" width="130" height="56" rx="9"/><text class="ct" x="583" y="100">16 原型 milestone</text><text class="cs" x="583" y="118">中位数值 · 单峰</text>
+        <rect class="cbx" x="684" y="78" width="120" height="56" rx="9"/><text class="ct" x="744" y="100">双锚 Viterbi</text><text class="cs" x="744" y="118">进度前向分配</text>
         <rect class="chi" x="840" y="78" width="140" height="56" rx="9"/><text class="ct" x="910" y="98">milestone+1</text><text class="cs" x="910" y="116">medoid 目标帧</text>
         <line class="car" x1="140" y1="106" x2="176" y2="106" marker-end="url(#ah2)"/>
         <line class="car" x1="306" y1="106" x2="342" y2="106" marker-end="url(#ah2)"/>
@@ -205,13 +250,13 @@
         <line class="car" x1="648" y1="106" x2="684" y2="106" marker-end="url(#ah2)"/>
         <line class="car" x1="804" y1="106" x2="840" y2="106" marker-end="url(#ah2)"/>
         <text x="500" y="30" style="fill:#a78bfa;font:600 12px monospace;text-anchor:middle">离线 label 工厂 —— 只产监督目标,不上线</text>
-        <text x="500" y="176" style="fill:#86efac;font:10.5px sans-serif;text-anchor:middle">✓ 时间前向 ✓ 跨 episode 一致 ✓ 进展价值单调↑(corr(value,time)=0.94)</text>
+        <text x="500" y="176" style="fill:#86efac;font:10.5px sans-serif;text-anchor:middle">✓ 时间前向 ✓ 跨 episode 一致 ✓ 进展价值单调↑(vs 监督 GT corr 0.943)</text>
       </svg>
     </div>
 
-    <h3><span class="h3n">2.2</span>模型训练 & 部署 — 预测器 + 生成器(π0.5 SigLIP 同塔)</h3>
-    <p class="sub" style="margin-top:4px">解决 1.1:在线编码换成 <b>π0.5 自己的 SigLIP</b>(与策略同塔、复用 KV,零隔阂)。<b>预测器 Predictor + MDN(K=4)</b> 蒸馏下一 milestone 的<b>簇中心连续码</b>(proto teacher,零参数·开放词表);<b>生成器 Generator(AdaLN)</b> 以当前 grid 为画布渲染子目标。部署含 <b>prev_ẑ 反馈</b>(自身上步输出条件化)+ <b>密度弃权</b>(不确定时不硬塞)。</p>
-    <p class="sub" style="margin-top:10px;margin-bottom:4px"><b>训练</b>与<b>部署</b>是两张不同的图:训练时有一道<b>「矿界」</b>—— 线下 CRAVE 挖矿的 label 工厂,只吐监督目标、不上线;部署时矿界整体消失,只剩两个网络在 π0.5 SigLIP 同塔上自包含前向。</p>
+    <h3 id="arch-net"><span class="h3n">2.2</span>模型训练 & 部署 — 预测器 + 生成器(统一 DINOv3-base 空间)</h3>
+    <p class="sub" style="margin-top:4px">解决 1.1:预测器/生成器与 milestone <b>同在 DINOv3-base 空间</b>(与挖矿、teacher、解码同一空间,零跨空间损耗)。<b>预测器 Predictor · MDN(K=4)</b> 蒸馏下一 milestone 的<b>簇中心连续码</b>(proto teacher,码=簇中心的<b>共享 PCA128 投影</b>,去噪+跨任务共享·单/多任务通用,零参数·开放词表);<b>生成器 Generator · AdaLN</b> 以当前 DINOv3-base grid 为画布渲染子目标 grid。部署含 <b>prev_ẑ 反馈</b>(自身上步输出条件化)+ <b>密度弃权</b>(不确定时不硬塞)。因全程 DINOv3-base,<b>预测输出可直接经 grid 解码器解码回帧</b>(见 §2.3 闭环可视化)。</p>
+    <p class="sub" style="margin-top:10px;margin-bottom:4px"><b>训练</b>与<b>部署</b>是两张不同的图:训练时有一道<b>「矿界」</b>—— 线下 CRAVE 挖矿的 label 工厂,只吐 milestone+1 监督目标、不上线;部署时矿界整体消失,只剩两个网络在 DINOv3-base 编码器上自包含前向。<b>编码器训练/部署是同一个 DINOv3-base</b>。</p>
 
     <!-- ============ SVG A · 训练(含矿界)============ -->
     <div class="diagram">
@@ -241,8 +286,8 @@
         <rect class="n2mine" x="14" y="8" width="972" height="120" rx="12"/>
         <text class="n2mt" x="150" y="28">⛏ 矿界 · 离线 CRAVE 挖矿 label 工厂(不上线)</text>
         <rect class="n2mn" x="30" y="44" width="118" height="56" rx="8"/><text class="n2t" x="89" y="68">demo 视频</text><text class="n2s" x="89" y="86">原始帧序列</text>
-        <rect class="n2mn" x="182" y="44" width="140" height="56" rx="8"/><text class="n2t" x="252" y="68">DINOv3-H 编码</text><text class="n2s" x="252" y="86">840M · 离线专用</text>
-        <rect class="n2mn" x="356" y="44" width="168" height="56" rx="8"/><text class="n2t" x="440" y="66">CRAVE Viterbi 挖矿</text><text class="n2s" x="440" y="86">跨 episode 复现→价值序</text>
+        <rect class="n2mn" x="182" y="44" width="140" height="56" rx="8"/><text class="n2t" x="252" y="68">DINOv3-base 编码</text><text class="n2s" x="252" y="86">PCA128⊕proprio</text>
+        <rect class="n2mn" x="356" y="44" width="168" height="56" rx="8"/><text class="n2t" x="440" y="66">CRAVE BGMM 挖矿</text><text class="n2s" x="440" y="86">跨 episode 复现→价值序</text>
         <rect class="n2mn" x="558" y="44" width="150" height="56" rx="8"/><text class="n2t" x="633" y="68">milestone 簇中心 c</text><text class="n2s" x="633" y="86">身份原型</text>
         <rect class="n2mn" x="742" y="44" width="224" height="56" rx="8"/><text class="n2t" x="854" y="68">milestone+1 目标帧</text><text class="n2s" x="854" y="86">= 生成器监督目标</text>
         <path class="n2arm" d="M148,72 L182,72" marker-end="url(#ahm3)"/>
@@ -258,12 +303,12 @@
 
         <!-- 在线形态的可训练主体 -->
         <rect class="n2bx" x="14" y="196" width="96" height="56" rx="8"/><text class="n2t" x="62" y="220">当前帧</text><text class="n2s" x="62" y="240">224²×3</text>
-        <rect class="n2fz" x="132" y="162" width="250" height="142" rx="10"/><text class="n2t" x="200" y="196">π0.5 SigLIP</text><text class="n2s" x="200" y="214">❄ 冻结 · 同塔</text><text class="n2s" x="200" y="232">内部 patch token</text>
+        <rect class="n2fz" x="132" y="162" width="250" height="142" rx="10"/><text class="n2t" x="200" y="196">DINOv3-base</text><text class="n2s" x="200" y="214">❄ 冻结 · 统一编码器</text><text class="n2s" x="200" y="232">patch grid(每 patch L2)</text>
         <rect class="n2bx" x="274" y="178" width="96" height="42" rx="8"/><text class="n2t" x="322" y="198">gist g_t</text><text class="n2s" x="322" y="214">= pool(G_t)</text>
-        <rect class="n2bx" x="274" y="250" width="96" height="42" rx="8"/><text class="n2t" x="322" y="270">grid G_t</text><text class="n2s" x="322" y="286">16²×1152</text>
+        <rect class="n2bx" x="274" y="250" width="96" height="42" rx="8"/><text class="n2t" x="322" y="270">grid G_t</text><text class="n2s" x="322" y="286">16²×768</text>
         <rect class="n2ac" x="450" y="178" width="210" height="58" rx="8"/><text class="n2t" x="555" y="202">预测器 · MDN(K=4)</text><text class="n2s" x="555" y="222">g_t → ẑ(128)</text>
         <rect class="n2ac" x="450" y="304" width="210" height="62" rx="8"/><text class="n2t" x="555" y="329">生成器 · AdaLN(4 块)</text><text class="n2s" x="555" y="349">G_t 画布 + z → 预测 grid</text>
-        <rect class="n2bx" x="724" y="304" width="104" height="62" rx="8"/><text class="n2t" x="776" y="329">预测 Ĝ</text><text class="n2s" x="776" y="349">16²×1152</text>
+        <rect class="n2bx" x="724" y="304" width="104" height="62" rx="8"/><text class="n2t" x="776" y="329">预测 Ĝ</text><text class="n2s" x="776" y="349">16²×768</text>
 
         <path class="n2ar" d="M110,224 H132" marker-end="url(#ah3)"/>
         <path class="n2ar" d="M250,224 H262 V271 H274" marker-end="url(#ah3)"/>
@@ -282,7 +327,7 @@
       </svg>
       <div class="legend">
         <span><i style="background:#241206;border:1px dashed #b45309"></i>⛏ 矿界(离线挖矿 · 不上线)</span>
-        <span><i style="background:#2a1065;border:1px solid #7c3aed"></i>❄ 冻结同塔(π0.5 SigLIP)</span>
+        <span><i style="background:#2a1065;border:1px solid #7c3aed"></i>❄ 冻结统一编码器(DINOv3-base)</span>
         <span><i style="background:#1a0b3e;border:1px solid #a78bfa"></i>可训练(预测器/生成器)</span>
         <span><i style="background:#3f1d1d;border:1px solid #f87171"></i>损失</span>
       </div>
@@ -290,7 +335,7 @@
 
     <!-- ============ SVG B · 部署(矿界消失)============ -->
     <div class="diagram" style="margin-top:14px">
-      <svg viewBox="0 0 1000 236" role="img" aria-label="LMWM 部署框架:矿界消失,SigLIP 同塔上两个网络自包含前向">
+      <svg viewBox="0 0 1000 236" role="img" aria-label="LMWM 部署框架:矿界消失,DINOv3-base 编码器上两个网络自包含前向 + grid 解码">
         <defs><marker id="ah4" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#34d399"/></marker></defs>
         <style>
           .d2fz{fill:#2a1065;stroke:#7c3aed;stroke-width:1.8}
@@ -301,16 +346,16 @@
           .d2ar{stroke:#34d399;stroke-width:2;fill:none}
           .d2lb{fill:#6ee7b7;font:10px monospace;text-anchor:middle}
         </style>
-        <text x="20" y="26" style="fill:#6ee7b7;font:700 12px sans-serif">部署:⛏ 矿界消失 · 零 CRAVE / 零 DINO / 零 bank · 自包含 ~34M</text>
+        <text x="20" y="26" style="fill:#6ee7b7;font:700 12px sans-serif">部署:⛏ 矿界消失 · 零 CRAVE / 零 bank · DINOv3-base 编码器自包含前向</text>
 
         <rect class="d2bx" x="14" y="68" width="88" height="56" rx="8"/><text class="d2t" x="58" y="92">当前帧</text><text class="d2s" x="58" y="110">224²×3</text>
-        <rect class="d2fz" x="122" y="42" width="244" height="110" rx="10"/><text class="d2t" x="190" y="78">π0.5 SigLIP</text><text class="d2s" x="190" y="96">❄ 冻结·复用KV</text><text class="d2s" x="190" y="114">grid 在塔内产生</text>
-        <rect class="d2bx" x="268" y="52" width="88" height="42" rx="8"/><text class="d2t" x="312" y="72">grid G_t</text><text class="d2s" x="312" y="88">16²×1152</text>
+        <rect class="d2fz" x="122" y="42" width="244" height="110" rx="10"/><text class="d2t" x="190" y="78">DINOv3-base</text><text class="d2s" x="190" y="96">❄ 冻结 · 统一编码器</text><text class="d2s" x="190" y="114">grid patch(每 patch L2)</text>
+        <rect class="d2bx" x="268" y="52" width="88" height="42" rx="8"/><text class="d2t" x="312" y="72">grid G_t</text><text class="d2s" x="312" y="88">16²×768</text>
         <rect class="d2bx" x="268" y="102" width="88" height="42" rx="8"/><text class="d2t" x="312" y="122">gist g_t</text><text class="d2s" x="312" y="138">= pool(G_t)</text>
         <rect class="d2ac" x="398" y="100" width="166" height="42" rx="8"/><text class="d2t" x="481" y="118">预测器 MDN(K=4)</text><text class="d2s" x="481" y="136">g_t⊕prev_ẑ → ẑ</text>
         <rect class="d2ac" x="606" y="68" width="170" height="56" rx="8"/><text class="d2t" x="691" y="92">生成器 AdaLN</text><text class="d2s" x="691" y="110">(G_t画布,ẑ)→Ĝ</text>
-        <rect class="d2bx" x="804" y="68" width="88" height="56" rx="8"/><text class="d2t" x="848" y="92">子目标 Ĝ</text><text class="d2s" x="848" y="110">16²×1152</text>
-        <rect class="d2fz" x="749" y="172" width="198" height="48" rx="8"/><text class="d2t" x="848" y="196">π0.5 action expert</text><text class="d2s" x="848" y="212">注入 Ĝ · KI · 下游SR</text>
+        <rect class="d2bx" x="804" y="68" width="88" height="56" rx="8"/><text class="d2t" x="848" y="92">子目标 Ĝ</text><text class="d2s" x="848" y="110">16²×768</text>
+        <rect class="d2ac" x="749" y="172" width="198" height="48" rx="8"/><text class="d2t" x="848" y="194">grid 解码器</text><text class="d2s" x="848" y="210">Ĝ → 帧(闭环可视化)</text>
 
         <!-- arrows -->
         <path class="d2ar" d="M102,96 L122,96" marker-end="url(#ah4)"/>
@@ -332,8 +377,8 @@
         <path class="d2ar" d="M848,124 V172" marker-end="url(#ah4)"/>
       </svg>
       <div class="legend">
-        <span><i style="background:#2a1065;border:1px solid #7c3aed"></i>❄ 冻结同塔 · 复用 KV</span>
-        <span><i style="background:#052e2b;border:1px solid #34d399"></i>在线两网络(预测器/生成器)</span>
+        <span><i style="background:#2a1065;border:1px solid #7c3aed"></i>❄ 冻结 DINOv3-base 统一编码器</span>
+        <span><i style="background:#052e2b;border:1px solid #34d399"></i>在线两网络(预测器/生成器)+ grid 解码器</span>
         <span style="color:#6ee7b7">⛏ 矿界已消失 · 部署零挖矿</span>
       </div>
     </div>
@@ -341,86 +386,133 @@
     <div class="scroll"><table>
       <thead><tr><th>模块</th><th>回答什么</th><th>训练形态</th><th>部署形态</th></tr></thead>
       <tbody>
-        <tr><td class="term">预测器<br>Predictor</td><td>下一个价值 milestone 是<b>哪个</b>?</td><td><b>proto teacher</b>:下一 milestone 的 SigLIP 簇中心固定投影 → 连续码 z(128);MDN(K=4) NLL 蒸馏 · <b>开放词表</b>(无 CE anchor)</td><td class="pos">MDN(K=4) 条件于 g_t + <b>prev_ẑ 反馈</b>(上步自身输出)· <b>密度弃权</b>(低密度→交还语言通道,不硬塞错提示)</td></tr>
-        <tr><td class="term">生成器<br>Generator</td><td>它在当前场景<b>长什么样</b>?</td><td colspan="2" class="pos">AdaLN:当前 grid 当画布,码 → per-block shift/scale/gate(zero-init gate),只学"变化" · 外观由当前观测带入,训练/部署同一形态</td></tr>
+        <tr><td class="term">预测器<br>Predictor</td><td>下一个价值 milestone 是<b>哪个</b>?</td><td><b>proto teacher</b>:下一 milestone 的 DINOv3-base 簇中心 → <b>共享 PCA128</b> 投影 → 连续码 z(128);MDN(K=4) NLL 蒸馏 · <b>开放词表</b>(无 CE anchor)</td><td class="pos">MDN(K=4) 条件于 g_t + <b>prev_ẑ 反馈</b>(上步自身输出)· <b>密度弃权</b>(低密度→不硬塞错提示)</td></tr>
+        <tr><td class="term">生成器<br>Generator</td><td>它在当前场景<b>长什么样</b>?</td><td colspan="2" class="pos">AdaLN:当前 DINOv3-base grid 当画布,码 → per-block shift/scale/gate(zero-init gate),只学"变化" · 外观由当前观测带入,训练/部署同一形态</td></tr>
       </tbody>
     </table></div>
 
-    <p style="margin-top:16px"><b>架构定档(2026-07-08 P1/P2 数据收敛)</b>:teacher=<b>proto</b>(簇中心码,与 inv 打平但去掉 InverseEnc+CE 锚,更简/开放词表);预测器加 <b>prev_ẑ 条件化</b>(自身上步输出反馈,code-top1 +0.029,xvla 身份 +0.012);不确定性通过<b>MDN 自身密度弃权</b>(替代熵门——pi 塌成 one-hot 而密度能分对错 AUC 0.63);<b>DINO 沙箱否决</b>(SigLIP-native 解码 L1 0.027 ≈ DINO-true 0.025,穿过 DINO 反而赔钱)。完整设计赌注逐项裁决见 <code>lmwm/docs/LMWM2_FINAL_ARCHITECTURE.md</code>。</p>
+    <p style="margin-top:16px"><b>架构定档</b>:①<b>统一 DINOv3-base 单空间</b> —— 预测器输入/teacher/生成器/挖矿/解码同一个 768 空间,无跨空间损耗、预测可直接解码(kai0+coffee deploy <b>0.910</b> / id-top3 <b>0.940</b>);②teacher=<b>proto</b>(簇中心码,无 InverseEnc/无 CE 锚,更简且开放词表),码=下一 milestone 簇中心的 <b>共享 PCA128 投影</b>(全任务联合 fit 一个 PCA·去噪+跨任务共享·单/多任务通用);③预测器加 <b>prev_ẑ 条件化</b>(自身上步输出反馈);④不确定性用 <b>MDN 自身密度弃权</b>。关键工程:DINOv3 patch token 量级大 → 必须<b>每 patch L2 归一 + fp32 统计</b>(否则 grid-cos 溢出 NaN、身份崩)。完整数据见 <code>lmwm/docs/RESULT_newcrave_final_arch_2026-07-11.md</code>。</p>
 
-    <h3><span class="h3n">2.3</span>预测渲染效果</h3>
-    <p class="sub" style="margin-top:4px">最终模型(center_w=0.1)预测 milestone+1。四栏 = 当前 │ <b>预测 m+1 解码</b> │ 真实 m+1 编→解码 │ 真实 m+1 帧(中间两栏过<b>同一</b>解码器 → 差异纯是预测质量)。</p>
+    <h3 id="arch-viz"><span class="h3n">2.3</span>闭环可视化 —— 统一 DINO 空间的独有能力</h3>
+    <p class="sub" style="margin-top:4px">因预测器/生成器与解码器同在 DINOv3-base 空间,<b>神经预测结果可直接解码回帧</b>(若预测器与解码器分处两个空间则无法闭环)。这是统一单空间的独有价值。</p>
     <div class="vids">
       <figure><video controls playsinline preload="metadata" muted loop>
-          <source src="assets/final_cw01_ep8.mp4" type="video/mp4">
-          浏览器无法内嵌播放,<a href="assets/final_cw01_ep8.mp4">点此下载视频</a>。
+          <source src="assets/neural_pred_decode_kai.mp4" type="video/mp4">
+          浏览器无法内嵌播放,<a href="assets/neural_pred_decode_kai.mp4">点此下载视频</a>。
         </video>
-        <figcaption><b>ep8(域内)</b> · 簇中心锚把预测拉回真实流形 → 无黑斑,衣物/夹爪/折叠态/落点忠实(硬指标①保真达标)。</figcaption></figure>
+        <figcaption><b>神经预测器闭环</b> · 三栏 = 当前帧 │ <b>神经预测 m+1</b>(生成器 <code>fwd(G_t, ẑ)</code> 解码)│ 真实下一 stage 代表帧。右栏 = 训练用的 next-seg medoid(Viterbi 分段,与 <code>build_pairs_abl</code> 一致),经<b>同一</b> encode→decode;两栏同管线 → 差异纯是预测质量。预测前瞻下一态(如青布展开)、颜色与本 episode 一致。</figcaption></figure>
       <figure><video controls playsinline preload="metadata" muted loop>
-          <source src="assets/final_heldout_cw01.mp4" type="video/mp4">
-          浏览器无法内嵌播放,<a href="assets/final_heldout_cw01.mp4">点此下载视频</a>。
+          <source src="assets/dinov3base_pooled_vs_grid_ep100.mp4" type="video/mp4">
+          浏览器无法内嵌播放,<a href="assets/dinov3base_pooled_vs_grid_ep100.mp4">点此下载视频</a>。
         </video>
-        <figcaption><b>ep3000(留出集,未训练)</b> · 未见 episode 上预测与真实进度前向 milestone 高度吻合 —— 泛化到留出数据。<span class="ref">SigLIP 解码略糊是对比训练特征的重建天花板(val_L1≈0.05),非预测问题;VLA 消费的是特征不是像素。</span></figcaption></figure>
-      <figure><video controls playsinline preload="metadata" muted loop>
-          <source src="assets/final_visbase_cw01.mp4" type="video/mp4">
-          浏览器无法内嵌播放,<a href="assets/final_visbase_cw01.mp4">点此下载视频</a>。
-        </video>
-        <figcaption><b>vis_base 跨数据集(未见本体)</b> · 用最终 center_w=0.1 模型 + 为该 episode 现算的 DINOv3-H 特征做<b>跨域</b> milestone 预测(黑色衣物,外观与 kai0 差异大)。预测 m+1(第2栏)= 衣物更展开/被操作的形态,构型在特征空间迁移(§03.2 定量 cos 0.56)。<span class="ref">解码更糊 = kai0 训练的解码器跨域外观漂移(像素级),非预测问题。</span></figcaption></figure>
+        <figcaption><b>可视化解码器选型:pooled vs grid</b> · 三栏 = real │ pooled 解码(768D 一向量,软"可读原型")│ <b>grid 解码</b>(16²×768 空间 token,采用)。grid 保空间信息 → 重建误差降 3.4×(val-L1 0.051 vs 0.177),布形/夹爪/褶皱可辨。闭环可视化(上图)即用此 grid 解码器。</figcaption></figure>
     </div>
   </section>
 
   <!-- ============ §03 comparison ============ -->
-  <section>
+  <section id="compare">
     <div class="snum">03 / comparison</div>
     <h2>对比分析 · LMWM vs LaWM</h2>
     <p class="sub">从<b>与 VLA 的嵌入程度</b>(3.1)和<b>预测指标/视野</b>(3.2)两个角度对照。</p>
 
-    <h3><span class="h3n">3.1</span>与 VLA 的嵌入程度 & 参数</h3>
-    <p class="sub" style="margin-top:4px">LaWM 用独立 DINOv3 双塔、与策略脱离,latent 需跨空间蒸馏;LMWM 直接长在 π0.5 SigLIP 同塔上、复用 KV,子目标即策略消费空间 —— <b>嵌入更深、隔阂更小</b>,且参数轻 ~10×。</p>
+    <h3 id="compare-arch"><span class="h3n">3.1</span>架构对照 & 参数</h3>
+    <p class="sub" style="margin-top:4px">当前最终架构用<b>统一 DINOv3-base 单空间</b>(挖矿/预测器/生成器/teacher/解码同一空间)—— 相比 LaWM:<b>价值前向 milestone 目标、内置 MDN 自包含、参数轻 ~10×、预测可直接解码</b>。⚠️ 当前 DINOv3-base 编码器与策略<b>独立</b>(和 LaWM 的 DINO 一样),"与 π0.5 共享 SigLIP 塔、复用 KV"是<b>下一步融合</b>目标(§04)——先在 DINO 单空间把世界模型调稳,再迁到 SigLIP 空间做 VLA 融合。</p>
     <div class="scroll"><table>
-      <thead><tr><th>维度</th><th>LaWM(baseline)</th><th>LMWM(ours)</th></tr></thead>
+      <thead><tr><th>维度</th><th>LaWM(baseline)</th><th>LMWM(当前 · 统一 DINOv3-base)</th></tr></thead>
       <tbody>
-        <tr><td class="term">在线编码器</td><td>独立 DINOv3 ViT-B/16(768)</td><td class="pos">π0.5 SigLIP-So400m(1152)· <b>与策略同塔</b></td></tr>
-        <tr><td class="term">与 VLA 关系</td><td class="amb">脱离 · latent 跨空间蒸馏</td><td class="pos">同塔复用 KV · 子目标即策略空间</td></tr>
+        <tr><td class="term">编码器</td><td>独立 DINOv3 ViT-B/16(768)</td><td class="pos">统一 DINOv3-base(768)· <b>全链路单空间</b>(挖矿+预测+生成+解码同塔)</td></tr>
+        <tr><td class="term">空间一致性</td><td class="amb">世界模型隐空间自成一体</td><td class="pos">预测器输出<b>可直接解码回帧</b>(闭环可视化 §2.3)</td></tr>
         <tr><td class="term">teacher / 预测</td><td>24 层 Perceiver-Transformer 逆向动力学</td><td class="pos">proto teacher(簇中心码,0 参数)+ MDN(K=4)预测器</td></tr>
         <tr><td class="term">码 / 调制</td><td>VAE code 32 · 12 层 AdaLN-DiT</td><td class="pos">连续码 128(码即簇中心=身份,开放词表)· 生成器 AdaLN(4 块 CNN)</td></tr>
-        <tr><td class="term">码调制方式</td><td>AdaLN-DiT(Transformer)</td><td>AdaLN(CNN · <b>收敛到同款</b>)</td></tr>
+        <tr><td class="term">目标语义</td><td class="amb">固定 ~1.6s 后未来(无价值约束)</td><td class="pos">CRAVE <b>价值单调 milestone+1</b>(corr 0.943)</td></tr>
         <tr><td class="term">部署预测码</td><td class="amb">LAM 内无 predm · 甩给策略</td><td class="pos">内置 MDN predm · 世界模型自包含</td></tr>
         <tr><td class="term">世界模型参数</td><td>~230M Transformer</td><td class="pos">~34M CNN(轻 ~10×)</td></tr>
+        <tr><td class="term">与策略嵌入</td><td class="amb">独立 · latent 跨空间蒸馏</td><td class="amb">当前独立(DINO);<b>SigLIP 同塔融合 = §04 下一步</b></td></tr>
       </tbody>
     </table></div>
-    <p class="ref">LaWM 结构参照其官方两阶段图(§01,<a href="https://rlinf.github.io/LaWAM/">rlinf.github.io/LaWAM</a>)。两者<b>都收敛到 AdaLN 码调制</b> —— 我们消融里 concat 变体的 lag/平滑掉,自发换成 AdaLN。</p>
+    <p class="ref">LaWM 结构参照其官方两阶段图(§01,<a href="https://rlinf.github.io/LaWAM/">rlinf.github.io/LaWAM</a>)。两者<b>都收敛到 AdaLN 码调制</b>。</p>
 
-    <h3><span class="h3n">3.2</span>预测指标 / 视野对比</h3>
-    <p class="sub" style="margin-top:4px">同一批 kai0 数据、<b>同一 reach 协议</b>(预测帧匹配到的真帧比当前晚几秒)实测。⚠️ grid-cos 编码器空间不同不硬比;<b>reach(秒)严格同口径</b>(给官方 LaWM ckpt 补 deploy-predm 后在我们数据上测)。</p>
+    <h3 id="compare-arena"><span class="h3n">3.2</span>同环境实测对比 · 9 arena 头对头(kai0 + 3 LIBERO + coffee + 4 aloha)</h3>
+    <p class="sub" style="margin-top:4px"><b>真·同环境头对头</b>:官方 LaWM LAM 视觉塔 = <code>dinov3-vitb16-lvd1689m</code>(768D)= 我们 LMWM 的 <code>dinov3-base</code> <b>逐权重同一编码器</b> → 编码器空间免责声明消失。每个 arena 在<b>同 768D 空间 · 同 val · 同指标公式</b>下比:官方 LaWM 真权重(固定 1.6s 未来)vs LMWM(milestone+1)。<b>双机并行铺开</b> 9 个 arena(kai0 arena 在 gf3;LIBERO+coffee+aloha 在本机)。</p>
     <div class="scroll"><table>
-      <thead><tr><th>指标(headline)</th><th class="num">LaWM</th><th class="num">LMWM(cw=0.1)</th><th>谁好 / 口径</th></tr></thead>
+      <thead><tr><th>指标</th><th>含义(都在 DINOv3-base grid 空间,cos=grid 余弦相似度)</th></tr></thead>
       <tbody>
-        <tr><td class="term">reach / model lag(秒)</td><td class="num">1.48</td><td class="num pos">1.67</td><td class="pos"><b>LMWM 好</b> · 严格同口径,绝对更远</td></tr>
-        <tr><td class="term">undershoot ratio</td><td class="num">0.89</td><td class="num amb">0.63</td><td class="amb">LaWM 高:近未来易打满(非更强)</td></tr>
-        <tr><td class="term">负滞后率(&lt;0)</td><td class="num">10.7%</td><td class="num pos">6.5%</td><td class="pos"><b>LMWM 好</b> · 更少"预测倒退"</td></tr>
-        <tr><td class="term">deploy grid-cos</td><td class="num amb">—</td><td class="num pos">0.728</td><td>只看当前帧实战值(硬指标①)</td></tr>
-        <tr><td class="term">身份 top-3 / 价值单调</td><td class="num amb">N/A</td><td class="num pos">0.511 / ✓</td><td class="pos"><b>硬指标②</b> LaWM 无此约束</td></tr>
-        <tr><td class="term">下游 SR(extrinsic)</td><td class="num pos">LIBERO 98.6%</td><td class="num amb">待测(§04)</td><td class="amb"><b>LaWM 好</b> · 唯一短板</td></tr>
+        <tr><td class="term">oracle</td><td><b>teacher-forced 重建上界</b> = cos(模型重建, 真未来帧)。<b>喂了要预测的未来帧</b>再重建 → 衡量"编码-解码能力",<b>部署时拿不到未来,故非部署可用</b>。LaWM 有;LMWM 的 proto teacher 无 inverse,无此口径。</td></tr>
+        <tr><td class="term">persistence</td><td><b>"照抄当前帧"基线</b> = cos(当前 grid, 目标 grid)。目标越近/越像当前,persistence 越高。</td></tr>
+        <tr><td class="term">deploy</td><td><b>真部署预测</b> = cos(模型预测的下一 grid, 目标 grid),<b>只看当前帧、不给未来</b>。这才是上线时的实际预测质量。</td></tr>
+        <tr><td class="term"><b>lift</b></td><td><b>= deploy − persistence</b>,预测比"照抄当前"多学到多少。<b>关键:deploy 是绝对保真但含"目标难度"污染</b>(目标离当前近→照抄就 0.9+,能被刷高);<b>lift 去掉目标难度</b>(persistence 就是难度),是<b>是否真学到前向预测</b>的净增益,<b>刷不了</b>(照抄→lift=0)。→ <b>单模型看 deploy(实际保真),跨模型/判断真本事看 lift</b>。</td></tr>
+        <tr><td class="term">id3</td><td><b>身份 top-3 命中率</b>:预测子目标(pool 成向量)与各 milestone 簇中心比,正确的"下一 milestone"是否落在最相似的前 3。衡量"预测对了哪个里程碑"。LaWM 无 milestone 概念 → N/A。</td></tr>
+        <tr><td class="term">vfwd</td><td><b>价值前向比例</b>:预测子目标对应的 milestone,其 CRAVE 进度值 &gt; 当前帧 milestone 的比例。衡量"预测是否朝任务完成方向前进"。LaWM 无价值目标 → N/A。</td></tr>
       </tbody>
     </table></div>
-    <p class="ref">完整 13 项对比(oracle/lift/horizon/前向率/平滑/跨集 + N/A 脚注)见报告 <code>lmwm/docs/FINAL_REPORT.md §3</code>。</p>
+    <div class="scroll" style="margin-top:14px"><table>
+      <thead><tr><th>arena(同 768D)</th><th class="num">LaWM<br>oracle<br><small>TF</small></th><th class="num">LaWM<br>deploy</th><th class="num">LaWM<br>persist</th><th class="num">LaWM<br><b>lift</b></th><th class="num">LMWM<br>deploy</th><th class="num">LMWM<br>persist</th><th class="num">LMWM<br><b>lift</b></th><th class="num">LMWM<br>id3/vfwd</th></tr></thead>
+      <tbody>
+        <tr><td class="term">kai0 <small>(我们任务·LaWM <b>OOD</b>)</small></td><td class="num neg">0.781↓</td><td class="num">0.672</td><td class="num" style="color:var(--text3)">0.647</td><td class="num">0.025</td><td class="num pos">0.865</td><td class="num" style="color:var(--text3)">0.781</td><td class="num pos"><b>0.084</b></td><td class="num pos">0.886/0.744</td></tr>
+        <tr><td class="term">LIBERO-10 <small>(分布内)</small></td><td class="num">0.950</td><td class="num">0.832</td><td class="num" style="color:var(--text3)">0.828</td><td class="num neg">0.004</td><td class="num pos">0.961</td><td class="num" style="color:var(--text3)">0.912</td><td class="num pos"><b>0.049</b></td><td class="num pos">0.969/0.882</td></tr>
+        <tr><td class="term">LIBERO-spatial</td><td class="num">0.956</td><td class="num">0.833</td><td class="num" style="color:var(--text3)">0.830</td><td class="num neg">0.003</td><td class="num pos">0.971</td><td class="num" style="color:var(--text3)">0.942</td><td class="num pos"><b>0.029</b></td><td class="num pos">0.963/0.918</td></tr>
+        <tr><td class="term">LIBERO-goal</td><td class="num">0.956</td><td class="num">0.859</td><td class="num" style="color:var(--text3)">0.857</td><td class="num neg">0.002</td><td class="num pos">0.978</td><td class="num" style="color:var(--text3)">0.953</td><td class="num pos"><b>0.025</b></td><td class="num pos">0.959/0.915</td></tr>
+        <tr><td class="term">coffee <small>(双臂)</small></td><td class="num">0.870</td><td class="num">0.822</td><td class="num" style="color:var(--text3)">0.820</td><td class="num neg">0.002</td><td class="num pos">0.955</td><td class="num" style="color:var(--text3)">0.934</td><td class="num pos"><b>0.021</b></td><td class="num pos">0.995/0.926</td></tr>
+        <tr><td class="term">aloha_candy</td><td class="num">0.887</td><td class="num">0.846</td><td class="num" style="color:var(--text3)">0.843</td><td class="num neg">0.003</td><td class="num pos">0.965</td><td class="num" style="color:var(--text3)">0.946</td><td class="num pos"><b>0.019</b></td><td class="num pos">0.989/0.947</td></tr>
+        <tr><td class="term">aloha_cups</td><td class="num">0.867</td><td class="num">0.824</td><td class="num" style="color:var(--text3)">0.819</td><td class="num neg">0.005</td><td class="num pos">0.965</td><td class="num" style="color:var(--text3)">0.932</td><td class="num pos"><b>0.032</b></td><td class="num pos">0.988/0.938</td></tr>
+        <tr><td class="term">aloha_ziploc</td><td class="num">0.870</td><td class="num">0.879</td><td class="num" style="color:var(--text3)">0.820</td><td class="num amb"><b>0.059</b></td><td class="num pos">0.964</td><td class="num" style="color:var(--text3)">0.939</td><td class="num">0.025</td><td class="num pos">1.00/0.972</td></tr>
+        <tr><td class="term">aloha_screw</td><td class="num">0.860</td><td class="num">0.800</td><td class="num" style="color:var(--text3)">0.794</td><td class="num neg">0.006</td><td class="num pos">0.966</td><td class="num" style="color:var(--text3)">0.938</td><td class="num pos"><b>0.027</b></td><td class="num pos">1.00/0.896</td></tr>
+      </tbody>
+    </table></div>
+    <p class="ref">lift = deploy − persistence(归一视野难度,唯一可硬比的数);LaWM id3/vfwd 全 <b>N/A</b>(无 milestone/价值概念);参数 LaWM ~230M vs LMWM ~34M(轻 ~10×)。</p>
+    <div class="keybox"><p style="font-size:14px"><b>为什么必须看 lift 而不是 deploy 绝对值 —— 目标时滞定量:</b> 两模型"目标帧"离当前帧的<b>时滞根本不同</b>(实测 <code>build_pairs_abl</code> 的 cur→milestone+1 medoid):LMWM = <b>0.4–3.1s</b>(随阶段长短变;kai0 3.11s、LIBERO/aloha 0.4–1.2s)vs LaWM <b>固定 1.6s</b> —— <b>不是同一视野</b>。且 LMWM 的 medoid 是<b>"阶段代表帧"</b>:<b>kai0 目标 3.11s 比 LaWM 1.6s 远 1.9×,persistence 却更高</b>(0.781 vs 0.647)—— <b>时间更远、视觉却更近</b>,证明代表帧(canonical 姿态)比 LaWM 的任意 1.6s 中途帧更像当前(medoid 效应)。目标难度(persistence 0.78–0.95 vs 0.65–0.86)受"离多远 + 是否代表帧"双重影响、<b>跨模型完全不可比</b> → deploy 绝对值会误导(aloha_screw deploy 差 0.166 但真实 lift 差仅 0.021),<b>只有 lift 去掉目标难度才公平</b>。数据 <code>target_lag_per_arena.json</code>。</p>
+    <p style="margin:.5em 0 0;color:var(--text2);font-size:13px"><b>时滞为何差这么多?已核 CRAVE 处理正确:</b> ① <b>多任务 LIBERO 干净</b>——单 episode 只走过 <b>6/50</b>(LIBERO-10)、7/29(spatial)个 milestone(自己任务的阶段),不是 50 个乱跳 → min_cov 切片正确、无虚假过度分段;② 低时滞是<b>任务本身的粒度</b>:kai0 长叠衣(~50s)16 个粗阶段(~3s/段),LIBERO/coffee/aloha 短-中任务(6–22s)、阶段更细(~0.5–2s/段,单 ep 走过近全部 milestone);分段单调、每 ep 6–20 段、无病态碎片。⚠️ <b>粒度不一致 → 跨数据集 lift 绝对值不直接可比</b>(kai0 粗阶段 3s 大跳更难、故 lift 0.084 最大;coffee/aloha 细阶段小步 lift 天然小),但 <b>arena 内 LMWM-vs-LaWM 仍公平</b>(同 milestone/同目标)。</p></div>
+    <div class="keybox"><p><b>9 arena 结论:</b>① <b>部署 lift:LMWM &gt; LaWM,9 中 8 个</b>(kai0/LIBERO×3/coffee/candy/cups/screw;LaWM 部署 lift 普遍 <b>≈0</b>,固定 1.6s 未来从单帧当前<b>不可预测</b>→predm 退化照抄当前,LMWM 的<b>价值前向 milestone 可预测</b>)。② <b>诚实反例:aloha_ziploc</b> LaWM lift <b>0.059</b> &gt; LMWM 0.025 —— 滑动任务固定视野未来恰好可预测,且 LaWM 固定视野目标持恒基线更低(lift 空间大);lift 因两模型目标不同并非完美可比,ziploc 是这个口径差异的体现。③ <b>OOD 崩塌</b>:kai0 LaWM oracle 从 ~0.95 塌到 0.781(未训过);coffee/aloha 双臂任务 LaWM oracle 也仅 ~0.87(LIBERO/RoboTwin 训练的 LAM 对双臂亦偏 OOD)。④ LMWM <b>每个 arena</b> 都有 identity(0.89–1.0)+ value-forward(0.74–0.97),LaWM 结构上无。⚠️ 公平声明:LaWM LAM 设计上部署码甩给下游 VLA、原生无 predm,deploy 对 LaWM 略不利,应与 oracle 并读——但 9 arena 里 8 个一致表明 LMWM 自包含部署预测实用性稳定更高。</p></div>
+
+    <h3 id="compare-kai0"><span class="h3n">3.3</span>kai0 任务上的 LMWM 硬指标</h3>
+    <p class="sub" style="margin-top:4px">我们真正关心的 kai0 叠衣任务上,统一 DINOv3-base 版(kai0+coffee 联合训练,teacher=proto)实测,<b>全部为当前 DINOv3-base 版口径</b>;reach 与 LaWM 同协议测量。</p>
+    <div class="scroll"><table>
+      <thead><tr><th>指标(headline)</th><th class="num">LaWM</th><th class="num">LMWM(DINOv3-base)</th><th>说明 / 口径</th></tr></thead>
+      <tbody>
+        <tr><td class="term">deploy grid-cos</td><td class="num amb">—</td><td class="num pos">0.866 <small>/ 0.910 均值</small></td><td class="pos"><b>硬指标①保真</b> · kai0 / kai0+coffee 均值</td></tr>
+        <tr><td class="term">身份 id top-3</td><td class="num amb">N/A</td><td class="num pos">0.894 <small>/ 0.939 均值</small></td><td class="pos"><b>硬指标②</b> 预测下一 milestone 身份</td></tr>
+        <tr><td class="term">价值前向单调</td><td class="num amb">N/A</td><td class="num pos">✓ (corr 0.943)</td><td class="pos">LaWM 无价值约束(固定 1.6s)</td></tr>
+        <tr><td class="term">解码保真 val-L1</td><td class="num amb">—</td><td class="num pos">0.051</td><td>grid 解码器(pooled 0.177)</td></tr>
+        <tr><td class="term">预测 reach(model lag)</td><td class="num">1.48s</td><td class="num amb">0.811s</td><td class="amb">DINO 版偏近未来(undershoot 0.26,前向率 63%)· 预测平滑 adj-cos 0.988</td></tr>
+        <tr><td class="term">世界模型参数</td><td class="num">~230M</td><td class="num pos">~34M</td><td class="pos">轻 ~10×</td></tr>
+        <tr><td class="term">下游 SR(extrinsic)</td><td class="num pos">LIBERO 98.6%</td><td class="num amb">待测(§04)</td><td class="amb"><b>LaWM 好</b> · 唯一短板(需迁 SigLIP 融合)</td></tr>
+      </tbody>
+    </table></div>
+    <p class="ref">完整数据记录见 <code>lmwm/docs/RESULT_newcrave_final_arch_2026-07-11.md</code>。</p>
 
     <div class="vids" style="margin-top:16px">
-      <figure><img src="assets/lag_distribution.png" alt="LMWM vs LaWM 预测时滞分布">
-        <figcaption><b>预测时滞(reach)分布 · LMWM(cw=0.1)vs LaWM</b>(同协议)。两者中位都在 0(近未来帧最像当前是常态);差异在尾部:LaWM 集中在 0.3–1.6s <b>中段</b>(ratio 0.89 高但目标只 1.66s),LMWM 呈<b>近+远双峰</b>、尾更长 → 均值 reach 1.67 反超 1.48。"LaWM 敢预测更远"是 ratio 错觉。</figcaption></figure>
       <figure><img src="assets/lawm_ref/libero_latency.png" alt="LaWM LIBERO 延迟-成功率">
         <figcaption><b>LaWM 下游 SR 参照</b> · LIBERO 98.6% / 187ms(优于 pi0.5、Cosmos-Policy 等)。这是 LMWM 目前<b>唯一未覆盖</b>的 extrinsic 指标,§04 接入 π0.5 后对齐。<span class="ref">图源:<a href="https://rlinf.github.io/LaWAM/">rlinf.github.io/LaWAM</a>。</span></figcaption></figure>
     </div>
 
-    <div class="keybox"><p><b>一句话读表:</b>LMWM <b>更好</b>的:reach 1.67&gt;1.48s、负滞后 6.5%&lt;10.7%、参数轻 ~10×、与 VLA 嵌入更深、进展价值单调(硬指标②)、跨集可定量。LMWM <b>不足</b>的:undershoot ratio 0.63&lt;0.89(目标远所致,非更弱)、grid-cos 空间不同不硬比、<b>下游 SR 待测</b>(LaWM 已有 98.6%)。</p></div>
+    <div class="keybox"><p><b>一句话读表:</b>LMWM(统一 DINOv3-base)<b>更好</b>的:deploy <b>0.910</b>、id-top3 <b>0.939</b>、价值前向单调(corr 0.943)、参数轻 ~10×、预测<b>可直接解码(闭环)</b>、预测平滑(adj-cos 0.988)。LMWM <b>不足</b>的:reach 0.811s <b>&lt; LaWM 1.48s</b>(偏近未来 undershoot,非更强)、<b>下游 SR 待测</b>(LaWM 已有 98.6%)—— 需把世界模型迁到 π0.5 SigLIP 空间做 VLA 融合(§04)。</p></div>
+
+    <h3 id="compare-encoder"><span class="h3n">3.4</span>不同编码空间对比 · SigLIP(π0.5)vs DINOv3-base</h3>
+    <p class="sub" style="margin-top:4px">最终版用 DINOv3-base,但 <b>SigLIP 是 π0.5 的塔</b>(未来 VLA 融合要用)。把<b>整套 LMWM 流程也在 SigLIP 空间跑一版</b>(<code>--encoder siglip</code>,权重从 pi05_base 提取的 PaliGemma img 塔;milestone 挖矿仍在 DINOv3-base 复用同 graph,grids 用 SigLIP 编码),同 <code>shared_pca</code> teacher,kai0+coffee 联合训练,与 DINOv3-base 版直接对比。</p>
+    <div class="scroll"><table>
+      <thead><tr><th>task</th><th>指标</th><th class="num">SigLIP<br><small>1152D</small></th><th class="num">DINOv3-base<br><small>768D</small></th></tr></thead>
+      <tbody>
+        <tr><td class="term" rowspan="2">kai0</td><td>deploy / persist / <b>lift</b></td><td class="num">0.837 / 0.745 / <b>0.092</b></td><td class="num">0.865 / 0.781 / <b>0.084</b></td></tr>
+        <tr><td>id3 / vfwd</td><td class="num">0.894 / 0.688</td><td class="num">0.886 / 0.744</td></tr>
+        <tr><td class="term" rowspan="2">coffee</td><td>deploy / persist / <b>lift</b></td><td class="num">0.934 / 0.903 / <b>0.031</b></td><td class="num">0.955 / 0.934 / <b>0.021</b></td></tr>
+        <tr><td>id3 / vfwd</td><td class="num">0.995 / 0.937</td><td class="num">0.995 / 0.926</td></tr>
+        <tr><td class="term">mean</td><td>deploy / id3</td><td class="num pos">0.885 / <b>0.944</b></td><td class="num pos"><b>0.910</b> / 0.940</td></tr>
+      </tbody>
+    </table></div>
+    <p class="ref">⚠️ <b>deploy/persist 绝对值跨空间不可直接比</b>:SigLIP 1152D raw vs DINOv3-base 768D <b>每 patch L2 归一</b>,grid-cos 几何尺度不同 → DINO deploy 略高有一部分是"空间/归一化差异",非纯预测优劣。lift/id3/vfwd 较可比。</p>
+    <div class="keybox"><p><b>结论:两编码空间 LMWM 预测质量相当,无"明显更好"。</b> ① <b>lift(去持恒基线,较可比)SigLIP 反而略高</b>(kai0 0.092&gt;0.084、coffee 0.031&gt;0.021),<b>id3 打平</b>(0.944 vs 0.940),vfwd 混合。② 最终版选 DINOv3-base <b>不是因为预测更好,而是用途分工</b>:关键差异在<b>解码可视化的锐度</b>——两空间<b>都有 grid 解码器可闭环</b>,但 <b>DINOv3-base 解码锐利</b>(重建式特征,布形/褶皱可辨)、<b>SigLIP 解码明显更糊</b>(对比学习特征,重建力弱,见下图);加上 DINOv3-base 用已缓存特征、不需 SigLIP 权重。而 <b>SigLIP 版的价值在未来 VLA 融合</b>——它就是 π0.5 的塔,可同塔复用 KV(§04),子目标即策略消费空间。产物 ckpt <code>siglip_lmwm_sharedpca_kaicoffee.pt</code> · <code>encoder_space_comparison.json</code>。</p></div>
+    <figure><video controls playsinline preload="metadata" muted loop>
+        <source src="assets/siglip_neural_pred_kai.mp4" type="video/mp4">
+        浏览器无法内嵌播放,<a href="assets/siglip_neural_pred_kai.mp4">点此下载视频</a>。
+      </video>
+      <figcaption><b>SigLIP 空间闭环可视化</b>(与 §2.3 DINOv3-base 图对照)· 四栏 = 当前帧 │ <b>神经预测 m+1</b>(SigLIP 生成器输出→SigLIP 解码)│ 真实 m+1 medoid(SigLIP encode→decode)│ 真实 m+1 帧。<b>中间两栏共用同一 SigLIP 解码器 → 隔离"预测质量" vs "解码质量"</b>:两栏长得像 = 预测是对的;但都<b>明显比 §2.3 的 DINOv3-base 糊</b>(SigLIP 对比学习、非重建式,布形软、有栅格伪影)—— 这正是最终版选 DINOv3-base 做闭环的原因(解码锐度),而非"SigLIP 不能闭环"。</figcaption></figure>
   </section>
 
   <!-- ============ §04 future ============ -->
-  <section>
+  <section id="future">
     <div class="snum">04 / next</div>
-    <h2>未来计划:LMWM × VLA 融合 → LMVLA / LMWAM</h2>
-    <p class="sub">当前 intrinsic 预测指标已达/超 LaWM 同级,两条硬指标(①保真 ②价值前向)达标。唯一短板是 extrinsic 的下游 SR。下一步把生成器子目标 <b>Ĝ</b> + 预测器码 <b>ẑ</b> 注入 kai0 π0.5 action expert,做效果与指标对比。</p>
+    <h2>未来计划:迁 SigLIP 空间 → LMWM × VLA 融合 → LMVLA / LMWAM</h2>
+    <p class="sub">当前<b>统一 DINOv3-base 世界模型已调稳</b>(deploy 0.910 / id-top3 0.939,两条硬指标①保真 ②价值前向达标,且预测可闭环解码)。唯一短板是 extrinsic 下游 SR。<b>两步走</b>:① 把已验证的世界模型架构从 DINOv3-base <b>迁到 π0.5 SigLIP 空间</b>(与策略同塔、复用 KV,子目标即策略消费空间);② 把子目标 <b>Ĝ</b> + 码 <b>ẑ</b> 经 KI 注入 kai0 π0.5 action expert。下图为最终 LMWAM 融合架构(SigLIP 版)。</p>
     <div class="diagram">
       <svg viewBox="0 0 1000 712" role="img" aria-label="LMWAM 两阶段整体架构:LMWM 世界模型 + 与 π0.5 VLA 的融合">
         <defs>
@@ -465,7 +557,7 @@
         <rect class="sbx" x="788" y="108" width="82" height="54" rx="8"/><text class="st" x="829" y="132">子目标 Ĝ</text><text class="ss" x="829" y="150">≈ G_T</text>
         <rect class="sbx" x="892" y="108" width="90" height="54" rx="8"/><text class="st" x="937" y="130">真 G_T</text><text class="ss" x="937" y="148">smooth-L1 监督</text>
         <!-- crave offline -->
-        <rect class="soff" x="240" y="232" width="640" height="42" rx="9"/><text class="st" x="560" y="252" style="fill:#c7cbf0">CRAVE 离线 label 工厂(DINOv3-H + Viterbi 单调)</text><text class="ss" x="560" y="267">→ milestone+1 medoid 目标 · 提供簇中心身份 id(仅离线,不上线)</text>
+        <rect class="soff" x="240" y="232" width="640" height="42" rx="9"/><text class="st" x="560" y="252" style="fill:#c7cbf0">CRAVE 离线 label 工厂(DINOv3-base + BGMM + 双锚 Viterbi)</text><text class="ss" x="560" y="267">→ milestone+1 medoid 目标 · 提供簇中心身份 id(仅离线,不上线)</text>
         <!-- arrows S1 -->
         <path class="sar" d="M92,128 L112,138" marker-end="url(#a4)"/>
         <path class="sar" d="M92,180 L112,170" marker-end="url(#a4)"/>
@@ -537,6 +629,7 @@
     <div class="scroll"><table>
       <thead><tr><th>阶段</th><th>动作</th><th>裁决指标</th></tr></thead>
       <tbody>
+        <tr><td class="term">Phase 0 · 迁 SigLIP 空间</td><td>已验证的 DINOv3-base 世界模型架构迁到 π0.5 SigLIP 空间(<code>--encoder siglip</code>,复用同塔 KV)</td><td>deploy/id 对齐 DINO 版(0.910/0.939)</td></tr>
         <tr><td class="term">Phase 1 · 融合接线</td><td>子目标 Ĝ + 码 ẑ 注入 action expert(KI + RoPE 偏移 + mask 重设计),本地 2 卡短跑</td><td>offline action-MAE(base vs +LMWM vs control)</td></tr>
         <tr><td class="term">Phase 2 · 簇微调</td><td>集群提交训练(submit-training-job)</td><td>action-MAE 收敛</td></tr>
         <tr><td class="term">Phase 3 · 真机</td><td>kai0 叠衣真机 rollout</td><td class="pos">SR ↔ 对齐 LaWM 98.6%</td></tr>
@@ -545,11 +638,60 @@
     <div class="keybox"><p><b>目标:</b>用 LMVLA/LMWAM 与 LaWM 做同台效果 + 指标对比 —— 既比 intrinsic 预测(已达/超),也补齐 extrinsic 的 action-MAE / SR,验证"价值层宏观引导"对下游策略的真实增益。</p></div>
   </section>
 
+  <!-- ============ §05 objective verdict ============ -->
+  <section id="verdict">
+    <div class="snum">05 / verdict</div>
+    <h2>客观总评 · LMWM vs LaWM</h2>
+    <p class="sub"><b>本质区别</b>:LaWM 学"固定 ~1.6s 后长什么样"(独立 DINOv3 ViT-B · inverse-dynamics VAE code32 · 12 层 AdaLN-DiT · ~230M · 部署码甩给下游 VLA · <b>有真实 SR</b> LIBERO 98.6%);LMWM 学"下一个<b>价值 milestone</b> 长什么样"(统一 DINOv3-base · proto teacher 0 参数 · 4 块 AdaLN CNN · ~34M · 内置 predm 自包含 · <b>尚未接策略</b>)。</p>
+    <div class="scroll"><table>
+      <thead><tr><th>维度</th><th>LMWM(ours)</th><th>LaWM(baseline)</th><th class="num">谁优</th></tr></thead>
+      <tbody>
+        <tr><td class="term">部署 lift<br><small>无未来·归一持恒</small></td><td class="pos">0.019–0.084</td><td class="neg">≈0(9 中 8 个 0.002–0.006)</td><td class="num pos">LMWM 8/9</td></tr>
+        <tr><td class="term">价值/身份语义</td><td class="pos">id3 0.89–1.0 · vfwd 0.74–0.97</td><td class="amb">N/A(结构上无)</td><td class="num pos">LMWM</td></tr>
+        <tr><td class="term">参数量</td><td class="pos">~34M</td><td>~230M</td><td class="num pos">LMWM 轻 10×</td></tr>
+        <tr><td class="term">闭环可解码</td><td class="pos">是(预测直接解码回帧)</td><td class="amb">否(latent 自成一体)</td><td class="num pos">LMWM</td></tr>
+        <tr><td class="term">oracle 重建<br><small>teacher-forced·给未来</small></td><td class="amb">—(proto teacher 无 inverse)</td><td>0.87–0.95(分布内强)</td><td class="num amb">不可比</td></tr>
+        <tr><td class="term">下游 SR(extrinsic)</td><td class="neg">待测(未接策略)</td><td class="pos">LIBERO 98.6% / 187ms</td><td class="num neg">LaWM</td></tr>
+        <tr><td class="term">成熟度</td><td class="amb">研究原型</td><td class="pos">公开权重/数据/多本体 pipeline</td><td class="num neg">LaWM</td></tr>
+      </tbody>
+    </table></div>
+    <div class="badbox">
+      <p><span class="flag good">优</span>LMWM:部署预测更实用(8/9 lift 更高,固定视野未来单帧不可预测→LaWM 退化照抄当前)+ LaWM 没有的价值/身份语义 + 轻 10× + 闭环可解码 + 编码器一致性潜力。</p>
+      <p><span class="flag bad">短</span>LMWM:<b>决定性短板——无下游 SR 证据</b>(未接策略,价值引导对策略的真实增益尚未验证);LaWM oracle 分布内强(0.95);诚实反例 aloha_ziploc(LaWM lift 0.059 &gt; LMWM 0.025,滑动任务固定视野恰可预测)。</p>
+    </div>
+    <p class="ref" style="margin-top:12px"><b>公平性声明</b>:① <b>lift 跨模型非完美可比</b>(目标不同→持恒基线不同→lift 空间不同,ziploc 即此差异),稳健读法是"各模型对自己目标的 lift + 各自语义能力";② <b>deploy 对 LaWM 略不利</b>(LAM 原生无 predm、部署码设计上甩给 VLA),应与 oracle 并读;③ <b>OOD 因素</b>:coffee/aloha 双臂上 LaWM oracle 仅 ~0.87(LAM 偏 OOD),LMWM 每任务重挖重训——LMWM 强项部分来自"每任务专训",LaWM 是通用 LAM。</p>
+    <div class="keybox"><p><b>一句话(客观):</b>世界模型自身预测质量上,<b>LMWM 用 1/10 参数拿到更实用的部署预测(8/9 arena lift 更高)+ 价值/身份语义 + 闭环可解码</b>;但 <b>LaWM 作为已落地完整 VLA 有真实下游 SR,LMWM 对策略的真实增益尚未验证</b>——这正是 §04(迁 SigLIP 接 π0.5)要补的唯一、也是最关键短板。<b>方向明确但不宜过度:LMWM 赢在 intrinsic 预测与效率,LaWM 赢在 extrinsic 已验证,二者尚未在同一"下游 SR"标尺上正面比过。</b></p></div>
+  </section>
+
+</main>
 </div>
 
 <footer><div class="wrap">
-  <b>最终定档架构</b>:<code>lmwm/docs/LMWM2_FINAL_ARCHITECTURE.md</code> · <b>完整报告</b> <code>FINAL_REPORT.md</code> · 消融全表 <code>ABLATION_CONVERGENCE_2026-07.md</code> · 跨任务预测器 <code>FINAL_CROSSTASK_PREDICTOR.md</code> · LaWM <code>PROGRESS_lawm_comparison_2026-07.md</code><br>
-  产物 · <code>lmwm/checkpoints/teach_proto_3task.pt</code>(⭐推荐,proto 跨任务)· <code>twomodel_final.pt</code>(单任务 cw0.1)· <code>train_multitask.py</code> · <code>train_twomodel_v2.py</code> · <code>train_ablation.py</code> · baseline: <a href="https://rlinf.github.io/LaWAM/">LaWM (rlinf.github.io/LaWAM)</a>
+  <b>最终统一 DINOv3-base 架构</b>:<code>lmwm/docs/RESULT_newcrave_final_arch_2026-07-11.md</code> · CRAVE 方法 <code>crave/docs/final_architecture.md</code> · 解码器 <code>DECODER_dinov3base_video_2026-07-11.md</code><br>
+  产物 · <code>lmwm/checkpoints/dinov3base_lmwm_sharedpca_kaicoffee.pt</code>(⭐ 统一 DINO 版·shared PCA128 teacher,fwd+predm)· <code>dinov3base_decoder/kai_grid_dec.pt</code>(grid 解码器)· 脚本 <code>train_multitask.py --encoder dinov3base --teacher proto --teacher_code shared_pca</code> · <code>train_dinov3base_grid_decoder.py</code> · <code>make_neural_pred_decode_video.py</code> · baseline: <a href="https://rlinf.github.io/LaWAM/">LaWM (rlinf.github.io/LaWAM)</a>
 </div></footer>
+<script>
+// scrollspy: highlight the TOC link of the section currently in view
+(function(){
+  var links = Array.prototype.slice.call(document.querySelectorAll('.toc a'));
+  var map = {};
+  links.forEach(function(a){ map[a.getAttribute('href').slice(1)] = a; });
+  var targets = Object.keys(map).map(function(id){ return document.getElementById(id); }).filter(Boolean);
+  var current = null;
+  function setActive(id){
+    if(current === id) return; current = id;
+    links.forEach(function(a){ a.classList.toggle('active', a.getAttribute('href').slice(1) === id); });
+  }
+  var obs = new IntersectionObserver(function(entries){
+    // pick the topmost intersecting target
+    var vis = entries.filter(function(e){ return e.isIntersecting; });
+    if(vis.length){
+      vis.sort(function(a,b){ return a.boundingClientRect.top - b.boundingClientRect.top; });
+      setActive(vis[0].target.id);
+    }
+  }, { rootMargin: '0px 0px -70% 0px', threshold: 0 });
+  targets.forEach(function(t){ obs.observe(t); });
+})();
+</script>
 </body>
 </html>
