@@ -1,0 +1,101 @@
+# launchpoint-trim plan §3 主实验 — dagger clip 双向起爆点前裁 → 修回折冻结, 华北北京 8 GPU (1-host H20)
+#
+#   Config:   pi05_v4_awbc_launchtrim (config.py, North-E 路径, 无 DCT)
+#   Plan:     docs/training/future_plans/plans/dagger_launchpoint_trim_freeze_fix_plan.md
+#   Data:     A_v4_base_dagger_launchtrim (~2511ep: base 不裁 + 裁后 dagger, AE 打标 top30 discretize)
+#   Init:     pi05_base (North-E base_init_ckpts)
+#   Spec:     1-host × 8 H20 = 8 GPU FSDP, batch 128, 50k step, 单机无 JAX coordinator
+#   变量:     唯一 vs 任务② plus_freshdagger = dagger 起爆点前裁; 判据=真机回折不冻 + 夹爪修复
+#
+# ⚠️ 前置: A_v4_base_dagger_launchtrim 必须已 label+discretize 并同步到 North-E (TOS→cnbj)
+# Submit (VOLC_REGION=cn-beijing 必须!): source ~/.volc_creds && VOLC_REGION=cn-beijing \
+#   kai0/.venv/bin/python train_scripts/kai/volc/submit_yaml.py train_scripts/kai/volc/pi05_v4_awbc_launchtrim_cnbj_8gpu.yaml
+
+TaskName: "pi05-v4-awbc-launchtrim-cnbj-8gpu"
+Description: "launchtrim: dagger 起爆点前裁 AWBC (~2511ep), JAX 1-host 8 H20, pi05_base init, 50k. vs 任务②单变量=裁"
+Tags: []
+
+ImageUrl: "dvs-cr-cn-beijing.cr.volces.com/vis_robot/kai:kai0-gf1"
+ResourceQueueName: "Robot-North-H20"
+Framework: "PyTorch"          # gives MLP_WORKER_0_HOST / MLP_ROLE_INDEX / MLP_WORKER_NUM
+
+TaskRoleSpecs:
+  - RoleName: "worker"
+    RoleReplicas: 1
+    Flavor: "ml.hpcpni3ln.45xlarge"   # 8× H20-SXM5-96GB per host (单机)
+
+ActiveDeadlineSeconds: 172800
+EnableTensorBoard: false
+
+Storages:
+  - Type: "Vepfs"
+    VepfsId: "vepfs-cnbj875793a96d6b"
+    MountPath: "/vePFS-North-E/vis_robot"
+    SubPath: "/vis_robot"
+
+CacheType: "Cloudfs"
+
+Envs:
+  - Name: HF_HUB_OFFLINE
+    Value: "1"
+  - Name: TRANSFORMERS_OFFLINE
+    Value: "1"
+  - Name: TOKENIZERS_PARALLELISM
+    Value: "false"
+  - Name: NCCL_DEBUG
+    Value: "WARN"
+  - Name: OMP_NUM_THREADS
+    Value: "8"
+  - Name: XLA_PYTHON_CLIENT_MEM_FRACTION
+    Value: "0.85"
+  - Name: JAX_COMPILATION_CACHE_MIN_ENTRY_SIZE_BYTES
+    Value: "-1"
+  - Name: JAX_COMPILATION_CACHE_MIN_COMPILE_TIME_SECS
+    Value: "1"
+  - Name: JAX_ENABLE_EMPTY_ARRAYS
+    Value: "true"
+
+Entrypoint: |
+  set -uo pipefail
+  STAMP=$(date -u +%Y%m%d_%H%M%S)
+  NODE=${MLP_ROLE_INDEX:-0}
+  echo "=== PREFLIGHT $(date) node=$NODE host=$(hostname) ==="
+  ls -ld /vePFS-North-E/vis_robot 2>&1 || echo "MOUNT-MISSING"
+  LOG_DIR=/vePFS-North-E/vis_robot/logs
+  mkdir -p "$LOG_DIR"
+  LOG="$LOG_DIR/pi05_v4_awbc_launchtrim_cnbj_${STAMP}_node${NODE}.log"
+  exec >> "$LOG" 2>&1
+  echo "=== launchtrim cnbj start $(date) node=$NODE (1-host 8 H20) ==="
+  set -ex
+  nvidia-smi -L
+
+  cd /vePFS-North-E/vis_robot/workspace/deepdive_kai0/kai0
+  source .venv/bin/activate
+  python -c "import jax; print(f'jax {jax.__version__} devs={len(jax.devices())}')"
+
+  TRAIN=/vePFS-North-E/vis_robot/workspace/deepdive_kai0/kai0/data/Task_A/self_built/A_v4_base_dagger_launchtrim
+  INIT=/vePFS-North-E/vis_robot/base_init_ckpts/extracted/pi05_base/params
+  [ -f "$TRAIN/meta/episodes.jsonl" ] || { echo "FATAL: train data missing $TRAIN" >&2; exit 13; }
+  [ -f "$TRAIN/norm_stats.json" ]     || { echo "FATAL: norm_stats missing" >&2; exit 13; }
+  grep -q "Advantage: positive" "$TRAIN/meta/tasks.jsonl" || { echo "FATAL: tasks.jsonl 缺 advantage prompt(未 discretize?)" >&2; exit 13; }
+  [ -f "$INIT/_METADATA" ]            || { echo "FATAL: pi05_base init missing $INIT" >&2; exit 13; }
+  echo "[$(date)] data + norm_stats + discretize + init verified"
+
+  EXP=pi05_v4_awbc_launchtrim_cnbj
+  CKPT_DIR=/vePFS-North-E/vis_robot/workspace/deepdive_kai0/kai0/checkpoints/pi05_v4_awbc_launchtrim/$EXP
+  if ls -d "$CKPT_DIR"/[0-9]*/ >/dev/null 2>&1; then
+    RESUME_FLAG="--resume"; echo "[resume] found ckpt -> --resume"
+  else
+    RESUME_FLAG="--overwrite"; echo "[resume] no ckpt -> fresh --overwrite"
+  fi
+
+  exec python -u scripts/train.py pi05_v4_awbc_launchtrim \
+    --exp-name $EXP \
+    --no-wandb-enabled \
+    $RESUME_FLAG
+
+RetryOptions:
+    EnableRetry: true
+    MaxRetryTimes: 1
+
+AccessType: "Public"

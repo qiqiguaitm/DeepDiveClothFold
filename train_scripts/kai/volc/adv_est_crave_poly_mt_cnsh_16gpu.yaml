@@ -1,0 +1,102 @@
+# CRAVE-KAI-AE ★v2 MT★ raw polyline — robot-task 2×8=16 A100, 50k
+#   plan: docs/training/future_plans/plans/crave_polyline_kai_ae_retrain_plan.md §0a/§8
+#   Config: ADVANTAGE_TORCH_CRAVE_POLY_MT (AdvantageEstimatorConfig, loss_action=1.0/loss_value=1.0)
+#   Data:   crave_stage_poly (3055ep, DINOv3-base→双锚Viterbi→polyline raw stage_progress_gt 0→1)
+#   ⭐ 修法 (vs v1 dead-value): loss_action 0.0→1.0, action flow-matching 辅助任务驱动 backbone
+#   16卡 (2 节点); bs144 global; raw-vs-mono 对照臂之一.
+# Submit: source ~/.volc_creds && kai0/.venv/bin/python train_scripts/kai/volc/submit_yaml.py train_scripts/kai/volc/adv_est_crave_poly_mono_cnsh_16gpu.yaml
+
+TaskName: "adv-est-crave-poly-mt-cnsh-16gpu"
+Description: "CRAVE-KAI-AE ★v2 MT★ raw polyline (loss_action=1.0, backbone抗饿), AdvantageEstimator on crave_stage_poly, PyTorch 2x8=16 A100 50k"
+Tags: []
+
+ImageUrl: "visincept-cn-shanghai.cr.volces.com/grasp/h2r:1.0"
+ResourceQueueName: "robot-task"
+Framework: "PyTorch"          # injects MLP_WORKER_0_HOST / MLP_WORKER_0_PORT / MLP_WORKER_NUM / MLP_ROLE_INDEX
+
+TaskRoleSpecs:
+  - RoleName: "worker"
+    RoleReplicas: 2
+    Flavor: "ml.hpcpni2.28xlarge"     # 8× A100-80G per host × 2 = 16 GPU
+
+ActiveDeadlineSeconds: 259200           # 72 h cap
+
+EnableTensorBoard: false
+
+Storages:
+  - Type: "Vepfs"
+    VepfsId: "vepfs-cnsh075262e1f815"
+    SubPath: ""
+    MountPath: "/vePFS"
+
+CacheType: "Cloudfs"
+
+Envs:
+  - Name: HF_HUB_OFFLINE
+    Value: "1"
+  - Name: TRANSFORMERS_OFFLINE
+    Value: "1"
+  - Name: WANDB_MODE
+    Value: "offline"
+  - Name: TOKENIZERS_PARALLELISM
+    Value: "false"
+  - Name: OMP_NUM_THREADS
+    Value: "8"
+  - Name: TORCH_NCCL_BLOCKING_WAIT
+    Value: "0"
+  - Name: NCCL_ASYNC_ERROR_HANDLING
+    Value: "1"
+
+Entrypoint: |
+  set -uo pipefail
+  STAMP=$(date -u +%Y%m%d_%H%M%S)
+  LOG_DIR=/vePFS/tim/workspace/deepdive_kai0/logs
+  mkdir -p "$LOG_DIR"
+  LOG="$LOG_DIR/adv_est_crave_poly_mono_16gpu_${STAMP}_node${MLP_ROLE_INDEX:-0}.log"
+  exec >> "$LOG" 2>&1
+  echo "=== AE-A (crave_stage_poly FIXED) train start $(date) node=${MLP_ROLE_INDEX:-0}/${MLP_WORKER_NUM:-1} ==="
+  set -ex
+  nvidia-smi -L
+
+  export NNODES=${MLP_WORKER_NUM:-2}
+  export NODE_RANK=${MLP_ROLE_INDEX:-0}
+  export MASTER_ADDR=${MLP_WORKER_0_HOST:-127.0.0.1}
+  export MASTER_PORT=${MLP_WORKER_0_PORT:-15845}
+  echo "[multinode] nnodes=$NNODES node_rank=$NODE_RANK master=$MASTER_ADDR:$MASTER_PORT"
+
+  KAI0=/vePFS/tim/workspace/deepdive_kai0/kai0
+  mkdir -p /home/tim/.local/share /root/.local/share
+  ln -sfn /vePFS/tim/.local/share/uv /home/tim/.local/share/uv
+  ln -sfn /vePFS/tim/.local/share/uv /root/.local/share/uv
+  cd "$KAI0"
+  source .venv/bin/activate
+  apt-get update 2>&1 | tail -1 && apt-get install -y ffmpeg 2>&1 | tail -1 || echo "ffmpeg install skipped"
+  python -c "import torch; print(f'torch {torch.__version__} cuda={torch.cuda.is_available()} dev={torch.cuda.device_count()}')"
+
+  # PRE-FLIGHT (crave_stage_poly FIXED 折线标签; norm←kai0_base; videos symlink→kai0_base)
+  TRAIN=$KAI0/data/Task_A/self_built/crave_stage_poly
+  INIT=/vePFS/tim/workspace/deepdive_kai0/kai0/checkpoints/pi05_base/pytorch
+  [ -f "$TRAIN/meta/episodes.jsonl" ] || { echo "FATAL: train data missing $TRAIN" >&2; exit 13; }
+  [ -f "$TRAIN/norm_stats.json" ]     || { echo "FATAL: norm_stats missing $TRAIN" >&2; exit 13; }
+  python -c "import pyarrow.parquet as pq,glob,sys; f=sorted(glob.glob('$TRAIN/data/chunk-000/*.parquet'))[0]; cols=[c.name for c in pq.read_schema(f)]; sys.exit(0 if 'stage_progress_gt' in cols else 13)" || { echo "FATAL: stage_progress_gt missing" >&2; exit 13; }
+  V=$(find -L "$TRAIN/videos/chunk-000/observation.images.top_head" -name '*.mp4' -print -quit 2>/dev/null)
+  [ -n "$V" ] && [ -e "$V" ] || { echo "FATAL: crave video symlink 断链" >&2; exit 13; }
+  [ -f "$INIT/model.safetensors" ] || { echo "FATAL: pi05_base pytorch init missing $INIT" >&2; exit 13; }
+  echo "[$(date)] preflight OK (crave_stage_poly FIXED + stage_progress_gt + norm + video + pi05_base)"
+
+  EXP=crave_poly_mt
+  CKPT_DIR=$KAI0/checkpoints/ADVANTAGE_TORCH_CRAVE_POLY_MT/$EXP
+  RES=""
+  if ls -d "$CKPT_DIR"/[0-9]*/ >/dev/null 2>&1; then RES="--resume"; echo "[resume] found ckpt → --resume"; fi
+
+  exec torchrun \
+    --nnodes="$NNODES" --node_rank="$NODE_RANK" --nproc_per_node=8 \
+    --master_addr="$MASTER_ADDR" --master_port="$MASTER_PORT" \
+    scripts/train_pytorch.py ADVANTAGE_TORCH_CRAVE_POLY_MT \
+    --exp_name=$EXP \
+    --save_interval 10000 \
+    --batch-size 144 \
+    $RES
+
+RetryOptions:
+  EnableRetry: false

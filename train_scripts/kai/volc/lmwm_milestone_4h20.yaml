@@ -1,0 +1,98 @@
+# LMWM milestone Path A: 4×H20, 25000步, save_interval=5000
+# 提交: cd ~/workspace/deepdive_kai0/train_scripts/kai/volc
+#   /vePFS-North-E/vis_robot/workspace/deepdive_kai0/kai0/.venv/bin/python submit_yaml.py lmwm_milestone_4h20.yaml
+
+TaskName: "lmwm-milestone-pathA-4h20"
+Description: "LMWM milestone Path A arm, 4×H20, 25000steps, LIBERO"
+Tags: []
+
+ImageUrl: "dvs-cr-cn-beijing.cr.volces.com/vis_robot/kai:kai0-gf1"
+ResourceQueueName: "Robot-North-H20"
+Framework: "PyTorch"
+
+TaskRoleSpecs:
+  - RoleName: "worker"
+    RoleReplicas: 1
+    FlexibleResourceClaim:
+      GpuCount: 4
+      GpuType: "NVIDIA-H20"
+      Cpu: 44
+      MemoryGiB: 360
+
+ActiveDeadlineSeconds: 43200   # 12h
+EnableTensorBoard: false
+
+Storages:
+  - Type: "Vepfs"
+    VepfsId: "vepfs-cnbj875793a96d6b"
+    MountPath: "/vePFS-North-E/vis_robot"
+    SubPath: "/vis_robot"
+
+CacheType: "Cloudfs"
+
+Envs:
+  - Name: PYTHONUNBUFFERED
+    Value: "1"
+  - Name: HF_HUB_OFFLINE
+    Value: "1"
+  - Name: TRANSFORMERS_OFFLINE
+    Value: "1"
+  - Name: TOKENIZERS_PARALLELISM
+    Value: "false"
+  - Name: OMP_NUM_THREADS
+    Value: "8"
+
+Entrypoint: |
+  set -uo pipefail
+  REPO=/vePFS-North-E/vis_robot/workspace/deepdive_kai0
+  STAMP=$(date -u +%Y%m%d_%H%M%S)
+  LOG_DIR=$REPO/lmvla/lawam/logs/volc_dualarm
+  mkdir -p "$LOG_DIR"
+  LOG="$LOG_DIR/armM_milestone_${STAMP}.log"
+  exec >> "$LOG" 2>&1
+  set -x
+  echo "=== ARM M (milestone Path A) start $(date -u) ==="
+
+  nvidia-smi -L | head
+  python3 -c "import torch; print('torch', torch.__version__, 'cuda', torch.cuda.is_available())"
+
+  # 安装 starVLA 依赖
+  pip install --quiet accelerate==1.13.0 transformers==5.2.0 2>&1 | tail -3
+  pip install --quiet flash-attn==2.8.3 --no-build-isolation 2>&1 | tail -3 || echo "[warn] flash-attn skipped"
+
+  cd $REPO/lmvla/lawam
+  python3 -c "
+  import torch, transformers, accelerate
+  print(f'torch={torch.__version__} tf={transformers.__version__} acc={accelerate.__version__}')
+  from starVLA.model.framework.vlas.lawam import LatentWorldPolicyBackend
+  print('LatentWorldPolicyBackend import OK')
+  "
+
+  LMWM=$REPO/lmvla/lmwm
+  for f in "$LMWM/checkpoints/lmwm_libero_dinov3base/lmwm.pt" "$LMWM/data/libero_milestone/pairs.npz" "$LMWM/data/libero_milestone/target_compact.npz"; do
+    [ -f "$f" ] || { echo "FATAL: $f missing" >&2; exit 13; }
+  done
+  echo "[$(date)] preflight OK"
+
+  export CUDA_VISIBLE_DEVICES=0,1,2,3
+  export MASTER_PORT=29511
+  export LMWM_CKPT=$LMWM/checkpoints/lmwm_libero_dinov3base/lmwm.pt
+  export LMWM_MILESTONE_TARGET=$LMWM/data/libero_milestone/pairs.npz
+  export LMWM_TARGET_COMPACT=$LMWM/data/libero_milestone/target_compact.npz
+  export LMWM_ADAPTER_DIR=$REPO/lmvla/lawam
+  export LMWM_SWAP_TEACHER=1
+  export LAWAM_RUN_TIMESTAMP=${STAMP}
+
+  bash train_lawam_distributed.sh \
+    --config_yaml starVLA/config/training/train_libero.yaml \
+    --run_id=lmwm_milestone_pathA_volc \
+    --trainer.max_train_steps=25000 \
+    --trainer.save_interval=5000
+
+  echo "=== ARM M DONE $(date -u) ==="
+
+RetryOptions:
+    EnableRetry: false
+    MaxRetryTimes: 0
+
+AccessType: "Public"

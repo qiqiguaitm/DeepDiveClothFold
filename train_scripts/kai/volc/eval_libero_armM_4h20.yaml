@@ -1,0 +1,104 @@
+# LIBERO eval: Arm M (milestone Path A), 4×H20, libero_10 50trials/task
+# 提交: gsy 上 cd train_scripts/kai/volc && kai0/.venv/bin/python submit_yaml.py eval_libero_armM_4h20.yaml
+
+TaskName: "eval-libero-armM-milestone"
+Description: "LIBERO eval Arm M (LMWM milestone), libero_10, 50trials/task"
+Tags: []
+
+ImageUrl: "dvs-cr-cn-beijing.cr.volces.com/vis_robot/kai:kai0-gf1"
+ResourceQueueName: "Robot-North-H20"
+Framework: "Custom"
+
+TaskRoleSpecs:
+  - RoleName: "worker"
+    RoleReplicas: 1
+    Flavor: "ml.pni3ln.17xlarge"
+
+ActiveDeadlineSeconds: 43200
+EnableTensorBoard: false
+
+Storages:
+  - Type: "Vepfs"
+    VepfsId: "vepfs-cnbj875793a96d6b"
+    MountPath: "/vePFS-North-E/vis_robot"
+    SubPath: "/vis_robot"
+
+CacheType: "Cloudfs"
+
+Envs:
+  - Name: PYTHONUNBUFFERED
+    Value: "1"
+  - Name: HF_HUB_OFFLINE
+    Value: "1"
+  - Name: TRANSFORMERS_OFFLINE
+    Value: "1"
+  - Name: TOKENIZERS_PARALLELISM
+    Value: "false"
+  - Name: OMP_NUM_THREADS
+    Value: "8"
+  - Name: MUJOCO_GL
+    Value: "egl"
+
+Entrypoint: |
+  set -uo pipefail
+  REPO=/vePFS-North-E/vis_robot/workspace/deepdive_kai0
+  STAMP=$(date -u +%Y%m%d_%H%M%S)
+  LOG_DIR=$REPO/lmvla/lawam/logs/volc_eval
+  mkdir -p "$LOG_DIR"
+  LOG="$LOG_DIR/armM_${STAMP}.log"
+  exec >> "$LOG" 2>&1
+  set -x
+  echo "=== ARM M eval start $(date -u) ==="
+
+  # ---- Python 环境 ----
+  export PYTHON=$REPO/kai0/.venv/bin/python
+  export PATH=$REPO/kai0/.venv/bin:$PATH
+  $PYTHON -c "import torch; print('torch', torch.__version__)"
+
+  # ---- 安装 LIBERO client 依赖(aliyun镜像) ----
+  env -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY -u all_proxy \
+    $PYTHON -m pip install -i https://mirrors.aliyun.com/pypi/simple/ \
+    'robosuite==1.4.1' mujoco opencv-python-headless 2>&1 | tail -3
+  pip install -i https://mirrors.aliyun.com/pypi/simple/ \
+    tyro websockets json-numpy 2>&1 | tail -3 || echo "[warn] some pips failed"
+
+  # ---- 安装 LIBERO(从 North-E 本地源, 避免 git clone) ----
+  LIBERO_SRC=$REPO/lmvla/LIBERO
+  if [ -d "$LIBERO_SRC" ]; then
+    $PYTHON -m pip install -e "$LIBERO_SRC" 2>&1 | tail -2
+  else
+    echo "FATAL: LIBERO source not found at $LIBERO_SRC" >&2; exit 13
+  fi
+
+  # ---- 验证 server + client 依赖 ----
+  cd $REPO/lmvla/lawam
+  $PYTHON -c "from starVLA.model.framework.vlas.lawam import LatentWorldPolicyBackend; print('Backend OK')"
+  $PYTHON -c "import libero, robosuite, mujoco; print('LIBERO OK')"
+
+  # ---- 环境变量 ----
+  LMWM=$REPO/lmvla/lmwm
+  CKPT=$REPO/lmvla/lawam/results/Checkpoints/libero/20260714_044516+lmwm_milestone_pathA_volc/checkpoints/steps_20000_pytorch_model.pt
+  [ -f "$CKPT" ] || { echo "FATAL: ckpt missing $CKPT" >&2; exit 13; }
+
+  export LMWM_CKPT=$LMWM/checkpoints/lmwm_libero_dinov3base/lmwm.pt
+  export LMWM_ADAPTER_DIR=$REPO/lmvla/lawam
+  export LMWM_SWAP_TEACHER=1
+  # 推理不需 milestone target
+  unset LMWM_MILESTONE_TARGET LMWM_TARGET_COMPACT
+
+  export CUDA_VISIBLE_DEVICES=0
+  export STAR_VLA_PYTHON=$PYTHON
+  export LIBERO_PYTHON=$PYTHON
+  export SUITES=libero_10
+  export NUM_TRIALS_PER_TASK=50
+  export SERVER_STARTUP_TIMEOUT_SEC=600
+
+  echo "[$(date)] preflight OK, starting eval..."
+  bash examples/LIBERO/eval_files/auto_eval_scripts/run_libero_benchmark.sh "$CKPT"
+  echo "=== ARM M eval DONE $(date -u) ==="
+
+RetryOptions:
+    EnableRetry: false
+    MaxRetryTimes: 0
+
+AccessType: "Public"
