@@ -59,7 +59,8 @@ r(o_t) = 1/(N_ep-1) · Σ_{j≠ep(t)} exp( -dmin(o_t, E_j)² / 2σ² )
 | **V3b** | 用途 B:高脊/低谷作子目标条件 | 逐个验证(C4) | 待做(下一个) |
 | **V3c** | 用途 C:部署 r 监控 | 低 r 命中 OOD | ✅ 跨任务 AUROC 0.999 §4.3;同任务失败帧待失败rollout |
 | **V4** | 普适复核:kai0 + robotwin2.0 特征 | 同一超参跨本体成立 | ✅ 特征抽取+同步 §4.4;robotwin V0/V1 复核待(72任务≥10ep) |
-| **V5** | (a)结构接法下游重训 + SR | 研究+落地双目标 | 🔶 内在✅(前向gain 2.1× §4.7);sim-SR 待 gsy 部署 infra |
+| **V5** | (a)结构接法下游重训 + SR | 研究+落地双目标 | ✅ 内在(前向gain 2.1× §4.7);**sim-SR §4.9: M''=93.8% > M=92.2%, 但 <B=96.4%** |
+| **V6** | 置信门控:high-r→r-脊 / low-r→t+7,+ hint-dropout | 修 M'' 别名任务 −12(task8)不牺牲 task6 | 待做(下一个,根因见 §4.9);history gate ✅ 未撞旧方案 |
 
 **评估纪律**:每个 proxy 配随机/基线对照;宣称"普适"= 同一超参在所有场成立;最终以下游 SR 收口。
 
@@ -171,6 +172,46 @@ r(o_t) = 1/(N_ep-1) · Σ_{j≠ep(t)} exp( -dmin(o_t, E_j)² / 2σ² )
 
 **结论**:①加 proprio 确实分开别名帧(中位 -52%);②别名是本体属性,robotwin 双臂最重(36%)、task6 反而最低(全局指标抓不到 mid≈end 局部窄别名);③别名几乎不腐蚀 r 场(corr≈0,r 对多 episode 取平均)。
 **判定**:保持 image-only 普适默认(r 对别名鲁棒 + img-only 世界模型已 +2.1× gain + proprio 增益历史证据小);proprio 列 robotwin opt-in(per-task z-score+l2 能量1:1 是同一普适规则,不破坏普适)。诚实保留:粗糙度指标抓不到别名的平滑偏置。
+
+### 4.9 V5 终判 · LIBERO sim-SR 三臂 + 根因 + V6 设计 ✅/🔄(2026-07-16)
+North-E 干净 eval(修 3 个环境坑:LIBERO config 绝对路径 / assets 缺 119 PNG 已同步 / eval server 走 PYTHONPATH)。Arm M'' = steps_12500(8卡=4卡25000同样本量),50 trials×10 task,seed 0。权威 `summary.json` **469/500 = 93.8%**。
+
+**逐任务三臂**(M''本次North-E;M/B 来自本机 `data/lmwm_vs_lawam_libero10_20k.json` step20000,**口径未完全对齐**):
+
+| task | 任务 | M'' r-脊 | B base | M ms | M''−B | M''−M |
+|---|---|---|---|---|---|---|
+| 0 | soup+tomato | 96 | 98 | 98 | −2 | −2 |
+| 1 | cheese+butter | 100 | 100 | 96 | 0 | +4 |
+| 2 | 灶台+moka壶 | 94 | 100 | 100 | **−6** | −6 |
+| 3 | 黑碗入抽屉+关 | 100 | 96 | 94 | **+4**✅ | +6 |
+| 4 | 双杯左右 | 98 | 98 | 100 | 0 | −2 |
+| 5 | 书入caddy | 100 | 100 | 98 | 0 | +2 |
+| **6** | **白杯+巧克力布丁** | 80 | 84 | 68 | −4 | **+12**🔥 |
+| 7 | soup+cheese | 100 | 100 | 100 | 0 | 0 |
+| **8** | **两个moka壶入灶** | 88 | 100 | 86 | **−12**⚠️ | +2 |
+| **9** | **黄白杯入微波+关** | 82 | 88 | 82 | **−6** | 0 |
+| **聚合** | | **93.8** | 96.4 | 92.2 | **−2.6** | **+1.6** |
+
+**两条读数**:①**r-脊价值成立**:+1.6pt vs milestone 几乎全来自 task6(+12,milestone 最烂的弥散任务)→ 兑现「脊>边界」。②**vs baseline 差 −2.6 全在别名任务**:task8(两个相同moka壶)−12、task2/9(moka壶/微波炉遮挡终态)−6。只在 task3 超 baseline。
+
+**根因(设计层,非表面)**——B/M'' 同架构(LaWAM+WM头),只差 **目标(t+7 vs r-脊)+ swap_teacher**,故 task8 −12 精确隔离出目标选择的代价:
+- **B 的 t+7 = 局部相对自监督目标**:预测「顺当前轨迹 7 步后到哪」,是局部动力学外推,**不需要在流形上全局定位**;target 是自己对真未来的编码,无外部标签可指错;train/inference gap 极小。→ **天生绕开别名**。
+- **M'' 的 r-脊 = 全局语义目标**:要回答「我在 canonical 结构的哪个收敛点」——**全局定位问题**。而定位发生在 **冻结 mean-pooled DINOv3 空间**,该空间为普适(C1)选成 **实例不变 / 空间池化 / 无 proprio**,恰好对「两个相同物体的哪一个、门开/关的遮挡态」**多对一塌缩**。信息在编码器就丢了,下游 r-脊分段/target 检索/生成器都继承这个塌缩 → 注入**系统性指错**的 hint;swap_teacher 又把策略训得无条件服从 → 翻车。
+- **关键澄清**:§4.8 已证别名**几乎不腐蚀 r 标量场**(corr≈0);病不在 r 值,在 **target 的分配/检索**(把 pot-A相位 与 pot-B相位 检索成同一脊)。故 §5 里「proprio probe 0.96→0.97」的否决测的是 **r-场层面**,与此处 **target 塌缩** 是不同 locus,不能据此断定 proprio 对 task8 无用——但也不急着回退 proprio。
+- **两种别名要分开**:(a)**重复物体**(task8)信息在像素里(空间位置),被 pooling 丢;(b)**遮挡终态**(task2/9)信息**根本不在当前单帧**(门挡住),任何前馈感知都救不了,需时序/proprio 记忆。二者殊途同归到「错脊目标」但根因不同。
+- **一句话**:baseline 不是更强,是**从不下「在有损池化空间里全局定位」这个会爆的赌**;r-脊下这个赌,在 task6 赢、在 task8 爆。
+
+**V6 设计(修法,不改 r 信号本身,减小坏 hint 的伤害)**:
+1. **hint-dropout**:训练时以概率 p 把 milestone latent 换成可学习 null embedding → 策略学会 hint 缺席时回退 base 能力(保住 baseline 底座),坏 hint 不再致命。p∈{0.15,0.25} 各一版(p 过大稀释 task6 真有用的 hint)。
+2. **r 置信门控目标插值(更本质)**:用 recurrence 第三读法(r 幅值=on-manifold/OOD,AUROC 0.999)做门:`a=a_base+g(r)·(a_hint−a_base)`,**high-r→r-脊(吃 task6 红利)/ low-r→退化 t+7(回 B 的抗别名安全区)**。等于用 recurrence 自己的置信信号把 B 的抗别名性和 M'' 的长程收益缝起来;hint-dropout 是其 g 随机置 0 的粗糙特例。
+- **预测**:task8/2/9 回升向 baseline,task6 基本不掉,聚合有望 93.8%→96%+。
+- **history gate ✅**(2026-07-16):CRAVE HISTORY §2 + 本 §5 对 dropout/guidance/门控/插值 零命中,未撞旧方案。
+
+**任务队列(V6 + 补齐)**:
+- [ ] **T1 同口径重eval**:用修好的 North-E harness 把 Arm B / Arm M 重跑到 step12500(同环境同step),坐实三臂 per-task 表(现成 armB/armM yaml + config/assets 修复,可两节点并行 ~1.7h)。
+- [ ] **T2 hint-dropout 训练**:训练 forward 加概率 p null-embedding 遮挡 milestone latent;出 p=0.15 / p=0.25 两版 ckpt。
+- [ ] **T3 r-门控目标插值**:实现 `a_base + g(r)·(a_hint−a_base)`(g 随 r 单调);一版 ckpt。
+- [ ] **T4 三选优 eval**:T2/T3 三版 + M'' 基线在 North-E 同口径 eval,看 task8/2/9 是否回升、task6 是否保住。
 
 ---
 
