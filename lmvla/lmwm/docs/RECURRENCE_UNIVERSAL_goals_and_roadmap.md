@@ -178,3 +178,36 @@ r(o_t) = 1/(N_ep-1) · Σ_{j≠ep(t)} exp( -dmin(o_t, E_j)² / 2σ² )
 - 固定 K / K=0.55√N:非自适应 / 按长度错轴。
 - 双锚 Viterbi:kai0 专用,LIBERO 吸尾(last_frac 0.30>0.08)。
 - proprio:probe 0.96→0.97 几乎不加分。
+
+---
+
+## 6. Positioning & 相关工作(paper 用 · 2026-07-16 查新后)
+
+### 6.1 一句话定位
+把示范集当作**冻结视觉-语义(DINOv3)空间里的非参数知识库**,逐帧定义 **Recurrence Density `r(o)` = 检索增强的、按"来源多样性"加权的 kNN 密度**(有多少条**不同 demo** 各自独立检索到 o 附近的态,median-heuristic 带宽)。这个**连续场**(非离散 milestone 聚类)是**一个普适、多用途的机器人信号**:幅值=在不在流形上(部署 OOD),脊=canonical 收敛态(世界模型子目标/目标),谷=跨-demo 分歧点(子任务边界);训练时挖库、部署时**蒸馏成参数化 latent world model(零检索)**。一套超参跨 3 本体(kai0/LIBERO/robotwin)。
+
+### 6.2 相关工作五轴 + 直接对标(含 2025–26)
+| 轴 | 最近对标 | 与本工作差 |
+|---|---|---|
+| **复现/瓶颈→子目标** ⭐祖先 | McGovern & Barto 2001《Diverse Density 子目标发现》(MIL, Maron&Lozano-Pérez 1998) | 他们把 diverse density **阈值化成离散 subgoal/option(tabular RL)**;本工作保留**连续场**、多用途、接 VLA/世界模型 |
+| **部署 OOD/失败检测** ⭐最近 | **FAIL-Detect 2025**(流式密度建"成功轨迹分布",偏离=失败)、kNN-OOD(Sun 2022)、Mahalanobis(Lee 2018) | 他们是**学习式密度 + 单一用途(只做失败检测)**;本工作是**非参数检索密度 + 同一原语还做分割/子目标/加权** |
+| **检索增强 VLA** | Retrieval-VLA 2026、MAP-VLA、Retrieve-Don't-Retrain | 他们**检索轨迹内容直接喂策略**(in-context 适配);本工作用**检索统计量(密度/来源数)当信号**,不喂内容 |
+| **latent 世界模型 × VLA** | DreamVLA、WorldVLA、AHEAD(预测未来 patch token) | 他们预测**固定 horizon 未来 token**;本工作的 novelty 在**预测什么目标**——r-脊(canonical 复现态)胜过固定 horizon/边界(见 §4.6/4.7) |
+| **示范学 progress/value** | TCC(Dwibedi 2019)、VIP/LIV、GVL(VLM 价值学习 2024)、RECAP | 同目标;r-脊→双锚 Viterbi progress 更普适+可与上述任一互补 |
+
+### 6.3 新在哪(delta,可辩护)
+1. **统一**:一个原语(cross-ep 检索密度)同时兑现 OOD 监控 + 子任务分割 + 子目标/世界模型目标 + BC 加权——上面每条轴单独都有先例,**但没人用同一连续场打通全部**。
+2. **连续场 + 来源多样性**:区别于 ①离散 diverse-density subgoal(McGovern-Barto)、②学习式 flow 密度(FAIL-Detect)、③内容检索(Retrieval-VLA);"数不同 demo 非帧"→ dwelling 鲁棒。
+3. **机理发现(最硬的新点)**:**r-脊(canonical 收敛点)是比 milestone 边界/固定 horizon 更好的世界模型目标**——量化解释了 milestone+1 的 −4.2pt,内在前向 gain 2.1×(§4.6/4.7)。这是可复现、可证伪的新洞察。
+4. **跨本体普适**:一套超参跨 dual-Piper/Panda/ALOHA(§4.4),多数 WM-VLA/OOD 工作单本体。
+
+### 6.4 审稿人会引的 + 反驳
+- "这不就是 diverse-density(2001)+ kNN-OOD 套到 VLA" → 反:①连续场非离散、②统一多用途非单点、③ridge>boundary 的机理发现是新的且解释了真实负结果。
+- "FAIL-Detect 已做密度 OOD" → 反:它单一用途 + 学习式密度;本工作同一原语多用途 + 非参数 + 蒸馏进世界模型。
+- "DreamVLA 已做 WM×VLA" → 反:贡献不在"接世界模型",在"**世界模型该预测 r-脊而非固定 horizon**"这个目标选择 + 其普适 recurrence 来源。
+
+### 6.5 查新结论
+- **Novelty ≈ 6.5/10 · PROCEED WITH CAUTION**。原语(密度)与每个单独用途都有先例;**新意在统一 + 连续 recurrence-density 框架 + ridge-target 机理发现 + 跨本体普适**。
+- **写法建议**:标题/摘要主打**统一的连续复现场**和 **ridge>boundary 的世界模型目标发现**,而非任何单一用途;显式区分 FAIL-Detect(OOD)/McGovern-Barto(subgoal)/DreamVLA(WM),把它们放进对比而非回避。
+- **待补**:sim-SR 三臂(Arm M'' vs M vs B)是把"内在 gain 2.1×"变成落地 SR 的关键证据(V5,gsy 训练中)。
+- 查新工具:WebSearch(Codex 交叉模型本会话不可用,以 web 检索+自评替代)。
