@@ -59,7 +59,7 @@ r(o_t) = 1/(N_ep-1) · Σ_{j≠ep(t)} exp( -dmin(o_t, E_j)² / 2σ² )
 | **V3b** | 用途 B:高脊/低谷作子目标条件 | 逐个验证(C4) | 待做(下一个) |
 | **V3c** | 用途 C:部署 r 监控 | 低 r 命中 OOD | ✅ 跨任务 AUROC 0.999 §4.3;同任务失败帧待失败rollout |
 | **V4** | 普适复核:kai0 + robotwin2.0 特征 | 同一超参跨本体成立 | ✅ 特征抽取+同步 §4.4;robotwin V0/V1 复核待(72任务≥10ep) |
-| **V5** | 最终方案大数据再验证 + 下游 SR | 研究+落地双目标 | 待做 |
+| **V5** | (a)结构接法下游重训 + SR | 研究+落地双目标 | 🔶 内在✅(前向gain 2.1× §4.7);sim-SR 待 gsy 部署 infra |
 
 **评估纪律**:每个 proxy 配随机/基线对照;宣称"普适"= 同一超参在所有场成立;最终以下游 SR 收口。
 
@@ -141,6 +141,17 @@ r(o_t) = 1/(N_ep-1) · Σ_{j≠ep(t)} exp( -dmin(o_t, E_j)² / 2σ² )
 2. **脊(canonical 高-r 收敛点)远好于谷**,且在**长程任务胜固定**(kai0 +30%、robotwin +17~24%),**短 LIBERO 略负**(−7/−10%)。
 3. → **Use B 保留(好留坏弃),但只用脊目标、绝不用边界**;收益集中长程。
 **⭐ 对 V5(a) 的强制修正**:world-model 目标 = **下一 r-脊(canonical 态)**,NOT r-谷边界;末段仍锚末帧。用边界=重蹈 milestone+1 覆辙。
+
+### 4.7 V5(a) · 结构接法下游重训(内在对比,本机 2 卡)✅(2026-07-14)
+脚本 `p1_libero_rvalley_pairs.py`(建对)+ `p1_train_lmwm_heldout.py`(训+留出评)。同模型/步数/协议,只换 pairs;episode 级 15% held-out 评 `recon_cos−persist`。
+
+| pairs | held-out recon_cos | persist(不动基线) | **GAIN** | 覆盖 |
+|---|---|---|---|---|
+| milestone(边界目标,旧) | 0.9688 | **0.9315** | **+0.0373** | 95395对(丢末段) |
+| **r-脊(canonical+末段锚,新)** | 0.9697 | **0.8906** | **+0.0792(2.1×)** | 137154对=100% |
+
+**结论**:两者 recon 几乎一样,但 **milestone persist 高达 0.93 = 目标离当前太近 → world-model 近乎复制当前帧(gain 仅 +0.037)**,正是 −4.2pt 机理;**r-脊目标更远(persist 0.89)却预测得一样准 → 前向建模增量 2.1×**,真在预测下一 canonical 态。→ **结构接法让 world-model 前向预测翻倍**,内在支持优于旧 milestone。
+**诚实保留**:内在 recon 跨不同目标有混淆(GAIN 已部分归一 persist);**最终判据 = sim-SR**(需 lawam 部署 infra / gsy,和 gsy 上 milestone-vs-baseline 同框架对比)。
 
 ---
 
