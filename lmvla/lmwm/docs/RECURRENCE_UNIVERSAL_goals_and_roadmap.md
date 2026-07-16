@@ -153,10 +153,10 @@ r(o_t) = 1/(N_ep-1) · Σ_{j≠ep(t)} exp( -dmin(o_t, E_j)² / 2σ² )
 **结论**:两者 recon 几乎一样,但 **milestone persist 高达 0.93 = 目标离当前太近 → world-model 近乎复制当前帧(gain 仅 +0.037)**,正是 −4.2pt 机理;**r-脊目标更远(persist 0.89)却预测得一样准 → 前向建模增量 2.1×**,真在预测下一 canonical 态。→ **结构接法让 world-model 前向预测翻倍**,内在支持优于旧 milestone。
 **诚实保留**:内在 recon 跨不同目标有混淆(GAIN 已部分归一 persist);**最终判据 = sim-SR**(需 lawam 部署 infra / gsy,和 gsy 上 milestone-vs-baseline 同框架对比)。
 
-**✅ gsy 北京队列已提交并 RUNNING(2026-07-16)**:`t-20260716103542-7xj7k`(lmwm-rvalley-recurridge-4h20,Robot-North-H20,8×H20 整节点,25000步/save5000)。
+**✅ gsy 北京队列已提交并 RUNNING(2026-07-16)· 8 卡版**:`t-20260716105522-vsnqm`(lmwm-rvalley-recurridge-**8h20**,Robot-North-H20,`ml.hpcpni3ln.45xlarge` 8×H20 整节点,**12500步/save2500**;CUDA_VISIBLE_DEVICES=0..7 用满 8 卡,墙钟 ~2× 快,样本量 = 4卡×25000 → 与 milestone 可比)。(旧 4 卡 `t-...7xj7k` 已 stop。)
 - 三件套已在 North-E:`lmvla/lmwm/data/libero_rvalley/{pairs.npz,target_compact.npz(2.12GB)}` + `checkpoints/lmwm_libero_rvalley/lmwm.pt`;yaml=`train_scripts/kai/volc/lmwm_rvalley_recurridge_4h20.yaml`。
-- **坑**:Robot-North-H20 不支持 FlexibleResourceClaim,必须 `Flavor: ml.hpcpni3ln.45xlarge`(8卡整节点)。
-- 训完 → ckpt 在 North-E → 接 lawam LIBERO sim eval,和 Arm M(milestone)/ Arm B(baseline)同框架比 SR = V5 终判。监控:`mlp job get t-20260716103542-7xj7k`。
+- **volc 坑(已记忆)**:Robot-North-H20 **不支持 FlexibleResourceClaim**,必须整节点 flavor:4卡=`ml.pni3ln.17xlarge` / 8卡=`ml.hpcpni3ln.45xlarge`;`train_lawam_distributed.sh` 用 `nvidia-smi --list-gpus` 数卡(不看 CUDA_VISIBLE_DEVICES)→ 要用满 8 卡须 CUDA_VISIBLE_DEVICES=0..7。
+- 训完 → ckpt 在 North-E → 接 lawam LIBERO sim eval,和 Arm M(milestone)/ Arm B(baseline)同框架比 SR = V5 终判。监控:`mlp job get t-20260716105522-vsnqm`。
 
 ---
 
