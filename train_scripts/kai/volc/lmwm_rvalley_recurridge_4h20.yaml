@@ -51,22 +51,16 @@ Entrypoint: |
   LOG="$LOG_DIR/armMpp_rvalley_recurridge_${STAMP}.log"
   exec >> "$LOG" 2>&1
   set -x
-  echo "=== ARM M'' (r-ridge recurrence Path A) start $(date -u) ==="
+  echo "=== ARM M'' (r-ridge recurrence Path A, 8gpu) start $(date -u) ==="
+
+  # 用 kai0 venv(已装 torch2.6/tf5.13/accelerate1.13/starVLA)—— 照 ARM B Success 模板, 免 pip 现装
+  export PYTHON=$REPO/kai0/.venv/bin/python
+  export PATH=$REPO/kai0/.venv/bin:$PATH
+  cd $REPO/lmvla/lawam
 
   nvidia-smi -L | head
-  python3 -c "import torch; print('torch', torch.__version__, 'cuda', torch.cuda.is_available())"
-
-  # 安装 starVLA 依赖
-  pip install --quiet accelerate==1.13.0 transformers==5.2.0 2>&1 | tail -3
-  pip install --quiet flash-attn==2.8.3 --no-build-isolation 2>&1 | tail -3 || echo "[warn] flash-attn skipped"
-
-  cd $REPO/lmvla/lawam
-  python3 -c "
-  import torch, transformers, accelerate
-  print(f'torch={torch.__version__} tf={transformers.__version__} acc={accelerate.__version__}')
-  from starVLA.model.framework.vlas.lawam import LatentWorldPolicyBackend
-  print('LatentWorldPolicyBackend import OK')
-  "
+  $PYTHON -c "import torch, transformers, accelerate; print(f'torch={torch.__version__} tf={transformers.__version__} acc={accelerate.__version__} cuda={torch.cuda.is_available()}')"
+  $PYTHON -c "from starVLA.model.framework.vlas.lawam import LatentWorldPolicyBackend; print('LatentWorldPolicyBackend import OK')"
 
   LMWM=$REPO/lmvla/lmwm
   MS=$LMWM/data/libero_rvalley                       # r-脊 recurrence pairs 目录
