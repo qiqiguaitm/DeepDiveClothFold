@@ -7,7 +7,7 @@
 | Machine | GPUs | Use |
 |---------|------|-----|
 | **sim01** (di-*) | 2×RTX 5090 32GB | Inference, IPC (cameras/CAN/ROS2) |
-| **gf0** | 8×A100 80GB | Training (JAX full-ft, AWBC, AE)。⚠️ gf1 已关闭 |
+| **gf0**(本机) | 2×A100 80GB | 当前 dev 机(本会话所在,`/vePFS/tim/workspace/deepdive_kai0`);本地小规模训练/构建/下载。⚠️ gf1 已关闭,gf0 已从 8卡缩到 2卡 |
 | **gsy** | volc 提交节点(自身无 GPU) | 北京 Robot-North-H20 队列数据同步/环境准备/任务提交入口, `ssh -p 16370 root@124.174.16.237`;训练跑在 volc 分配的 8×H20 节点。⚠️ gf3 单卡机 (:7888) 已于 2026-07 关闭 |
 
 Source `setup_env.sh` first — auto-detects profile and sets `KAI0_DATA_ROOT`/`OPENPI_DATA_HOME`/`PYTORCH_CKPT_BASE`.
