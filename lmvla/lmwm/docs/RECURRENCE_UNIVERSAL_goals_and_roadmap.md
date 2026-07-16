@@ -109,7 +109,8 @@ r(o_t) = 1/(N_ep-1) · Σ_{j≠ep(t)} exp( -dmin(o_t, E_j)² / 2σ² )
 - **关键验证(冒烟)**:robotwin 池化 mean=0.002/std=0.302/norm=8.36 **≈ LIBERO** mean=0.004/std=0.300/norm=8.31 → **同编码空间、跨本体可比**(跨本体普适 claim 的前提成立)。
 - **覆盖**:frame_cache_jpeg256 只缓存 **5000 ep(0–4999,~1.1M 帧)**,已覆盖 ~全部 task 类型(300ep→270 task_index);其余 22500 仅 av1 视频(需 pyav,慢)→ **先抽 5000(充分大数据),22500 av1 余量作可选后续**。
 - 输出 `lmwm/data/robotwin_dinov3base/ep{e}.npz`(key=pooled)→ rsync 到 gsy North-E `/vePFS-North-E/vis_robot/workspace/deepdive_kai0/lmvla/lmwm/data/robotwin_dinov3base`。
-- **✅ 完成(2026-07-14)**:5000 ep / **1.09M 帧** / 1.5GB / 双卡各 ~1900s(250 fr/s);格式 pooled[N,768] 尺度对齐 LIBERO(norm 8.36)。→ rsync North-E(`gsy` ssh -p16370,通道已验证)。**跨本体普适复核数据就位。**
+- **✅ 完成(2026-07-14)**:5000 ep / **1.09M 帧** / 1.5GB / 双卡各 ~1900s(250 fr/s);格式 pooled[N,768] 尺度对齐 LIBERO(norm 8.36)。→ 同步 North-E ✅(tar-over-ssh,REMOTE_NPZ=5000)。
+- **✅ 跨本体复核(`robotwin_revalidate.py` · 图 `assets/robotwin_revalidate.png`,72 任务≥10ep,同 LIBERO/kai0 超参)**:V0 r_std 中位 **0.061**、100%>0.02 非退化;V1 边界涌现 [30×0,4×1,38×2];**V1 跨-ep 稳定 真 recall 0.73 vs 随机 0.30、100% 真>随机**。→ **同一套超参跨 3 本体(kai0/LIBERO/robotwin-aloha双臂)全成立 = C1 普适确认。**
 
 ### 4.5 V3a-proxy · 用途A(训练:r 加权/无标注 advantage)机制验证 ✅(2026-07-14,无需训练)
 脚本 `recurrence_action_consistency.py` · 图 `assets/recurrence_action_consistency.png`。测 `corr(r, −跨demo动作离散度)`:高 r 帧的近邻(同状态他demo)动作是否更一致。
