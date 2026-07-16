@@ -36,7 +36,7 @@
 
 | 步 | 目标 | 判据 | 现状 |
 |---|---|---|---|
-| **P1** | **只换 WM,LIBERO 上超过 LaWAM** | libero_10 SR(M'') > baseline(B) | 🔄 M''=93.8% < B=96.4%;V6(自适应视界目标+hint-dropout)冲刺中 |
+| **P1** | **只换 WM,LIBERO 上超过 LaWAM** | libero_10 SR(M'') > baseline(B) | 🔄 同口径(North-E)**M''93.8% ≈ B94.2%(−0.4,打平)**,r-脊>milestone+1.0;缺口全在 task8 别名 → V6 自适应视界目标冲刺 |
 | **P2** | **robotwin 架构上提点** | robotwin SR 相对 baseline↑ | ⏳ 待(特征已抽,V4;需下游重训+eval) |
 | **P3** ⭐终局 | **更优雅的架构下进一步提点**:在**同一个编码器空间训 WM**,把 LMWM **优雅融进 VLA** | SR↑ 且架构更简(去掉 frozen-DINOv3 外挂空间) | ⏳ 待(设计见下) |
 
@@ -207,6 +207,21 @@ North-E 干净 eval(修 3 个环境坑:LIBERO config 绝对路径 / assets 缺 1
 | **聚合** | | **93.8** | 96.4 | 92.2 | **−2.6** | **+1.6** |
 
 **两条读数**:①**r-脊价值成立**:+1.6pt vs milestone 几乎全来自 task6(+12,milestone 最烂的弥散任务)→ 兑现「脊>边界」。②**vs baseline 差 −2.6 全在别名任务**:task8(两个相同moka壶)−12、task2/9(moka壶/微波炉遮挡终态)−6。只在 task3 超 baseline。
+
+**⭐ T1 同口径完成(2026-07-16,全 North-E 同 harness/seed,取代上面 mixed-env 表)**:B/M 也在 North-E 重跑(B@20000 单卡 flavor `ml.pni3ln.5xlarge`,M@25000=4卡100k 同 M'' 样本量)。
+
+| task | M'' r-脊 | B base | M ms | M''−B |
+|---|---|---|---|---|
+| 6 弥散 | **80** | 74 | 72 | **+6** |
+| 8 双moka别名 | 88 | 98 | 84 | **−10** |
+| 其余8 | — | — | — | ∈[−2,+2] |
+| **聚合** | **93.8** | **94.2** | **92.8** | **−0.4** |
+
+**关键反转**:baseline North-E=**94.2%**(本机 96.4%,~2pt 环境/seed 差)。去环境 confound 后:
+- **r-脊 93.8% ≈ baseline 94.2%(−0.4,单 seed 噪声内)** —— 不是 mixed-env 的 −2.6!
+- **r-脊 > milestone +1.0**(稳);**r-脊在弥散 task6 反超 baseline +6**。
+- **−0.4 缺口几乎全是 task8 别名(−10)** → 正是 V6 自适应视界目标的靶子。
+- **对 P1 极有利**:r-脊已与 baseline 打平,V6 只要把 task8(88→~98)拉回,聚合 ~94.8% **> 94.2% = P1 达成**。单 seed 噪声 ~2pt → 最终需多 seed 复核收口(C5)。
 
 **根因(设计层,非表面)**——B/M'' 同架构(LaWAM+WM头),只差 **目标(t+7 vs r-脊)+ swap_teacher**,故 task8 −12 精确隔离出目标选择的代价:
 - **B 的 t+7 = 局部相对自监督目标**:预测「顺当前轨迹 7 步后到哪」,是局部动力学外推,**不需要在流形上全局定位**;target 是自己对真未来的编码,无外部标签可指错;train/inference gap 极小。→ **天生绕开别名**。
