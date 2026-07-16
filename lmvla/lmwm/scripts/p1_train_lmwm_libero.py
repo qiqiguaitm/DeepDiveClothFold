@@ -71,10 +71,11 @@ def main():
     ap.add_argument("--lift_w", type=float, default=1.0)
     ap.add_argument("--smoke", action="store_true")
     ap.add_argument("--out", default="/home/tim/workspace/deepdive_kai0/lmvla/lmwm/checkpoints/lmwm_libero_dinov3base")
+    ap.add_argument("--pairs", default=PAIRS)
     args = ap.parse_args()
     dev = "cuda"
 
-    P = np.load(PAIRS)
+    P = np.load(args.pairs)
     cur_ep, cur_fi, tgt_fi = P["cur_ep"], P["cur_fi"], P["tgt_fi"]
     print(f"[pairs] {len(cur_ep)} 对", flush=True)
     cache = {}
