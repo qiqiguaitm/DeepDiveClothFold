@@ -71,6 +71,10 @@ Entrypoint: |
     echo "FATAL: LIBERO source not found at $LIBERO_SRC" >&2; exit 13
   fi
 
+  # ---- 修 LIBERO 路径: 镜像烤进的 ~/.libero/config.yaml 存的是 /home/tim 本机路径,
+  #      set_libero_default_path() 从 __file__(=North-E 安装位置)重写为 North-E 路径 ----
+  $PYTHON -c "import libero.libero as L; L.set_libero_default_path(); print('LIBERO init_states ->', L.get_libero_path('init_states'))"
+
   # ---- 验证 ----
   cd $REPO/lmvla/lawam
   $PYTHON -c "from starVLA.model.framework.vlas.lawam import LatentWorldPolicyBackend; print('Backend OK')"
