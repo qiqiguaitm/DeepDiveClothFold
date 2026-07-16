@@ -17,11 +17,7 @@ Framework: "PyTorch"
 TaskRoleSpecs:
   - RoleName: "worker"
     RoleReplicas: 1
-    FlexibleResourceClaim:
-      GpuCount: 4
-      GpuType: "NVIDIA-H20"
-      Cpu: 44
-      MemoryGiB: 360
+    Flavor: "ml.hpcpni3ln.45xlarge"   # 8×H20 整节点(Robot-North-H20 不支持 FlexibleResourceClaim)
 
 ActiveDeadlineSeconds: 43200   # 12h
 EnableTensorBoard: false
