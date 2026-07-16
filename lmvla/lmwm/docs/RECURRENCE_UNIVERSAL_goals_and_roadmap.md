@@ -60,7 +60,7 @@ r(o_t) = 1/(N_ep-1) · Σ_{j≠ep(t)} exp( -dmin(o_t, E_j)² / 2σ² )
 | **V3c** | 用途 C:部署 r 监控 | 低 r 命中 OOD | ✅ 跨任务 AUROC 0.999 §4.3;同任务失败帧待失败rollout |
 | **V4** | 普适复核:kai0 + robotwin2.0 特征 | 同一超参跨本体成立 | ✅ 特征抽取+同步 §4.4;robotwin V0/V1 复核待(72任务≥10ep) |
 | **V5** | (a)结构接法下游重训 + SR | 研究+落地双目标 | ✅ 内在(前向gain 2.1× §4.7);**sim-SR §4.9: M''=93.8% > M=92.2%, 但 <B=96.4%** |
-| **V6** | 置信门控:high-r→r-脊 / low-r→t+7,+ hint-dropout | 修 M'' 别名任务 −12(task8)不牺牲 task6 | 待做(下一个,根因见 §4.9);history gate ✅ 未撞旧方案 |
+| **V6** | 自适应视界目标(c=检索时间一致性;idx_target=idx_local+c·(idx_ridge−idx_local))+ hint-dropout | 修 M'' 别名任务 −12(task8)不牺牲 task6 | 🔄 T1 同口径✅(M''93.8>M92.8,+1.0);T2 训练中;T3 自适应目标 doc✅→重建目标场;history gate ✅ |
 
 **评估纪律**:每个 proxy 配随机/基线对照;宣称"普适"= 同一超参在所有场成立;最终以下游 SR 收口。
 
@@ -203,14 +203,19 @@ North-E 干净 eval(修 3 个环境坑:LIBERO config 绝对路径 / assets 缺 1
 
 **V6 设计(修法,不改 r 信号本身,减小坏 hint 的伤害)**:
 1. **hint-dropout**:训练时以概率 p 把 milestone latent 换成可学习 null embedding → 策略学会 hint 缺席时回退 base 能力(保住 baseline 底座),坏 hint 不再致命。p∈{0.15,0.25} 各一版(p 过大稀释 task6 真有用的 hint)。
-2. **r 置信门控目标插值(更本质)**:用 recurrence 第三读法(r 幅值=on-manifold/OOD,AUROC 0.999)做门:`a=a_base+g(r)·(a_hint−a_base)`,**high-r→r-脊(吃 task6 红利)/ low-r→退化 t+7(回 B 的抗别名安全区)**。等于用 recurrence 自己的置信信号把 B 的抗别名性和 M'' 的长程收益缝起来;hint-dropout 是其 g 随机置 0 的粗糙特例。
+2. **自适应视界目标(取代旧「r-门控」,更优雅)**:先否掉旧门控——①不优雅(推理端 bolt-on gate + 两目标缝合);②**信号选错**:别名帧的 r 幅值反而**高**(相同物体的帧互为近邻,密度不降),§4.8 已证 r 标量几乎不受别名腐蚀,故「低-r→退 t+7」在 task8 **根本不触发**。r 幅值适合 OOD,不是「这一帧能否可靠定位」的信号。
+   **对的可信度信号 = 检索时间一致性 `c(o)`**:跨-ep k 近邻在任务里是否**同相位**(=`recurrence_aliasing_diag.py` 的 `time_spread` 的反面)。把 milestone/t+7/r-脊统一成**按 `c` 自适应视界的单一目标**,离线烘进 target,**架构零改、推理不变**:
+   - `c(o) = clip(1 − time_spread(o)/T_ref, 0, 1)`;`time_spread` = k=8 跨-ep 近邻归一化时间的 std;`T_ref` = 全局分位(尺度无关,同 r 的 median-heuristic 哲学)。别名帧 → 近邻时间散 → c 低。
+   - `idx_target(o_t) = round(idx_local + c·(idx_ridge − idx_local))`,`idx_local=min(t+7, L−1)`,`idx_ridge`=下一段 r-脊(末段→L−1);**target = h(真帧 idx_target)**,始终 on-manifold(不做 latent 线性混合,避免离流形)。
+   - c=1(清晰)→够到 r-脊(吃 task6 +8 红利);c=0(别名 task8)→收缩回 t+7(回 baseline 抗别名安全区)。**残差/局部表述天生不需在有损池化空间做全局绝对定位**——把 baseline 的抗别名性直接吸收进目标定义。
+   - 与 hint-dropout **互补**:dropout=「策略别过度依赖 hint」,自适应目标=「hint 在不可信处自动变保守」,可叠加。
 - **预测**:task8/2/9 回升向 baseline,task6 基本不掉,聚合有望 93.8%→96%+。
 - **history gate ✅**(2026-07-16):CRAVE HISTORY §2 + 本 §5 对 dropout/guidance/门控/插值 零命中,未撞旧方案。
 
 **任务队列(V6 + 补齐)**:
 - [ ] **T1 同口径重eval**:用修好的 North-E harness 把 Arm B / Arm M 重跑到 step12500(同环境同step),坐实三臂 per-task 表(现成 armB/armM yaml + config/assets 修复,可两节点并行 ~1.7h)。
 - [ ] **T2 hint-dropout 训练**:训练 forward 加概率 p null-embedding 遮挡 milestone latent;出 p=0.15 / p=0.25 两版 ckpt。
-- [ ] **T3 r-门控目标插值**:实现 `a_base + g(r)·(a_hint−a_base)`(g 随 r 单调);一版 ckpt。
+- [ ] **T3 自适应视界目标(新,取代门控)**:重写离线目标构造——`c(o)`=检索时间一致性,`idx_target=round(idx_local+c·(idx_ridge−idx_local))`;改 `p1_libero_rvalley_pairs.py` + 重建 `target_compact.npz`;同 M'' 架构重训一版 ckpt(vanilla 推理,零架构改)。
 - [ ] **T4 三选优 eval**:T2/T3 三版 + M'' 基线在 North-E 同口径 eval,看 task8/2/9 是否回升、task6 是否保住。
 
 ---
