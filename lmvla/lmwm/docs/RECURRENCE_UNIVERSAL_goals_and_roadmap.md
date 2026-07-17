@@ -336,6 +336,18 @@ North-E 干净 eval(修 3 个环境坑:LIBERO config 绝对路径 / assets 缺 1
   - **③action-chunk 位置内生**:hint 天然更关远端 action(去哪)、近端 action 靠局部(精修);让 cross-attn 自学(hint-dropout 给激励)。
   - value/历史(§4.11)**降级**:治感知别名,而 task8 非感知问题。
 
+**✅ CFG 权重扫实测(2026-07-17,hintdrop ckpt, task6+8 各15trials, LMWM_CFG_GUIDANCE env)**:
+| w | task6 | task8 |
+|---|---|---|
+| 0.0 纯base | 60% | 87% |
+| 0.5 | 80% | 87% |
+| **0.75** | **93%** | 87% |
+| 1.0 全hint | 88% | 84% |
+| 1.5 强hint | 73% | 80% |
+- **① w≈0.75 甜点**:task6/8 双双微升(88→93 / 84→87),w=1.5 双降 → "略降 hint 权重"是优雅小赢(单旋钮无门控)。
+- **② 关键负结果:CFG 救不了 task8**——task8 在 w∈[0,0.75] 恒 ~87%,**连 w=0.0(无hint)也仅87% vs 真baseline 98%**。→ **task8 精度缺陷是训练烙进去的**(LMWM远端目标训坏了精度),推理降权重解不开(w=0 的权重仍是LMWM训的≠LaWM)。→ **task8 的修必须在训练层(目标形式),CFG/推理无效。**
+- **→ 下一候选(训练层,与CFG正交):机制② flow时间步coarse→fine内生交接**(hint只在粗去噪步强、精修步弱→局部obs保精度)。adaptive(改目标)与CFG(推理)均已证否,机制②是训练层的优雅交接。
+
 **判据**:**task8 从 84 → 向 baseline 98 靠(核心)**;task6/9 红利不掉;聚合超 baseline 更多。多 seed 收口(C5)。
 **history-gate**:动手前扫 CRAVE HISTORY / §5,确认"循环 WM belief / stateful world model"未撞旧方案。
 **任务队列 V7**:①扫 history-gate;②摸 LMWM 代码定 V7.0 改点;③北京环境配好+按卡数模板提交;④训完 eval,task8 为核心判据。
