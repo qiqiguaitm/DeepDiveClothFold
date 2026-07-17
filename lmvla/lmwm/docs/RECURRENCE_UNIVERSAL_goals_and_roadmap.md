@@ -291,16 +291,21 @@ North-E 干净 eval(修 3 个环境坑:LIBERO config 绝对路径 / assets 缺 1
 ### 4.11 ⭐ V7 主线设计:循环 belief 世界模型(2026-07-17)
 **动机(§4.10 倒推)**:失败全是**超时磨蹭无发散** → 阻塞根源 = 当前 LMWM 是 `f(当前帧)→子目标 latent` 的**无状态逐帧前馈预测器**,不是真世界模型。别名脆弱 + 阻塞都源于**无状态**(每帧从别名帧重新定位 → ①对歧义取平均=优柔;②逐帧翻转;③无闭环失速检测)。**hint 不优雅 = 丢了"世界模型"最本质的状态/记忆。**
 
-**核心设计**:LMWM 维护随 (o_t, a_t) 演化的**循环 belief `b_t`**;**从 `b_t` 预测子目标(而非裸 `o_t`)**。一个机制同治两类别名 + 止阻塞:
-- 重复物体(task8):`b_t` 记"已放壶A" → 歧义帧被历史解 → 指壶B;
-- 遮挡终态(task9):`b_t` 记"夹爪推了门" → "关上"在 belief 里(像素看不到) → 完成;
-- 阻塞:belief 时序一致 → 不逐帧翻转 → 策略承诺、推进、按时完成。
+**核心设计**:LMWM 维护随 (o_t, a_t) 演化的**循环 belief `b_t`**;**从 `b_t` 预测子目标(而非裸 `o_t`)**。一个机制同治两类别名 + 止阻塞。
 
-**分阶段(便宜→根本,每步单变量可提交)**:
-- **V7.0 多模态+承诺(最便宜,先验证)**:WM 预测多峰(MDN 现成),策略**承诺一个峰**(采样/argmax)而非 condition 均值 → 破 task8 优柔;环境反馈消歧。可能仅改推理/轻改训练。
-- **V7.1 窗口历史 belief**:generator 输入单帧→最近 k 帧(poor-man 循环);需 dataloader 供时序上下文 + generator 消费。
-- **V7.2 循环 belief(主线)**:LMWM 内嵌 GRU/SSM 状态,rollout 预测子目标;训练需序列数据(整 ep / 长 chunk)。
-- **V7.3(= P3 终局)**:belief 建在 **VLA 自身编码器空间**(判别性分开两壶)。
+**⭐ 主线实现(用户 2026-07-17):belief = value/progress(远比 k 帧特征优雅,且复用 CRAVE)**
+- **洞察**:失败全是"超时磨蹭无进度"(§4.10)→ **value=进度**正是缺的那个紧凑循环状态。喂 `value_{t-1}` 给 WM:
+  - task9(遮挡时间别名):门开/门关像素几乎一样,但 **value 不同**(0.7 vs 1.0)→ 打破像素打不破的时间歧义;
+  - task8(重复物体):放第一/第二个壶**进度不同**(0.4 vs 0.7)→ 区分"第几个壶";
+  - 阻塞:value 停滞=卡住的信号。
+- **闭合项目两半**:CRAVE=recurrence 的 value/进度读法;LMWM=recurrence 的 WM hint 读法。**把 value(CRAVE)喂回 WM(LMWM)= 三读法(幅值→value、脊→子目标)首次协同**。**value 就是 belief,只是最优雅的那种状态(标量/低维 vs k 帧特征)。**
+- **分阶段**:
+  - **V7.1′ value-conditioned WM(便宜主攻)**:`value_{t-1}`(标量/几维,离线 recurrence-value 训、在线 CRAVE value GRU 推)拼进生成器 code / 过小 MLP。改动极小,复用现成。
+  - **V7.2′ belief-conditioned WM(更强)**:喂在线 value-GRU 的**隐状态**(=学出的循环 belief,比标量丰富,更救 task8)。这就是 V7.2 循环 belief 用 value GRU 实现。
+  - **V7.3(=P3 终局)**:belief 建在 VLA 自身编码器空间。
+- **caveat**:标量 value 对 task8 空间别名可能太粗(顺序不定/进度不单调)→ 需 V7.2′ 丰富 belief;在线 value 估错会累积误差(CRAVE 因果 GRU 已解在线)。
+
+**旁支(重,作对照)V7.1-B k 帧历史**:generator 专属 k 帧特征通道(脚本 `p1_train_lmwm_libero_hist.py` 已写)。管线重、不复用 CRAVE,**降级为对照**。
 
 **判据**:**task8 从 84 → 向 baseline 98 靠(核心)**;task6/9 红利不掉;聚合超 baseline 更多。多 seed 收口(C5)。
 **history-gate**:动手前扫 CRAVE HISTORY / §5,确认"循环 WM belief / stateful world model"未撞旧方案。
