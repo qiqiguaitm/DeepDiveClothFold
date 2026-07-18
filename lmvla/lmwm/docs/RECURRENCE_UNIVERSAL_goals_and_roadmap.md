@@ -399,6 +399,7 @@ North-E 干净 eval(修 3 个环境坑:LIBERO config 绝对路径 / assets 缺 1
 - **可证伪预测**:t8→~100 守住(局部通道原封未动)、t6→~90 守住(全局通道同 hintdrop 配方)→ 聚合 ~96-97% > 94.4 双亲。**若 t8 仍低 → 坐实干扰假说(非替换)→ 后备 = 机制②训练版**(t 相关 dropout:粗步给 milestone、细步只给 t+7 —— H³DP 式,也是文献空白 (c))。
 - **paper 消融(PDS 式对照)**:dual(t+7,t+7) 应无增益 → 证明增益来自尺度互补而非 token 数。
 - **试验**:E1 = 改 flowmatching_expert(收第三段 future tokens+mask)+ lawam.py(双目标并存,不覆盖),12500步 8×H20 cnsh volc(同 hintdrop 配方 ~4-5h),eval 本机 N=50 同口径 vs §4.13 两亲。
+- **执行计划书(逐步推进用)**:`PLAN_V8_lmwam_ds_dual_scale_2026-07-18.md`(代码改动表/smoke/提交/判据决策树/风险清单)。
 
 ---
 
