@@ -376,6 +376,32 @@ North-E 干净 eval(修 3 个环境坑:LIBERO config 绝对路径 / assets 缺 1
 
 ---
 
+### 4.14 ⭐ 因果定论 + 文献调研 + V8 双尺度架构(LMWAM-DS)(2026-07-18)
+
+**问题**:为何 LMWM 相比 LaWM 部分任务升(t6+12/t9+8)部分降(t8−16/t7−4)?深究后**因果链三级闭环**:
+
+**① 代码级 — 通道替换,不是能力叠加**(lawam.py:670-678):LMWM Path A 用 `torch.where` 直接**覆盖** `h_t1_gt`,把 (a) 辅助损失目标 `MSE(decoder(h_t,pred_action_emb), h_t1_gt)` 和 (b) DiT 的 256-token 条件,**同时**从 t+7 换成 milestone。梯度打进 VLM 的 latent action query → 整个"latent action"抽象被重塑:t+7 目标学"接下来0.23s怎么动"(局部动力学),milestone 目标学"要去哪个子目标"(任务进度)。
+**② 特征级 — 两通道信息互不包含**(hint_info_diag,GT 帧,900 pair/task):`align = dcos(g_ms−g_t, g_{t+7}−g_t)` 全任务仅 **0.46-0.54**(early 更低 0.34-0.48)。milestone ⊉ t+7:局部动态真实存在(locMag 58-89)但远 hint 指不到;t+7 无全局去向(task6 视界最长35帧、early align 最低0.40=全局信息最多)。**替换必丢局部监督。**
+**③ 行为级 — 盈亏由任务瓶颈类型决定,非特征统计**:align/hor/locMag 均不能预测 per-task Δ(t8 align .491≈t6 .457);决定因素=任务卡在哪:t8 毫米级放置(需局部通道)vs t6 选错分支/徘徊(需全局通道),与 rollout 视频一致。**推理期无法弥补**(局部信息推理时根本不存在)→ 解释 CFG 权重扫/t-sched(γ=0.5/1/2 单调更差)全灭。
+
+**文献调研(2026-07-18,agent 全网扫)**:
+- **PDS(Chen/Huang/Dogar, ICRA 2026)= 最近对标**:单 policy 同时条件化 短视界子目标+远低方差子目标,证明(高斯方差论证)短视界→动作方差更低→更精,远子目标→指引;**dual 胜两个 single**(0.78 vs 0.75/0.62),且**两个同尺度子目标组合无增益 → 互补性=尺度差**。但它是 GMM-RNN+64d cVAE、MimicGen 小规模——**VLA 规模双尺度未来特征条件化 = 空白**。
+- 局部未来预测助精度:Seer(ICLR25 oral)/GR-1/VPP/FLARE 一致;辅助目标选错会伤:DreamVLA。
+- 表征机理:Fang & Stachenfeld(ICLR24)+ SR discount 文献:**辅助预测视界长→表征偏全局任务结构,短→局部动力学** = 我们 ① 的理论框架。
+- CFG 文献反向印证:guidance 效果训练烙定,采样端 reweight 救不了 → 我们推理侧全灭是预期内。
+- **开放缺口(可占)**:(a) 固定 VLA 内受控视界 A/B(我们已有,比文献都干净);(b) 双尺度未来特征 token 条件化@VLA;(c) 训练时 diffusion-timestep 相关 hint dropout。
+
+**V8 主方案:LMWAM-DS 双尺度未来条件化(不替换,并联)**
+- 局部通道(保 LaWM 原样):decoder→h_t7_pred,aux MSE→features[:,-1],**always-on** 条件 → 守精度(t8/t7)。
+- 全局通道(加,不换):provider milestone 目标 + LMWM generator 推理,**hint-dropout 0.15 只作用于此通道**(CFG 旋钮保留在指引通道上)→ 守指引(t6/t9)。
+- DiT 条件 = `[h_t | h_t7 | h_ms | vlm]`(vision 512→768 token,cross-attn +~20%)。
+- **优雅性(C6)**:无 gate、无手工调度;coarse→fine 分工由 cross-attention **自己涌现**(PDS 互补性结果+注意力可学性支撑)。
+- **可证伪预测**:t8→~100 守住(局部通道原封未动)、t6→~90 守住(全局通道同 hintdrop 配方)→ 聚合 ~96-97% > 94.4 双亲。**若 t8 仍低 → 坐实干扰假说(非替换)→ 后备 = 机制②训练版**(t 相关 dropout:粗步给 milestone、细步只给 t+7 —— H³DP 式,也是文献空白 (c))。
+- **paper 消融(PDS 式对照)**:dual(t+7,t+7) 应无增益 → 证明增益来自尺度互补而非 token 数。
+- **试验**:E1 = 改 flowmatching_expert(收第三段 future tokens+mask)+ lawam.py(双目标并存,不覆盖),12500步 8×H20 cnsh volc(同 hintdrop 配方 ~4-5h),eval 本机 N=50 同口径 vs §4.13 两亲。
+
+---
+
 ## 5. 已排除(勿回头,详见各 HISTORY)
 - per-mode coverage≥0.5:kai0 专属,LIBERO 塌 M=2(消融)。
 - BGMM 视觉聚类:LIBERO 低视觉方差 → 塌成 1 component,γ 四数量级无效(2026-07-14 实测);时间注入只在窄 w 甜点脆弱工作 → **视觉聚类不普适**。
