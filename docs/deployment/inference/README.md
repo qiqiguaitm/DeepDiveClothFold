@@ -27,6 +27,9 @@ inference/
 | 文件 | 行数 | 用途 |
 |---|---|---|
 | [`rtc_implementation.md`](rtc_implementation.md) | ~249 | RTC (Inference Real-Time Chunking) 算法实现, 4 schedules + jax.vjp guidance |
+| [`deploy_speed_analysis.md`](deploy_speed_analysis.md) | ~analysis | **部署后机械臂运行速度分析** — RTC/EMA/V0-V1 对真机速度影响; 场景不可控故用峰值/分布(非均值); 发现 RTC 削手臂峰值~0.62×、夹爪~0.53× |
+| [`rtc_ema_speed_ablation.md`](rtc_ema_speed_ablation.md) | ~design | RTC/EMA 速度消融实验设计 — 开关方法 (RTC 热改/EMA 需重启) + 2×2 控制变量协议 + 结果表 |
+| [`speed_ablation_episodes.md`](speed_ablation_episodes.md) | ~ledger | 速度消融采样 episode 登记表 (A0-A3 v0 / B0-B3 v1) + 跨日期检索法 |
 | [`xvla_rtc_design.md`](../../../xvla/docs/deployment/inference/xvla_rtc_design.md) | ~design | X-VLA RTC 移植设计 — EE6D 原生空间 + **前向过程 inpaint** (vs 算术平均的 IK/decode 失败率差异) + 多层 IK 兜底; 异步双时钟前置; gated 于 E0 读视觉 |
 | [`ipc_inference_deployment_review.md`](ipc_inference_deployment_review.md) | ~178 | IPC 推理服务架构 — 与原版差异分析 |
 | [`ros2_image_inference_validation_review.md`](ros2_image_inference_validation_review.md) | ~430 | ROS2 图像处理 + 推理结果校验策略 review |
