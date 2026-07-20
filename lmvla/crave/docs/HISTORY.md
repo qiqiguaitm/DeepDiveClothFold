@@ -12,7 +12,12 @@
 
 ## 1. 当前权威(canonical)—— 只认这些
 
-### 1.1 最终 pipeline(一句话)
+> ⚠️ **2026-07-20 scope 分界(先读)**:下面 §1.1 的 BGMM 管线只在 **kai0 任务A 的 value/AWBC 读出** scope 内是权威。
+> **阶段代表帧/边界/世界模型目标/OOD 等"普适信号"用途,当前权威 = v2 复现密度场 r(o)**(r-谷=边界、**r-脊=阶段代表帧**,无聚类无K):
+> 见 [recurrence_field_architecture_v2](recurrence_field_architecture_v2.md),唯一详源 `lmvla/lmwm/docs/RECURRENCE_UNIVERSAL_goals_and_roadmap.md`。
+> BGMM 三大件(视觉聚类/coverage≥0.5/双锚 Viterbi)在 LIBERO 上已被证不普适(塌 M=1),**勿用于新数据集/新用途**。
+
+### 1.1 最终 pipeline(一句话,scope=kai0 任务A value 读出)
 
 **DINOv3-base(768D 冻结)→ pooled → PCA→128D ⊕ proprio 位置14(各自 L2, 能量 1:1)
 → 贝叶斯GMM(diag, 自适应K)+ per-mode 覆盖率≥0.5 → 簇成员帧 T 中位数(median)定 milestone 进度

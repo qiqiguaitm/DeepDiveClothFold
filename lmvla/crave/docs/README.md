@@ -6,7 +6,8 @@
 > 🧭 **agent 先读这个**:[**HISTORY.md**](HISTORY.md) = 唯一的「**当前权威 vs 已淘汰方案**」总索引。
 > CRAVE 迭代多、`docs/` 与 `experiments/` 混着最终与淘汰方案;**动手/复用代码前先查 HISTORY**,避免误用旧脚本/旧图/旧结论(如阶梯-teacher 蒸馏、img-only 聚类、DINOv3-H、KMeans-K10、固定滞后 等均已被取代)。
 >
-> **当前权威文档**(其余为历史/过渡):[final_architecture](final_architecture.md)(离线收口)· [multitask_value](multitask_value.md)(在线 multitask)· [online_readout_route](online_readout_route.md)(在线因果)· [decoder_benchmark](decoder_benchmark.md)(解码)· [cross_dataset_validation](cross_dataset_validation.md)(泛化)。
+> **当前权威文档**(其余为历史/过渡):[final_architecture](final_architecture.md)(离线收口,scope=kai0 任务A value)· [multitask_value](multitask_value.md)(在线 multitask)· [online_readout_route](online_readout_route.md)(在线因果)· [decoder_benchmark](decoder_benchmark.md)(解码)· [cross_dataset_validation](cross_dataset_validation.md)(泛化)。
+> ⭐ **普适方向(阶段代表帧/边界/WM目标/OOD)当前权威 = v2 复现密度场 r(o)**:[recurrence_field_architecture_v2](recurrence_field_architecture_v2.md)(r-谷=边界、r-脊=代表帧,无聚类;详源在 `lmvla/lmwm/docs/RECURRENCE_UNIVERSAL_goals_and_roadmap.md`)。
 
 ## 文档结构
 
