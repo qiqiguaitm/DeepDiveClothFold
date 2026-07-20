@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 """UR-VC(arXiv 2607.12892)复现基线 @ kai0, 对打 CRAVE v1(corr 0.943 vs stage_progress_gt).
 方法(论文式4-6): 帧 i → 每条其他 ep 在时间带 |g_j-g_i|<=tau 内取 cos 最相似 1 帧(1-NN/ep),
+⚠️ 已弃用(2026-07-20): dino_sub20 特征与本数据错对齐, 数字作废; 用 urvc_aligned_analysis.py + kai0_aligned_urvc 特征。
 cos>=rho 才算匹配; ĝ_i = 匹配帧归一化时间标签的平均。免训练。
 偏离声明: 编码器用 DINOv3-base pooled(本地现成, 论文用 SigLIP-2)→ 这是机制复现非严格复现;
 rho=0.90 是 SigLIP 尺度, DINOv3 余弦偏高 → 同时报 rho∈{0.90,0.95} 与 无阈值 三档。
