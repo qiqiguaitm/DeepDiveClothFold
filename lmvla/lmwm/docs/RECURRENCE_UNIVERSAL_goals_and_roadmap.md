@@ -563,6 +563,17 @@ kai0 末帧被机械臂**回 home** 污染,而 home 姿态跨 ep 复现度极高
 - @800ep/stride20(59k帧):结构恢复(dino M=10 / so400m-mean M=8),corr(med) **0.457 vs 0.429(−6%)** → **So400m-mean 保住 ~94% 标签质量,绿灯**。绝对值低于生产 0.943 是协议差(1.5Hz vs 3Hz+样本),两空间同等受制不影响判定。
 - 全量:3055ep×**stride10(3Hz 生产协议)** so400m-mean 双卡抽取中 → `kai0_aligned_urvc/so400m-mean_s10/`;后接 v1 管线出 So400m-value 标签 → AWBC 训 pi05(volc,mkyaml.py 生成 yaml)vs 现行 DINOv3-value 臂。脚本 `kai0_v1gate_space.py`(hash 0cc3e1a 起含 STRIDE/SHARD)。
 
+**⭐ A线终判(2026-07-20 深夜,全量 3055ep):gate@800 未外推,So400m 空间的 v1 value 读出不达产线质量 → A线原方案(So400m 标签训 AWBC)中止**
+| 配置(全量,同 eval) | corr(med) |
+|---|---|
+| 生产 DINOv3(polyline) | **0.948**(复核吻合已知 0.943 ✅) |
+| So400m-mean v1 配方 base | 0.578(M=17 含重复值=簇重叠症状) |
+| 特化扫 pca256 / nc60 / combo | 0.634 / 0.610 / 0.610(最佳仍差 −0.31) |
+| 特化扫 **imgw2(图像权×2)** | **0.344 暴跌 → So400m 视觉分量是短板,proprio 在扛** |
+
+**分化定论(论文级发现,与 §4.19 合读)**:pi05 自身 token 空间**撑得起 r 场结构读法**(边界/脊/OOD,§4.19 边界一致性还最优),**撑不起毫米级 value 聚类读出**(0.634 vs 0.948,需要 DINOv3 几何特征)。即:**"信号挖掘空间=策略空间"的要求在两类读法上分化**——标量 value 标签(策略不接触特征空间)继续用 DINOv3 产线;**必须**在 pi05 空间做的是 grid 条件化/LMWM(B线),而 §4.19 已证那里结构成立。规模效应对照:DINOv3 从 800ep 0.457→全量 0.948,So400m 只 0.429→0.578——平化空间的簇重叠不因数据变多而解开。
+脚本:`gen_so400m_value_labels.py`(标签+_env.json 已产)、`sweep_so400m_value.py`(hash ab1ddc3)。产物:`lmwm/data/kai0_so400m_value_labels/`(留档,不入训练)。
+
 ---
 
 ## 5. 已排除(勿回头,详见各 HISTORY)
