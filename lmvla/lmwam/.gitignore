@@ -8,3 +8,5 @@ wandb/
 *.log
 __pycache__/
 *.pyc
+!env/
+!env/**
