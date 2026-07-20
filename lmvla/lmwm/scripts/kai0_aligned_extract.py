@@ -38,18 +38,26 @@ if ENC == "dino":
     from crave.encoders import load_encoder
     enc = load_encoder("dinov3-base", dtype="bf16")
     embed = lambda imgs: enc.encode_pooled(imgs)
-elif ENC == "siglip2":
+elif ENC.split("-")[0] in ("siglip2", "so400m"):
+    # 变体: <name> = 文本对齐 pooled 头(get_image_features); <name>-mean = patch token 均值(与 DINOv3 pooled 协议对等, 亦是 pi05 实际喂 LLM 的 token 层)
     import torch
     from transformers import AutoProcessor, AutoModel
     os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
-    proc = AutoProcessor.from_pretrained("google/siglip2-base-patch16-224")
-    mdl = AutoModel.from_pretrained("google/siglip2-base-patch16-224", torch_dtype=torch.bfloat16).cuda().eval()
+    base, mode = (ENC.split("-") + ["head"])[:2]
+    mid = {"siglip2": "google/siglip2-base-patch16-224",
+           "so400m": "/vePFS/tim/workspace/deepdive_kai0/lmvla/lmwm/data/hf_so400m"}[base]  # so400m=aria2c 本地目录(download_methods.md §5)
+    proc = AutoProcessor.from_pretrained(mid)
+    mdl = AutoModel.from_pretrained(mid, torch_dtype=torch.bfloat16).cuda().eval()
     def embed(imgs, bs=128):
         outs = []
         with torch.no_grad():
             for i in range(0, len(imgs), bs):
                 px = proc(images=imgs[i:i+bs], return_tensors="pt")["pixel_values"].to("cuda", torch.bfloat16)
-                outs.append(mdl.get_image_features(pixel_values=px).float().cpu().numpy())
+                if mode == "mean":
+                    h = mdl.vision_model(pixel_values=px).last_hidden_state   # [B, P, D] patch tokens
+                    outs.append(h.mean(1).float().cpu().numpy())
+                else:
+                    outs.append(mdl.get_image_features(pixel_values=px).float().cpu().numpy())
         return np.concatenate(outs)
 else:
     raise SystemExit(f"unknown encoder {ENC}")
