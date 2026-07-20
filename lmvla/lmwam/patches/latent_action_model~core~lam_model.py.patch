@@ -1,0 +1,24 @@
+--- a/latent_action_model/core/lam_model.py	2026-07-20 23:39:55.381961082 +0000
++++ b/latent_action_model/core/lam_model.py	2026-07-20 06:48:34.761421074 +0000
+@@ -588,9 +588,21 @@
+     lam_ckpt = torch.load(ckpt_path, map_location="cpu")['state_dict']
+     new_ckpt = {}
+     model_state = latent_action_model.state_dict()
++    # [LMWM fix, 2026-07-20] DINOv3 层块的嵌套深度随 transformers 版本变:
++    #   transformers 4.x -> vision_encoder.model.model.layer.N.*   (多一层 .model)
++    #   transformers 5.x -> vision_encoder.model.layer.N.*
++    # 旧版本这里硬编码成"总是加一层 .model",在 transformers 5.2 下反而制造 204 个 key 不匹配。
++    # 改为按【当前构建出的模型实际期望】自适应,两个方向都能对上。
++    wants_nested = any(k.startswith('vision_encoder.model.model.layer.') for k in model_state)
+     for key in lam_ckpt.keys():
+         # Remove the Lightning module prefix saved during LAM training.
+         renamed = key.replace("lam.", "")
++        if '.layer.' in renamed and 'vision_encoder.model.' in renamed:
++            has_nested = 'vision_encoder.model.model.' in renamed
++            if wants_nested and not has_nested:
++                renamed = renamed.replace('vision_encoder.model.', 'vision_encoder.model.model.', 1)
++            elif has_nested and not wants_nested:
++                renamed = renamed.replace('vision_encoder.model.model.', 'vision_encoder.model.', 1)
+         new_ckpt[renamed] = lam_ckpt[key]
+     model_keys = set(model_state.keys())
+     ckpt_keys = set(new_ckpt.keys())

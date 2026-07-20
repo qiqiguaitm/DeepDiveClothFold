@@ -1,0 +1,29 @@
+--- a/starVLA/dataloader/latent_world_train_collator.py	2026-07-20 23:39:55.398242000 +0000
++++ b/starVLA/dataloader/latent_world_train_collator.py	2026-07-12 15:13:00.000000000 +0000
+@@ -133,6 +133,8 @@
+         states_list: list[torch.Tensor] = []
+         embodiment_ids: list[int] = []
+         action_hz_list: list[float] = []
++        episode_indices: list[int] = []   # [LMWM Path A] milestone-target 查表键(BUG_AUDIT CRITICAL-1)
++        frame_indices: list[int] = []
+ 
+         for sample in features:
+             primary_videos = sample["primary_videos"].contiguous()
+@@ -162,6 +164,8 @@
+             states_list.append(state_tensor)
+             embodiment_ids.append(embodiment_id)
+             action_hz_list.append(action_hz)
++            episode_indices.append(int(sample.get("episode_index", -1)))
++            frame_indices.append(int(sample.get("frame_index", -1)))
+ 
+         qwen_messages = build_qwenvl_messages(
+             images=image_views_batch,
+@@ -224,6 +228,8 @@
+             "state_mask": torch.stack(state_masks, dim=0),
+             "embodiment_id": torch.tensor(embodiment_ids, dtype=torch.long),
+             "action_hz": torch.tensor(action_hz_list, dtype=torch.float32),
++            "episode_index": torch.tensor(episode_indices, dtype=torch.long),   # [LMWM Path A]
++            "frame_index": torch.tensor(frame_indices, dtype=torch.long),
+             "image_grid_thw": qwen_inputs.get("image_grid_thw"),
+             "actions": torch.stack(action_tensors, dim=0),
+             "actions_mask": torch.stack(action_masks, dim=0),

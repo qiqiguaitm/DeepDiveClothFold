@@ -1,0 +1,21 @@
+--- a/starVLA/model/framework/latent_world/config_builder.py	2026-07-20 23:39:55.401575000 +0000
++++ b/starVLA/model/framework/latent_world/config_builder.py	2026-07-16 11:50:01.000000000 +0000
+@@ -1,5 +1,6 @@
+ from __future__ import annotations
+ 
++import os
+ from dataclasses import fields
+ from typing import Any
+ 
+@@ -125,4 +126,11 @@
+             for key in flow_keys:
+                 setattr(policy_cfg.flow_cfg, key, flow_cfg[key])
+ 
++        # V6 hint-dropout (RECURRENCE doc §4.9): env 覆盖 flow cfg_drop_prob, per-arm 不必 fork YAML.
++        # 训练时以概率 p 把 milestone/latent hint(h_t1_star)替成可学习 null embedding(cfg_embeddings),
++        # 让策略不完全依赖 hint -> 坏 hint(别名任务 task8/2/9)不再致命, 回退 base VLA 能力.
++        _hint_drop = os.environ.get("LMWM_HINT_DROPOUT")
++        if _hint_drop is not None:
++            policy_cfg.flow_cfg.cfg_drop_prob = float(_hint_drop)
++
+         return policy_cfg
