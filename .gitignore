@@ -150,3 +150,9 @@ xvla/official_folding_ckpt/
 /VLANEXT/
 lmwm/outputs/
 # 旧布局残留(代码已迁 lmvla/), 数据产物 ignore
+
+# ===== lawam submodule 的生产资产外置区(2026-07-21) =====
+#   把 results/ckpts_dl/dataset/weights/logs 从 lawam submodule 树内迁出到此,
+#   submodule 树内只留软链 → 这样 submodule 内的 git clean -fdx 只删软链, 不伤真数据(见 ENV_SELECTION_RULES §4.5)。
+#   软链由 lmvla/lmwam/env/heal_lawam_symlinks.sh 幂等重建。
+lmvla/lawam_local/

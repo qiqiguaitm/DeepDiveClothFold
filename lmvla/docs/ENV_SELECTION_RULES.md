@@ -73,6 +73,19 @@
    该差异至今无法归因。
 4. **产物旁应写 `_env.json`**:python/torch/transformers/sklearn/numpy 版本 **+ 脚本 git hash**。
    只记环境不够 —— 上一条的病根恰恰是缺 git hash。
+5. **⛔ `lmvla/lawam` submodule 树内禁止 `git clean -fdx` / `-X`。** 2026-07-21 事故:lawam 转
+   submodule 时的 `git clean -fdx`(或重新 clone)抹掉了 `latent_action_model/logs/.../lam_release/`
+   那层未跟踪软链 → **所有 LaWM/LMWM eval 加载 LAM 时 FileNotFoundError**(真权重仍在 `ckpts_dl/`,
+   只是软链没了)。submodule 树内裸放着 **~447G git-ignored 生产资产**(`results/` **442G**、`ckpts_dl/` 2.8G、
+   `dataset/` 1.9G、`weights/` 327M),外加 `dataset/` 下**成千上万条嵌套软链**。
+   - `git clean -fd`(无 `-x`)**不删** ignored,安全;**只有 `-x`/`-X` 会抹**这 447G。**cron_sync.sh 已核实无任何 clean**,
+     `submodule update` 的 checkout 也不删未跟踪 → **无自动化威胁**;威胁仅来自手动误敲 `-fdx` 或再次重构。
+   - 修复/自愈:`bash lmvla/lmwam/env/heal_lawam_symlinks.sh`(幂等重建 LAM release + 5 个顶层资产软链)。
+     train/eval entrypoint 顶部可调它做 fail-safe。
+   - **✅ 结构性根治已落地(2026-07-21,两环境):** `results/`(442G)、`ckpts_dl/`、`dataset/`、`weights/`、`logs/`
+     已 `mv` 到 submodule **外部** `lmvla/lawam_local/`(超项目侧,已 gitignore),submodule 树内只留 5 条软链。
+     现在 submodule 内 `git clean -fdx` **只删这 5 条软链**(heal 脚本秒重建),444G 真数据够不着。
+     LAM release 软链经 `ckpts_dl` 软链**链式解引用**仍通。
 
 ---
 
@@ -94,3 +107,6 @@
 - [ ] 给 gf0 的 `kai0/.venv` 补 `scikit-learn==1.7.2`(合并的唯一前置,纯操作)→ 补完即可退役 srpo
 - [ ] 在关键脚本头部加 transformers 版本断言
 - [ ] 落实 `_env.json` 产物元数据
+- [x] ~~**结构性根治 submodule 内 447G 裸奔资产(见 §4.5)**~~ → **✅ 2026-07-21 完成**:
+  `results/`(442G)、`ckpts_dl/`、`dataset/`、`weights/`、`logs/` 已 `mv` 到 `lmvla/lawam_local/` 并软链回,
+  两环境(cnsh gf0 / cnbj North-E)各做一次,已 gitignore。软链由 `heal_lawam_symlinks.sh` 幂等重建。

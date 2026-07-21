@@ -1,0 +1,207 @@
+# 【wp577 早读】官方配方(4卡×25000, batch128)两臂 step-20000 ckpt × 4 路重复评测
+#   ckptA = armB 纯 LaWM(GPU 0-3, 4 路), ckptB = dual2q LMWM(GPU 4-7, 4 路), 8 卡整节点。
+#
+# 背景: wp577(t-20260720185558-wp577)跑满 12h 墙钟停在 step 20000/25000, 最后 5000 步丢失。
+#   目的: 早读 armB t6 —— 官方 batch128 配方是否把"我方 8卡×12500(batch256) t6=80 低官方~85"的
+#   5pt 差距往回拉。step 20000 时 cosine LR 已退火到 ~1.1e-5(走完 79%), 是可信早读(非终值)。
+#   判据: armB t6 若已向 85 爬 ⇒ 优化不等价假设成立, 值得再花 13h 补到 25000 拿干净终值;
+#         若仍 ~80 ⇒ 假设基本证伪, 省下 13h。
+#
+# ★ dual2q 臂 eval 必须带架构 env(LMWM_DUAL/LMWM_DUAL_2Q), 漏配 = act_query size mismatch。
+# 提交: gf0 上 VOLC_AK=.. VOLC_SK=.. kai0/.venv/bin/python submit_yaml.py libero_eval_wp577_20k_x4_8h20.yaml
+
+TaskName: "libero-eval-wp577-20k-x4"
+Description: "wp577 官方配方两臂 step-20000: armB纯LaWM + dual2q LMWM, 各4路重复评测出均值±std"
+Tags: []
+
+ImageUrl: "dvs-cr-cn-beijing.cr.volces.com/vis_robot/kai:kai0-gf1"
+ResourceQueueName: "Robot-North-H20"
+Framework: "PyTorch"
+
+TaskRoleSpecs:
+  - RoleName: "worker"
+    RoleReplicas: 1
+    Flavor: "ml.hpcpni3ln.45xlarge"   # 8×H20 整节点(队列不支持 FlexibleResourceClaim; 单卡档为 ml.pni3ln.5xlarge)
+
+ActiveDeadlineSeconds: 28800
+EnableTensorBoard: false
+
+Storages:
+  - Type: "Vepfs"
+    VepfsId: "vepfs-cnbj875793a96d6b"
+    MountPath: "/vePFS-North-E/vis_robot"
+    SubPath: "/vis_robot"
+
+CacheType: "Cloudfs"
+
+Envs:
+  - Name: PYTHONUNBUFFERED
+    Value: "1"
+  - Name: HF_HUB_OFFLINE
+    Value: "1"
+  - Name: TRANSFORMERS_OFFLINE
+    Value: "1"
+  - Name: TOKENIZERS_PARALLELISM
+    Value: "false"
+  - Name: MUJOCO_GL
+    Value: "egl"
+
+Entrypoint: |
+  set -uo pipefail
+  REPO=/vePFS-North-E/vis_robot/workspace/deepdive_kai0
+  STAMP=$(date -u +%Y%m%d_%H%M%S)
+  LOG_DIR=$REPO/lmvla/lawam/logs/volc_eval
+  mkdir -p "$LOG_DIR"
+  LOG="$LOG_DIR/evalwp577_${STAMP}.log"
+  exec >> "$LOG" 2>&1
+  set -x
+  echo "=== wp577 双臂 step20000 × 4路 重复评测 start $(date -u) ==="
+
+  CK=$REPO/lmvla/lawam/results/Checkpoints/libero
+  LMWM=$REPO/lmvla/lmwm
+  # ★ ckptA(GPU 0-3): armB 官方配方纯 LaWM
+  CKPT_A=$CK/20260720_105619+armB_lawm_official_recipe/checkpoints/steps_20000_pytorch_model.pt
+  GROUP_A=wp577_armB_official_20k_x4
+  # ★ ckptB(GPU 4-7): dual2q 官方配方 LMWM
+  CKPT_B=$CK/20260720_105619+dual2q_lmwm_official_recipe/checkpoints/steps_20000_pytorch_model.pt
+  GROUP_B=wp577_dual2q_official_20k_x4
+  # ★ dual2q 用的 WM = rvalley(与 wp577 训练一致, 非 dinov3base)
+  WM_CKPT=$LMWM/checkpoints/lmwm_libero_rvalley/lmwm.pt
+  NREP=4
+
+  export PYTHON=$REPO/kai0/.venv/bin/python
+  export PATH=$REPO/kai0/.venv/bin:$PATH
+  export STAR_VLA_PYTHON=$PYTHON
+  export LIBERO_PYTHON=$PYTHON
+  cd $REPO/lmvla/lawam
+  nvidia-smi -L | head -8
+
+  for f in "$CKPT_A" "$CKPT_B" "$WM_CKPT"; do
+    [ -f "$f" ] || { echo "FATAL: ckpt 不存在 $f" >&2; exit 13; }
+  done
+
+  # ---- lmwam 补丁自愈(幂等) ----
+  # 事故(2026-07-21): lawam 转 submodule 后被重置成纯 bd4a363, 11 个 lmwam 补丁全丢
+  #   → lam_model.py 回退上游 strict load, DINOv3 key 嵌套深度不匹配(204 missing/204 unexpected),
+  #     policy server 加载 LAM 崩溃 → 1200s 超时 → "0 路"。此处幂等应用(已应用则跳过), 自愈。
+  ( cd $REPO/lmvla/lmwam && bash apply.sh 2>&1 | tail -4 )
+  # ★ 重构后 adapter 文件在 lmwam/adapter(不再在 lawam); lawam.py:284 据 LMWM_ADAPTER_DIR 做 sys.path.insert
+  ADAPTER_DIR=$REPO/lmvla/lmwam/adapter
+  [ -f "$ADAPTER_DIR/lmwm_adapter.py" ] || { echo "FATAL: adapter 缺失 $ADAPTER_DIR" >&2; exit 13; }
+
+  # ---- LAM release 软链自愈(幂等) ----
+  # 事故(2026-07-21): lawam 转 submodule + cron `git clean` 把 logs/.../lam_release 未跟踪软链清掉,
+  #   真权重仍在 ckpts_dl/。此处按需重建, 让 eval 自愈, 不依赖外部修复。
+  LAM_REL=latent_action_model/logs/dino_large_vae/lam_release   # 相对 $REPO/lmvla/lawam (=CWD)
+  mkdir -p "$LAM_REL/checkpoints"
+  [ -e "$LAM_REL/dino_large_vae.yaml" ] || ln -sfn ../../../../ckpts_dl/dino_large_vae.yaml "$LAM_REL/dino_large_vae.yaml"
+  [ -e "$LAM_REL/checkpoints/pytorch_model.pt" ] || ln -sfn ../../../../../ckpts_dl/checkpoints/pytorch_model.pt "$LAM_REL/checkpoints/pytorch_model.pt"
+  for f in "$LAM_REL/dino_large_vae.yaml" "$LAM_REL/checkpoints/pytorch_model.pt"; do
+    [ -e "$f" ] || { echo "FATAL: LAM 软链自愈失败 $f (检查 ckpts_dl/)" >&2; exit 13; }
+  done
+  echo "[$(date)] LAM release 软链 OK: $(ls -laL $LAM_REL/checkpoints/pytorch_model.pt | awk '{print $5}') bytes"
+  # from_pretrained -> read_mode_config 断言 run_dir(=ckpt.parents[1]) 下须有 config.yaml + dataset_statistics.json
+  for d in "$(dirname $(dirname $CKPT_A))" "$(dirname $(dirname $CKPT_B))"; do
+    for f in config.yaml dataset_statistics.json; do
+      [ -f "$d/$f" ] || { echo "FATAL: 缺 $d/$f (from_pretrained 必需)" >&2; exit 13; }
+    done
+  done
+
+  # ---- 环境自愈(幂等) ----
+  env -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY -u all_proxy \
+    $PYTHON -m pip install -q -i https://mirrors.aliyun.com/pypi/simple/ \
+    'robosuite==1.4.1' mujoco opencv-python-headless tyro websockets json-numpy 2>&1 | tail -2
+  LH=$REPO/lmvla/LIBERO
+  mkdir -p "$LH/libero"
+  {
+    echo "benchmark_root: $LH/libero/libero"
+    echo "bddl_files: $LH/libero/libero/bddl_files"
+    echo "init_states: $LH/libero/libero/init_files"
+    echo "datasets: $LH/libero/libero/../datasets"
+    echo "assets: $LH/libero/libero/assets"
+  } > "$LH/libero/config.yaml"
+  rm -f /root/.libero/config.yaml 2>/dev/null || true
+  $PYTHON -c "from starVLA.model.framework.vlas.lawam import LatentWorldPolicyBackend; print('Backend OK')"
+
+  export SUITES=libero_10
+  export NUM_TRIALS_PER_TASK=50
+  export NUM_WORKERS=25
+  export SERVER_STARTUP_TIMEOUT_SEC=1200
+  export OUTPUT_ROOT=$REPO/lmvla/lawam/results/eval_runs/libero
+  echo "[$(date)] preflight OK"
+
+  pids=""
+  # ---- ckptA: GPU 0-3, armB 纯 LaWM(无任何注入) ----
+  for i in $(seq 0 $((NREP-1))); do
+    (
+      unset LMWM_CKPT LMWM_ADAPTER_DIR LMWM_SWAP_TEACHER LMWM_DUAL LMWM_DUAL_2Q \
+            LMWM_MILESTONE_TARGET LMWM_TARGET_COMPACT LMWM_MS_TSCHED LMWM_HINT_DROPOUT LMWM_FEAT_STRIDE
+      export GPU_IDS=$i EVAL_GPU_IDS=$i
+      export PORT_BASE=$((5694 + i*20))
+      export EVAL_SEED=$i          # ★ 每路不同 seed → 真独立样本(同 seed 近确定性, 误差棒是假的)
+      export LIBERO_RUN_GROUP=$GROUP_A RUN_TAG=seed$i
+      echo "[A/armB/seed$i] GPU=$i 启动"
+      bash examples/LIBERO/eval_files/auto_eval_scripts/run_libero_benchmark.sh "$CKPT_A"
+    ) > "$LOG_DIR/evalwp577_${STAMP}_A_rep${i}.log" 2>&1 &
+    pids="$pids $!"; sleep 15
+  done
+  # ---- ckptB: GPU 4-7, dual2q LMWM(架构 env 必须齐) ----
+  for i in $(seq 0 $((NREP-1))); do
+    g=$((i+4))
+    (
+      # ★ dual2q 架构 env: DUAL + DUAL_2Q 定架构(漏 = act_query mismatch); WM 走 rvalley; 推理不需 milestone target
+      export LMWM_CKPT=$WM_CKPT
+      export LMWM_ADAPTER_DIR=$ADAPTER_DIR   # = lmvla/lmwam/adapter(重构后位置)
+      export LMWM_SWAP_TEACHER=1
+      export LMWM_DUAL=1
+      export LMWM_DUAL_2Q=1
+      unset LMWM_MILESTONE_TARGET LMWM_TARGET_COMPACT LMWM_MS_TSCHED LMWM_HINT_DROPOUT LMWM_FEAT_STRIDE
+      export GPU_IDS=$g EVAL_GPU_IDS=$g
+      export PORT_BASE=$((5694 + g*20))
+      export EVAL_SEED=$i          # ★ 每路不同 seed
+      export LIBERO_RUN_GROUP=$GROUP_B RUN_TAG=seed$i
+      echo "[B/dual2q/seed$i] GPU=$g 启动"
+      bash examples/LIBERO/eval_files/auto_eval_scripts/run_libero_benchmark.sh "$CKPT_B"
+    ) > "$LOG_DIR/evalwp577_${STAMP}_B_rep${i}.log" 2>&1 &
+    pids="$pids $!"; sleep 15
+  done
+
+  echo "[$(date)] 已起 8 路: $pids"
+  for p in $pids; do wait $p; done
+  echo "[$(date)] 全部结束"
+
+  export GROUP_A GROUP_B
+  $PYTHON - <<'PYEOF'
+  import json, glob, os
+  from collections import defaultdict
+  import statistics as st
+  root = os.environ["OUTPUT_ROOT"]
+  for group in (os.environ["GROUP_A"], os.environ["GROUP_B"]):
+      reps = []
+      for f in sorted(glob.glob(f"{root}/{group}/seed*/suites/libero_10/episodes.jsonl")):
+          s = defaultdict(list)
+          for line in open(f):
+              d = json.loads(line); s[d["task_id"]].append(bool(d["success"]))
+          tot = sum(len(v) for v in s.values()); ns = sum(sum(v) for v in s.values())
+          if tot == 0: continue
+          reps.append((f.split("/suites/")[0].split("/")[-1], ns/tot*100, tot,
+                       {k: sum(v)/len(v)*100 for k, v in s.items()}))
+      print(f"\n============ {group} ({len(reps)} 路) ============")
+      for tag, agg, tot, per in reps:
+          print(f"  {tag}: agg={agg:.1f} (n={tot}) | " + " ".join(f"t{k}={per[k]:.0f}" for k in sorted(per)))
+      if len(reps) >= 2:
+          aggs = [r[1] for r in reps]
+          print(f"  聚合 均值={st.mean(aggs):.2f} std={st.pstdev(aggs):.2f} 范围=[{min(aggs):.1f},{max(aggs):.1f}]")
+          for k in sorted(reps[0][3]):
+              vs = [r[3].get(k, float('nan')) for r in reps]
+              print(f"    t{k}: 均值={st.mean(vs):5.1f} std={st.pstdev(vs):4.1f} 范围=[{min(vs):.0f},{max(vs):.0f}]")
+  print()
+  PYEOF
+
+  echo "=== wp577 双臂 step20000 × 4路 重复评测 DONE $(date -u) ==="
+
+RetryOptions:
+    EnableRetry: false
+    MaxRetryTimes: 0
+
+AccessType: "Public"
