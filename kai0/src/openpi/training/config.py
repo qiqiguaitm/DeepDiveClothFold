@@ -1225,6 +1225,46 @@ _CONFIGS = [
         num_workers=8, batch_size=128, fsdp_devices=8,
     ),
 
+    # A2 = LMWM@pi05 So400m (1152D) hint — **P3 核心问句**: 换到 VLA 自身编码器空间是否进一步提升.
+    # 同 A1 但 hint 来自 So400m grid (extract_v2p1_grid --encoder so400m → export w/ lmwm_libero_so400m din=1152).
+    # cnsh (上海 East-H20). prefix/suffix A/B. datasets_yaml 复用 A1 的 (数据同, 仅 hint 不同).
+    TrainConfig(
+        name="pi05_libero_a2_prefix",
+        model=pi0_config.Pi0Config(pi05=True, action_dim=32, action_horizon=8, max_token_len=200,
+                                   lmwm_hint_dim=1152, lmwm_hint_len=1, lmwm_hint_target="prefix"),
+        data=LeRobotLiberoLocalDataConfig(
+            repo_id="libero_4suites",
+            datasets_yaml="/vePFS/tim/workspace/deepdive_kai0/kai0/src/openpi/training/libero_4suites_hint.yaml",
+            base_config=DataConfig(prompt_from_task=True),
+            assets=AssetsConfig(asset_id="libero_4suites"),
+            lmwm_hint_path="/vePFS/tim/workspace/deepdive_kai0/lmvla/lmwm/data/pi05_hint/libero_so400m/hint.npz",
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader(
+            "/vePFS/tim/workspace/deepdive_kai0/kai0/checkpoints/pi05_base/params"
+        ),
+        lr_schedule=_optimizer.CosineDecaySchedule(warmup_steps=1_000, peak_lr=2.5e-5, decay_steps=30_000, decay_lr=2.5e-6),
+        ema_decay=0.999, num_train_steps=30_000, keep_period=10_000, save_interval=5_000,
+        num_workers=8, batch_size=128, fsdp_devices=8,
+    ),
+    TrainConfig(
+        name="pi05_libero_a2_suffix",
+        model=pi0_config.Pi0Config(pi05=True, action_dim=32, action_horizon=8, max_token_len=200,
+                                   lmwm_hint_dim=1152, lmwm_hint_len=1, lmwm_hint_target="suffix"),
+        data=LeRobotLiberoLocalDataConfig(
+            repo_id="libero_4suites",
+            datasets_yaml="/vePFS/tim/workspace/deepdive_kai0/kai0/src/openpi/training/libero_4suites_hint.yaml",
+            base_config=DataConfig(prompt_from_task=True),
+            assets=AssetsConfig(asset_id="libero_4suites"),
+            lmwm_hint_path="/vePFS/tim/workspace/deepdive_kai0/lmvla/lmwm/data/pi05_hint/libero_so400m/hint.npz",
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader(
+            "/vePFS/tim/workspace/deepdive_kai0/kai0/checkpoints/pi05_base/params"
+        ),
+        lr_schedule=_optimizer.CosineDecaySchedule(warmup_steps=1_000, peak_lr=2.5e-5, decay_steps=30_000, decay_lr=2.5e-6),
+        ema_decay=0.999, num_train_steps=30_000, keep_period=10_000, save_interval=5_000,
+        num_workers=8, batch_size=128, fsdp_devices=8,
+    ),
+
     # AWBC Advantage Estimator (RECAP Stage 1, PyTorch) — registered so eval.py / eval_adv_est.py can
     # get_config() to rebuild the model arch for the trained ckpt
     # kai0/checkpoints/ADVANTAGE_TORCH_KAI0_FLATTEN_FOLD/adv_est_v1 (metadata: pi05 / gemma_2b /
