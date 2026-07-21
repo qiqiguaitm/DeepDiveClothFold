@@ -1,0 +1,98 @@
+# pi05 × LMWM A1-suffix (LMWM@DINOv3 768D hint, suffix 注入) — 上海 East-H20 1-host 8 GPU, 30k
+#   plan: lmvla/lmwm/docs/PLAN_pi05_lmwm_sameencoder_2026-07-21.md (A1 = LMWM 注入净收益)
+#   Config: pi05_libero_a1_suffix (warm-start pi05_base, lmwm_hint_dim=768, HintLookup 注入)
+#   Data:   LIBERO_fastwam 四套件 (cnsh vePFS) + hint libero_dino/hint.npz (原生, 零同步)
+#   ⚠️ 纯 openpi pi05 JAX. cnsh 镜像 (勿跨 region). East-H20 flavor 已验 (抽取 job ltvph 用同 flavor).
+# Submit: kai0/.venv/bin/python train_scripts/kai/volc/submit_yaml.py train_scripts/kai/volc/pi05_libero_a1_suffix_east.yaml
+TaskName: "pi05-libero-a1-suffix-east"
+Description: "pi05 LIBERO A1-suffix: LMWM@DINOv3 hint, 上海 East-H20 8 GPU, warm-start pi05_base, 30k"
+Tags: []
+
+ImageUrl: "visincept-cn-shanghai.cr.volces.com/grasp/kai:kai0-gf0"
+ResourceQueueName: "Robot-East-H20"
+Framework: "PyTorch"
+Preemptible: true
+
+TaskRoleSpecs:
+  - RoleName: "worker"
+    RoleReplicas: 1
+    Flavor: "ml.hpcpni3ln.45xlarge"   # 8× H20 single node
+
+ActiveDeadlineSeconds: 1209600
+EnableTensorBoard: false
+
+Storages:
+  - Type: "Vepfs"
+    VepfsId: "vepfs-cnsh075262e1f815"
+    MountPath: "/vePFS"
+    SubPath: ""
+
+CacheType: "Cloudfs"
+
+Envs:
+  - Name: HF_HUB_OFFLINE
+    Value: "1"
+  - Name: TRANSFORMERS_OFFLINE
+    Value: "1"
+  - Name: TOKENIZERS_PARALLELISM
+    Value: "false"
+  - Name: NCCL_DEBUG
+    Value: "WARN"
+  - Name: OMP_NUM_THREADS
+    Value: "8"
+  - Name: XLA_PYTHON_CLIENT_MEM_FRACTION
+    Value: "0.85"
+  - Name: JAX_COMPILATION_CACHE_MIN_ENTRY_SIZE_BYTES
+    Value: "-1"
+  - Name: JAX_COMPILATION_CACHE_MIN_COMPILE_TIME_SECS
+    Value: "1"
+  - Name: JAX_ENABLE_EMPTY_ARRAYS
+    Value: "true"
+
+Entrypoint: |
+  set -uo pipefail
+  STAMP=$(date -u +%Y%m%d_%H%M%S)
+  LOG_DIR=/vePFS/tim/workspace/deepdive_kai0/lmvla/lmwm/logs
+  mkdir -p "$LOG_DIR"
+  LOG="$LOG_DIR/pi05_libero_a1_suffix_${STAMP}.log"
+  exec >> "$LOG" 2>&1
+  echo "=== a1-suffix start $(date) (East-H20 8 GPU) ==="
+  set -x
+  nvidia-smi -L
+  REPO=/vePFS/tim/workspace/deepdive_kai0
+  cd "$REPO/kai0"
+  source .venv/bin/activate
+  apt-get update 2>&1 | tail -1 && apt-get install -y ffmpeg 2>&1 | tail -2 || echo "ffmpeg best-effort"
+  python -c "import jax; print(f'jax {jax.__version__} devs={len(jax.devices())}')"
+
+  # preflight: pyav 解码 + 四套件 + norm + hint + pi05_base
+  python - <<'PYEOF' || { echo "FATAL: pyav 解码不可用" >&2; exit 13; }
+  import glob
+  from lerobot.common.datasets.video_utils import decode_video_frames
+  v = sorted(glob.glob("/vePFS/tim/workspace/LIBERO_fastwam/libero_10_no_noops_lerobot/videos/**/*.mp4", recursive=True))[:1]
+  print("PYAV OK", tuple(decode_video_frames(v[0], [0.0, 0.05], 30.0, "pyav").shape))
+  PYEOF
+  DATA=/vePFS/tim/workspace/LIBERO_fastwam
+  HINT=$REPO/lmvla/lmwm/data/pi05_hint/libero_dino/hint.npz
+  NORM=$REPO/kai0/assets/pi05_libero_a1_suffix/libero_4suites/norm_stats.json
+  INIT=$REPO/kai0/checkpoints/pi05_base/params
+  for S in libero_10 libero_goal libero_object libero_spatial; do
+    [ -f "$DATA/${S}_no_noops_lerobot/meta/info.json" ] || { echo "FATAL: suite missing $S" >&2; exit 13; }
+  done
+  [ -f "$HINT" ] || { echo "FATAL: hint.npz missing $HINT" >&2; exit 13; }
+  [ -f "$NORM" ] || { echo "FATAL: norm missing $NORM" >&2; exit 13; }
+  [ -f "$INIT/_METADATA" ] || { echo "FATAL: pi05_base missing $INIT" >&2; exit 13; }
+  echo "[preflight OK] (pyav + 4 suites + hint + norm + init)"
+
+  EXP=pi05_libero_a1_suffix
+  CKPT_DIR=$REPO/kai0/checkpoints/pi05_libero_a1_suffix/$EXP
+  if ls -d "$CKPT_DIR"/[0-9]*/ >/dev/null 2>&1; then RESUME_FLAG="--resume"; else RESUME_FLAG="--overwrite"; fi
+
+  exec python -u scripts/train.py pi05_libero_a1_suffix \
+    --exp-name "$EXP" --no-wandb-enabled --save-interval 1000 $RESUME_FLAG
+
+RetryOptions:
+    EnableRetry: true
+    MaxRetryTimes: 10
+
+AccessType: "Public"
