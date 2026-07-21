@@ -72,12 +72,24 @@ def main():
     ap.add_argument("--smoke", action="store_true")
     ap.add_argument("--out", default="/home/tim/workspace/deepdive_kai0/lmvla/lmwm/checkpoints/lmwm_libero_dinov3base")
     ap.add_argument("--pairs", default=PAIRS)
+    # [2026-07-20] B线(P3前哨): 允许换特征空间(So400m=pi05 真 token 空间, DIN=1152)。
+    #   缺省仍为 DINOv3(768) 向后兼容。子集训练时自动过滤 pairs 到有 grid 文件的 ep。
+    ap.add_argument("--feat", default=FEAT)
+    ap.add_argument("--din", type=int, default=DIN)
+    ap.add_argument("--pgrid", type=int, default=PGRID)
     args = ap.parse_args()
     dev = "cuda"
+    globals()["FEAT"], globals()["DIN"], globals()["PGRID"] = args.feat, args.din, args.pgrid
 
+    import glob as _glob, os as _os
+    have = {int(_os.path.basename(f)[2:-4]) for f in _glob.glob(f"{args.feat}/ep*.npz")}
     P = np.load(args.pairs)
     cur_ep, cur_fi, tgt_fi = P["cur_ep"], P["cur_fi"], P["tgt_fi"]
-    print(f"[pairs] {len(cur_ep)} 对", flush=True)
+    keep = np.isin(cur_ep, list(have))                                # 只留有 grid 特征的 ep
+    n_before = len(cur_ep)
+    cur_ep, cur_fi, tgt_fi = cur_ep[keep], cur_fi[keep], tgt_fi[keep]
+    print(f"[feat] {args.feat} DIN={args.din} PGRID={args.pgrid}; ep with grid={len(have)}", flush=True)
+    print(f"[pairs] {len(cur_ep)}/{n_before} 对(过滤到有 grid 的 ep)", flush=True)
     cache = {}
     inv = InverseEnc(DIN, args.code_dim).to(dev)
     gen = MilestoneGenerator(DIN, args.code_dim).to(dev)

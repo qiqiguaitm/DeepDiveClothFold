@@ -576,6 +576,46 @@ kai0 末帧被机械臂**回 home** 污染,而 home 姿态跨 ep 复现度极高
 
 ---
 
+### 4.20 ⭐ B线执行 · LMWM 生成器在 pi05(So400m)空间训练成立(2026-07-20~21)
+
+**这是 §4.19「下一步(层3)」B线的落地** —— 承接其"grid 条件化必须在 pi05 空间、且那里结构已证成立"的定论。
+用户拍板走 B线(P3 前哨),而非已中止的 A线(pi05-value)。
+
+**管线(全部 pi05 So400m,patch token 层,严禁投影头 per §4.19 结论②)**:
+```
+LIBERO 1693 ep 全量 So400m patch-mean 抽取(vision_model.last_hidden_state 均值, 1152D)
+  → r-谷/r-脊 pairs: 273465 对 / 100% 帧覆盖 / 中位 5 段/ep(范围[2,10])
+     ★ 比 DINOv3 的 3.44 段更细 —— 与 §4.19 "So400m 边界一致性 +0.25 最优" 同向
+  → grid 特征子集抽取(仅 10 ep/task 验证, [N,256,1152], PGRID=16 DIN=1152)
+  → LMWM 生成器(InverseEnc teacher + AdaLN generator + MDN 预测器)重训
+```
+
+**结果(3000 步,38 ep 子集,GPU1)**:
+
+| | recon_cos | persist 基线 | lift |
+|---|---|---|---|
+| 生成器@pi05 So400m | **0.95** | 0.61 | **+0.34** |
+
+→ **✅ 生成器能直接在 pi05 空间学出"当前帧 → 下一段 r-脊",无需 DINOv3→SigLIP 桥接。**
+结论①(r 场读法成立)首次**贯通到生成器训练**这一层。维度(DIN=1152)全程无 bug。
+
+⚠️ **强度限制**:①仅 38 ep 子集(grid 抽取 I/O 重,~2ep/min,全量 400 ep 后台续跑中),
+少样本下 recon_cos 可能偏乐观,但 persist 是诚实控制、+0.34 幅度大;
+②这是**内在指标**——按 §4.7 教训(内在 gain 2.1× 未换来 SR),内在成立 ≠ 下游 SR 赢,下游待验;
+③尚未做 pi05 条件化/闭环。**当前只证"生成器可在 pi05 空间训练",未证其对 VLA 有增益。**
+
+**跨环境可比性(本轮顺带清理,见 `ENV_SELECTION_RULES.md`)**:
+- So400m 编码器 srpo(tf4.57.6) vs kai0/.venv(tf5.13.1) 逐行 cos=**1.00000000** → `kai0_aligned_urvc` 可比,结论③成立。
+- rvalley 分段/建对 149 ep 指纹**零差异**(scipy 无漂移)→ srpo→kai0/.venv 合并障碍清除。
+- ⚠️ 与 DINOv3 相反:后者 tf 4.x/5.x 间模块嵌套会变(本会话 LAM 204 key 事故根因)。
+
+**产物**:`lmwm/data/libero_so400m{,_grid,_rvalley}/`、`lmwm/checkpoints/lmwm_libero_so400m/`(均带 `_env.json`)。
+**脚本**(已入 git):`p1_libero_so400m_extract.py`、`p1_train_lmwm_libero.py`(加 `--feat/--din/--pgrid`)、
+`check_{so400m,rvalley}_env_consistency.py`。
+**下一步**:①grid 全量补齐后正式重训;②pi05 条件化 A/B(P3 真正的目标:milestone 进 VLA 自身空间是否提 SR)。
+
+---
+
 ## 5. 已排除(勿回头,详见各 HISTORY)
 - per-mode coverage≥0.5:kai0 专属,LIBERO 塌 M=2(消融)。
 - BGMM 视觉聚类:LIBERO 低视觉方差 → 塌成 1 component,γ 四数量级无效(2026-07-14 实测);时间注入只在窄 w 甜点脆弱工作 → **视觉聚类不普适**。
