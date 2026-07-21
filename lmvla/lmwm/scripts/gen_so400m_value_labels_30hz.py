@@ -12,8 +12,9 @@ from sklearn.mixture import BayesianGaussianMixture
 from scipy.ndimage import gaussian_filter1d
 
 REPO = "/vePFS/tim/workspace/deepdive_kai0"
-FEAT = f"{REPO}/lmvla/lmwm/data/kai0_aligned_urvc/so400m-mean_s1"
-OUTD = f"{REPO}/lmvla/lmwm/data/kai0_so400m_value_labels_30hz"
+ENC = os.environ.get("ENC", "so400m-mean")            # so400m-mean | dino(同协议公平对照)
+FEAT = f"{REPO}/lmvla/lmwm/data/kai0_aligned_urvc/{ENC}_s1"
+OUTD = f"{REPO}/lmvla/lmwm/data/kai0_{ENC.replace('-','_')}_value_labels_30hz"
 CSQ, MIN_COV, LAM = 1000, 0.50, 16.0
 DS = lambda e: f"{REPO}/kai0/data/Task_A/kai0_base/data/chunk-{e//CSQ:03d}/episode_{e:06d}.parquet"
 GTP = lambda e: f"{REPO}/kai0/data/Task_A/kai0_advantage/data/chunk-{e//CSQ:03d}/episode_{e:06d}.parquet"
