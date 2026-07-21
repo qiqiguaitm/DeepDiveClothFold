@@ -148,3 +148,5 @@ xvla/official_folding_ckpt/
 #   父仓整体忽略,避免把嵌套仓当 submodule/embedded repo 误纳入。
 #   其内部大产物(data/ckpt/权重)由 VLANEXT/.git/info/exclude 本地忽略。
 /VLANEXT/
+lmwm/outputs/
+# 旧布局残留(代码已迁 lmvla/), 数据产物 ignore

@@ -22,6 +22,7 @@ docs/
 | **`project_complete_guide.md`** | 第一次接触项目 / 要全局观 | 单文件 |
 | **`deployment/`** | 真机部署 / 提训练任务 / 集群运维 / 采数据 / 推理优化 / 可视化 / 复盘事故 | [`deployment/README.md`](deployment/README.md) |
 | **`training/`** | 看某次训练结果 / 找实验计划 / 读结果分析归因 | [`training/README.md`](training/README.md) |
+| **`INFRA_vepfs_centric.md`** | 理解基础设施抽象(服务器只是通道, 核心是 vePFS 环境)/ 代码同步规范 / 环境一致性 / 任务提交 | [单文件](INFRA_vepfs_centric.md) |
 | **`backup/`** | 查已停用资源的历史 (uc 集群) | [`backup/README.md`](backup/README.md) |
 
 ---
