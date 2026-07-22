@@ -197,6 +197,11 @@ def generate_launch_description():
     min_smooth_steps_arg = DeclareLaunchArgument('min_smooth_steps',
         default_value='8',
         description='Min blend window for chunk overlap smoothing (JAX legacy 8, V1 overrides to 3)')
+    max_smooth_steps_arg = DeclareLaunchArgument('max_smooth_steps',
+        default_value='0',
+        description='Max blend window for chunk overlap smoothing (0=uncapped/legacy). '
+                    '新 chunk 内容进入下发指令的滞后 = max_smooth_steps/publish_rate 秒; '
+                    '不设限时窗口≈整 chunk(~48) → 30Hz 下滞后 ~1.6s。V1(20Hz 重规划)必须设。')
     speed_factor_arg = DeclareLaunchArgument('speed_factor',
         default_value='1.0',
         description='V2 油门: 全局速度倍率 (>1 超训练集速度; 1.0=原速回退). v1@20Hz 可 2x+, v0@3Hz 宜 ≤1.5x')
@@ -390,6 +395,9 @@ def generate_launch_description():
             'inference_rate': LaunchConfiguration('inference_rate'),
             'latency_k': LaunchConfiguration('latency_k'),
             'min_smooth_steps': LaunchConfiguration('min_smooth_steps'),
+            # 显式 int 化 (同 publish_rate 的写法): 节点 declare 为 INTEGER, 直传
+            # LaunchConfiguration 是字符串, 类型不匹配会在启动期抛 InvalidParameterType.
+            'max_smooth_steps': ParameterValue(LaunchConfiguration('max_smooth_steps'), value_type=int),
             'speed_factor': ParameterValue(LaunchConfiguration('speed_factor'), value_type=float),
             'speed_factor_max': ParameterValue(LaunchConfiguration('speed_factor_max'), value_type=float),
             'throttle_factor': ParameterValue(LaunchConfiguration('throttle_factor'), value_type=float),
@@ -516,7 +524,8 @@ def generate_launch_description():
         enable_rtc_arg, rtc_execute_horizon_arg,
         rtc_max_guidance_weight_arg, rtc_smooth_method_arg,
         publish_smooth_alpha_arg,
-        inference_rate_arg, latency_k_arg, min_smooth_steps_arg, publish_rate_arg,
+        inference_rate_arg, latency_k_arg, min_smooth_steps_arg, max_smooth_steps_arg,
+        publish_rate_arg,
         speed_factor_arg, speed_factor_max_arg, throttle_factor_arg,
         open_loop_chunk_arg, open_loop_min_remaining_arg, xvla_sequential_arg,
         cam_fps_arg, enable_head_depth_arg, enable_left_depth_arg, enable_right_depth_arg,

@@ -232,7 +232,8 @@ class StreamActionBuffer:
             while len(self.chunks) > self.max_chunks:
                 self.chunks.popleft()
 
-    def integrate_new_chunk(self, actions_chunk: np.ndarray, max_k: int, min_m: int = 8):
+    def integrate_new_chunk(self, actions_chunk: np.ndarray, max_k: int, min_m: int = 8,
+                            max_m: int = 0):
         """
         Integrate a new inference chunk:
         1) Trim the front of the new chunk by current k and max_k (latency compensation).
@@ -240,6 +241,8 @@ class StreamActionBuffer:
            - Overlap: first element 100% old / 0% new, last element 0% old / 100% new.
            - Extra tail from the new chunk is appended.
         3) Reset k=0 as the new current execution sequence.
+
+        min_m = 混合窗【下限】(旧序列不足时 pad 到此长度); max_m = 混合窗【上限】(0=不设限)。
         """
         with self.lock:
             if actions_chunk is None or len(actions_chunk) == 0:
@@ -279,6 +282,19 @@ class StreamActionBuffer:
             if len(old_list) > len(new_list):
                 old_list = old_list[:len(new_list)]
                 overlap_len = len(new_list)
+
+            # ── 混合窗上限 (max_m>0; 0=不设限, 逐比特回退旧行为) ──────────────────
+            # 混合窗跨度直接决定"新 chunk 内容多久才进入实际下发的指令"。前沿每个推理周期
+            # 推进 publish_rate/inference_rate 步, 走完 overlap_len 需
+            #     overlap_len / publish_rate  秒   (与 inference_rate 无关)
+            # 不设限时 overlap_len ≈ 整个 chunk (~48) → 30Hz 下滞后 ~1.6s。
+            # V1 路径 (inference_rate=20Hz) 尤其吃亏: 每周期只发布 1-2 步, 而 w_new 在
+            # index 0-2 处 ≈0 (min_jerk 两端导数为零), 新内容几乎进不了当下发布的动作 →
+            # 表现为"执行 1.6s 前的旧计划"的相位滞后 (非幅度衰减, 加油门修不了)。
+            # 设上限 M → 滞后 = M/publish_rate (M=12 @30Hz → 0.4s), 窗口外直接取新 chunk。
+            # 下限优先: 保证 M ≥ min_m, 否则上限会把 min_m 的 pad 语义架空。
+            if max_m > 0:
+                overlap_len = min(overlap_len, max(int(max_m), min_m))
 
             # Weights for chunk-overlap blending. Default = linear (legacy).
             # Layer 1.1B = quintic smoothstep `6t^5 - 15t^4 + 10t^3` (minimum-jerk
@@ -521,6 +537,11 @@ class PolicyInferenceNode(Node):
         self.declare_parameter('proprio_cmd_feedback', True)
         self.declare_parameter('latency_k', 8)
         self.declare_parameter('min_smooth_steps', 8)
+        # 混合窗上限 (chunk-overlap blend 跨度封顶). 0 = 不设限 (旧行为, 逐比特回退).
+        # 滞后 = max_smooth_steps / publish_rate 秒; 见 integrate_new_chunk 内注释.
+        # V1 (inference_rate=20Hz, 每周期只发 1-2 步) 必须设, 否则新 chunk 内容要 ~1.6s
+        # 才进得了下发指令. 热更可改 → 同场景 0/8/12 热翻 A/B.
+        self.declare_parameter('max_smooth_steps', 0)
         self.declare_parameter('decay_alpha', 0.25)
         # ── V2 油门 (全局速度倍率) ─────────────────────────────────────────────
         # speed_factor > 1 → 部署策略以【超训练集速度】执行 (客户端时间压缩 chunk,
@@ -665,6 +686,7 @@ class PolicyInferenceNode(Node):
         self.chunk_size = self.get_parameter('chunk_size').value
         self.latency_k = self.get_parameter('latency_k').value
         self.min_smooth_steps = self.get_parameter('min_smooth_steps').value
+        self.max_smooth_steps = int(self.get_parameter('max_smooth_steps').value)
         self.decay_alpha = self.get_parameter('decay_alpha').value
         # V2 油门: 读参 + clamp 到 [0.5, speed_factor_max]
         self._speed_factor_max = max(1.0, float(self.get_parameter('speed_factor_max').value))
@@ -994,6 +1016,27 @@ class PolicyInferenceNode(Node):
                     self.latency_k = int(p.value)
                 elif p.name == 'min_smooth_steps':
                     self.min_smooth_steps = int(p.value)
+                elif p.name == 'max_smooth_steps':
+                    self.max_smooth_steps = max(0, int(p.value))
+                    _lag = (self.max_smooth_steps / float(self.publish_rate)
+                            if self.max_smooth_steps > 0 else None)
+                    self.get_logger().warn(
+                        f'[BLEND] max_smooth_steps → {self.max_smooth_steps} '
+                        + (f'(混合窗滞后 ≈{_lag*1000:.0f}ms)' if _lag else '(不设限=旧行为)'))
+                elif p.name == 'publish_smooth_alpha':
+                    # 2026-07-22: 补进热更列表. 此前只在 __init__ 读一次 → `ros2 param set`
+                    # 会返回成功但完全不生效 (静默 no-op), 导致 EMA 只能靠重启做 A/B
+                    # (rtc_ema_speed_ablation.md 记的 "EMA 不可热改" 即此). 现可热翻.
+                    _a = float(p.value)
+                    if not (0.0 < _a <= 1.0):
+                        self.get_logger().warn(
+                            f'[EMA] publish_smooth_alpha={_a} 越界 (0,1], 忽略本次设置')
+                    else:
+                        self._publish_smooth_alpha = _a
+                        self.get_logger().warn(
+                            f'[EMA] publish_smooth_alpha → {_a:.2f} '
+                            + ('(=1.0 关闭)' if _a > 1.0 - 1e-9
+                               else '(α 越小低通越重; 夹爪 j6/j13 始终不平滑)'))
                 elif p.name == 'speed_factor':
                     self._speed_factor = float(np.clip(p.value, 0.5, self._speed_factor_max))
                     self._refresh_effective_sf()   # 未踩踏板时立即生效 + 广播
@@ -2789,7 +2832,8 @@ class PolicyInferenceNode(Node):
                         self.stream_buffer.integrate_new_chunk(
                             actions_thr,
                             max_k=max_k_thr,
-                            min_m=self.min_smooth_steps)
+                            min_m=self.min_smooth_steps,
+                            max_m=self.max_smooth_steps)
                         t_buffer_done = time.monotonic()
 
                     # B1 latency profile sink (no-op when env var off).

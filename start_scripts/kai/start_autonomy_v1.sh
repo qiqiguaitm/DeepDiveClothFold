@@ -29,6 +29,11 @@ RERUN_FLAG="--no-rerun"
 ENABLE_PROFILE=true
 PORT=8002
 RTC_FLAGS=()   # enable_rtc:=false 时把 RTC 关掉 (A/B 测试用)
+# 混合窗上限 (见下方 V1 RTC overrides 注释). 0 = 不设限 = 旧行为 (当前默认).
+# ⚠️ 2026-07-22 真机实测: 单独设 12 会把 chunk 间分歧放出来 → 方向反转 2.8/s → 15.1/s,
+# net/gross 0.133 → 0.076 (总行程 2.4×, 净位移不变 = 多出来的全是抖). 故默认回 0。
+# 该旋钮保留供"先加强 RTC 让 chunk 不打架, 再缩混合窗"的组合实验 (见下方注释)。
+MAX_SMOOTH_STEPS="${MAX_SMOOTH_STEPS:-0}"
 EXTRA_AUTONOMY=()
 # Custom ckpt / norm / delta — start_autonomy_from_ckpt_v1.sh 会传, 默认空 → start_serve_v1.sh 用 defaults
 SERVE_PKL=""
@@ -145,6 +150,17 @@ PROFILE_ENV=""
 #     window (k=6 × 33ms = 200ms) 充分覆盖
 # Trade-off: task 启动响应 67ms→200ms (慢 130ms, < Piper PD lag 100ms 量级,
 # 不可感知); idle drift 略增 (12.7mm→~15mm/100s, 仍 < 30mm 可接受阈值).
+#
+# max_smooth_steps=12 (2026-07-22 新增, 混合窗上限):
+#   chunk-overlap blend 的跨度决定"新 chunk 内容多久才进入实际下发的指令":
+#   前沿每周期推进 publish_rate/inference_rate 步 → 滞后 = overlap_len/publish_rate 秒。
+#   不设限时 overlap_len≈整 chunk(~48) → 30Hz 下 ~1.6s。V1 每周期只发布 30/20=1.5 步,
+#   而 min_jerk 权重在 index 0-2 处 w_new≈0 → 新内容几乎进不了当下发布的动作, 表现为
+#   "在执行 1.6s 前的旧计划"的【相位滞后】(非幅度衰减 → 加油门 speed_factor 修不了)。
+#   上限 12 → 滞后 12/30 = 400ms。窗口外直接取新 chunk。
+#   ⚠️ 待真机验证: 环境变量可覆盖 (0=关/回退旧行为), 也可 ros2 param set 热更 A/B:
+#     MAX_SMOOTH_STEPS=0 ./start_scripts/kai/start_autonomy_from_ckpt_v1.sh ...
+#     ros2 param set /policy_inference max_smooth_steps 8
 # 历史 10Hz M2-C: inference_rate=10 latency_k=3 exec_h=6; v1-idle k=2 exec_h=4.
 # 通过 autonomy_launch.py 的 launch args 显式覆盖 (launch 默认仍是 JAX 3Hz/k=8/exec_h=16),
 # 不影响 start_autonomy.sh / start_autonomy_from_ckpt.sh / mode=ros2 路径.
@@ -157,6 +173,7 @@ env $PROFILE_ENV nohup "$REPO/start_scripts/kai/start_autonomy.sh" \
     "inference_rate:=20.0" \
     "latency_k:=6" \
     "min_smooth_steps:=8" \
+    "max_smooth_steps:=${MAX_SMOOTH_STEPS}" \
     "rtc_execute_horizon:=12" \
     "publish_rate:=30" \
     "publish_smooth_alpha:=0.7" \
