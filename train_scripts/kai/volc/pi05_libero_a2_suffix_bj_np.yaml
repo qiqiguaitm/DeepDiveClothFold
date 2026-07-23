@@ -12,7 +12,7 @@ Tags: []
 ImageUrl: "dvs-cr-cn-beijing.cr.volces.com/vis_robot/kai:kai0-gf1"
 ResourceQueueName: "Robot-North-H20"
 Framework: "PyTorch"
-Preemptible: true               # 闲时任务: 借空闲资源, 可被抢占 → 入口自动 resume
+Preemptible: false               # 非闲时(North-H20 dedicated): 稳跑不抢占
 
 TaskRoleSpecs:
   - RoleName: "worker"

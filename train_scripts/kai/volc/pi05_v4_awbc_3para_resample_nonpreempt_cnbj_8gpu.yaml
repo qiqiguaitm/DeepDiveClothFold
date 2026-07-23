@@ -1,0 +1,94 @@
+# AWBC 三范式 RESAMPLE 范式, 华北北京 8 H20
+#   plan: docs/training/future_plans/plans/awbc_three_paradigm_comparison_plan.md §3(resample)
+#   Config: pi05_v4_awbc_3para_resample (North-E 路径, prompt_from_task pos/neg, 无DCT)
+#   Data:   A_v4_chunk001_3para_cls (774ep: task_index=intervention, 51.9%pos/48.1%neg)
+#   队列:   Robot-North-H20 (3臂分担: A1→H20, A2→H20-Debug, A3→H20)
+# Submit (VOLC_REGION=cn-beijing 必须!): source ~/.volc_creds && VOLC_REGION=cn-beijing \
+#   kai0/.venv/bin/python train_scripts/kai/volc/submit_yaml.py train_scripts/kai/volc/pi05_v4_awbc_3para_resample_cnbj_8gpu.yaml
+
+TaskName: "pi05-v4-awbc-3para-resample-nonpreempt-cnbj-8gpu"
+Description: "3范式 A3 RESAMPLE: chunk001 dagger 帧级加权采样(domain{robot1,intv2,preintv0,base1}, class2排除) 中性prompt. JAX 1-host 8 H20, pi05_base init, 50k"
+Tags: []
+
+ImageUrl: "dvs-cr-cn-beijing.cr.volces.com/vis_robot/kai:kai0-gf1"
+ResourceQueueName: "Robot-North-H20"
+Framework: "PyTorch"          # gives MLP_WORKER_0_HOST / MLP_ROLE_INDEX / MLP_WORKER_NUM
+
+TaskRoleSpecs:
+  - RoleName: "worker"
+    RoleReplicas: 1
+    Flavor: "ml.hpcpni3ln.45xlarge"   # 8× H20-SXM5-96GB per host (单机)
+
+ActiveDeadlineSeconds: 172800
+EnableTensorBoard: false
+
+Storages:
+  - Type: "Vepfs"
+    VepfsId: "vepfs-cnbj875793a96d6b"
+    MountPath: "/vePFS-North-E/vis_robot"
+    SubPath: "/vis_robot"
+
+CacheType: "Cloudfs"
+
+Envs:
+  - Name: HF_HUB_OFFLINE
+    Value: "1"
+  - Name: TRANSFORMERS_OFFLINE
+    Value: "1"
+  - Name: TOKENIZERS_PARALLELISM
+    Value: "false"
+  - Name: NCCL_DEBUG
+    Value: "WARN"
+  - Name: OMP_NUM_THREADS
+    Value: "8"
+  - Name: XLA_PYTHON_CLIENT_MEM_FRACTION
+    Value: "0.85"
+  - Name: JAX_COMPILATION_CACHE_MIN_ENTRY_SIZE_BYTES
+    Value: "-1"
+  - Name: JAX_COMPILATION_CACHE_MIN_COMPILE_TIME_SECS
+    Value: "1"
+  - Name: JAX_ENABLE_EMPTY_ARRAYS
+    Value: "true"
+
+Entrypoint: |
+  set -uo pipefail
+  STAMP=$(date -u +%Y%m%d_%H%M%S)
+  NODE=${MLP_ROLE_INDEX:-0}
+  ls -ld /vePFS-North-E/vis_robot 2>&1 || echo "MOUNT-MISSING"
+  LOG_DIR=/vePFS-North-E/vis_robot/logs
+  mkdir -p "$LOG_DIR"
+  LOG="$LOG_DIR/pi05_v4_awbc_3para_resample_cnbj_${STAMP}_node${NODE}.log"
+  exec >> "$LOG" 2>&1
+  echo "=== 3para resample cnbj start $(date) node=$NODE (1-host 8 H20) ==="
+  set -ex
+  nvidia-smi -L
+
+  cd /vePFS-North-E/vis_robot/workspace/deepdive_kai0/kai0
+  source .venv/bin/activate
+  python -c "import jax; print(f'jax {jax.__version__} devs={len(jax.devices())}')"
+
+  TRAIN=/vePFS-North-E/vis_robot/workspace/deepdive_kai0/kai0/data/Task_A/self_built/A_v4_chunk001_3para_cls
+  INIT=/vePFS-North-E/vis_robot/base_init_ckpts/extracted/pi05_base/params
+  [ -f "$TRAIN/meta/episodes.jsonl" ] || { echo "FATAL: train data missing $TRAIN" >&2; exit 13; }
+  [ -f "$TRAIN/norm_stats.json" ]     || { echo "FATAL: norm_stats missing" >&2; exit 13; }
+  python -c "import pyarrow.parquet as pq,glob,sys; f=sorted(glob.glob('$TRAIN/data/chunk-*/*.parquet'))[0]; c=[x.name for x in pq.read_schema(f)]; sys.exit(0 if 'sample_weight' in c else 13)" || { echo "FATAL: sample_weight 列缺失" >&2; exit 13; }
+  V=$(find -L "$TRAIN/videos/chunk-000/observation.images.top_head" -name '*.mp4' -print -quit 2>/dev/null)
+  [ -n "$V" ] && [ -e "$V" ] || { echo "FATAL: 视频软链断(dagger chunk-001 未拉?)" >&2; exit 13; }
+  # 抽检 dagger 段视频(尾部 ep)不断链
+  VD=$(find -L "$TRAIN/videos/chunk-000/observation.images.top_head" -name 'episode_0007*.mp4' -print -quit 2>/dev/null)
+  [ -n "$VD" ] && [ -e "$VD" ] || { echo "FATAL: dagger 段视频断链" >&2; exit 13; }
+  [ -f "$INIT/_METADATA" ]            || { echo "FATAL: pi05_base init missing $INIT" >&2; exit 13; }
+  echo "[$(date)] preflight OK (cls data + norm + sample_weight col + base&dagger video + init)"
+
+  EXP=resample
+  CKPT_DIR=/vePFS-North-E/vis_robot/workspace/deepdive_kai0/kai0/checkpoints/pi05_v4_awbc_3para_resample/$EXP
+  if ls -d "$CKPT_DIR"/[0-9]*/ >/dev/null 2>&1; then RESUME_FLAG="--resume"; else RESUME_FLAG="--overwrite"; fi
+
+  exec python -u scripts/train.py pi05_v4_awbc_3para_resample \
+    --exp-name $EXP --no-wandb-enabled $RESUME_FLAG
+
+RetryOptions:
+    EnableRetry: true
+    MaxRetryTimes: 1
+
+AccessType: "Public"

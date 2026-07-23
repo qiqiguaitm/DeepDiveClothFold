@@ -1,0 +1,82 @@
+# pi05 A1-prefix LIBERO eval (在线 DINOv3 hint), 北京 North-H20 4卡×4路(变seed防随机).
+#   in-process: 每路 GPU i 跑 local_eval_hint.py (pi05 A1 policy + HintComputer(dino) 同进程), 无 websocket.
+#   gripper=inv_pm1(已修), flip=both. Submit: gsy submit_yaml.py 本 yaml.
+TaskName: "pi05-libero-eval-a1-prefix-x4"
+Description: "pi05 A1-prefix(29999) LIBERO 在线dino hint eval, 4路变seed"
+Tags: []
+ImageUrl: "dvs-cr-cn-beijing.cr.volces.com/vis_robot/kai:kai0-gf1"
+ResourceQueueName: "Robot-North-H20"
+Framework: "PyTorch"
+Preemptible: false
+TaskRoleSpecs:
+  - RoleName: "worker"
+    RoleReplicas: 1
+    Flavor: "ml.pni3ln.17xlarge"   # 4×H20
+ActiveDeadlineSeconds: 43200
+EnableTensorBoard: false
+Storages:
+  - Type: "Vepfs"
+    VepfsId: "vepfs-cnbj875793a96d6b"
+    MountPath: "/vePFS-North-E/vis_robot"
+    SubPath: "/vis_robot"
+CacheType: "Cloudfs"
+Envs:
+  - Name: MUJOCO_GL
+    Value: "egl"
+  - Name: PYOPENGL_PLATFORM
+    Value: "egl"
+  - Name: HF_HUB_OFFLINE
+    Value: "1"
+  - Name: TRANSFORMERS_OFFLINE
+    Value: "1"
+  - Name: XLA_PYTHON_CLIENT_MEM_FRACTION
+    Value: "0.55"
+  - Name: XLA_PYTHON_CLIENT_PREALLOCATE
+    Value: "false"
+  - Name: PYTHONUNBUFFERED
+    Value: "1"
+Entrypoint: |
+  set -uo pipefail
+  STAMP=$(date -u +%Y%m%d_%H%M%S)
+  REPO=/vePFS-North-E/vis_robot/workspace/deepdive_kai0
+  LOG_DIR=$REPO/lmvla/lmwm/logs; mkdir -p "$LOG_DIR"
+  MAIN="$LOG_DIR/pi05_eval_a1_prefix_x4_${STAMP}.log"; exec >> "$MAIN" 2>&1
+  echo "=== A1-prefix libero eval (在线dino hint) start $(date) 4路 ==="
+  set -x; nvidia-smi -L
+  cd "$REPO/kai0"; source .venv/bin/activate
+  PY=$REPO/kai0/.venv/bin/python
+  export LIBERO_HOME=$REPO/lmvla/LIBERO
+  export LIBERO_CONFIG_PATH=$LIBERO_HOME/libero
+  export PYTHONPATH="$REPO/kai0/src:$REPO/lmvla/lawam:$REPO/lmvla/lmwm/scripts:$LIBERO_HOME"
+  $PY -m pip install -q -i https://mirrors.aliyun.com/pypi/simple/ 'robosuite==1.4.1' mujoco opencv-python-headless 2>&1 | tail -1 || echo pip-best-effort
+  CKPT=$REPO/kai0/checkpoints/pi05_libero_a1_prefix_bj/pi05_libero_a1_prefix/29999
+  [ -f "$CKPT/assets/libero_4suites/norm_stats.json" ] || { echo "FATAL: ckpt norm 缺 $CKPT" >&2; exit 13; }
+  OUT=$REPO/lmvla/lmwm/data/pi05_libero_eval/a1_prefix_${STAMP}
+  pids=""
+  for i in 0 1 2 3; do
+    ( CUDA_VISIBLE_DEVICES=$i MUJOCO_EGL_DEVICE_ID=$i $PY $REPO/lmvla/lawam/examples/LIBERO/eval_files/local_eval_hint.py \
+        --config pi05_libero_a1_prefix_eval_bj --ckpt "$CKPT" --encoder dinov3-base \
+        --tasks -1 --trials 50 --seed $i --out "$OUT/seed${i}" > "$LOG_DIR/eval_a1p_r${i}_${STAMP}.log" 2>&1 ) &
+    pids="$pids $!"; sleep 8
+  done
+  for p in $pids; do wait $p; done
+  echo "=== 4路完成, 聚合 ==="
+  $PY - "$OUT" <<'PYEOF'
+  import sys, os, json, glob, statistics
+  out=sys.argv[1]; ps={}
+  for sd in sorted(glob.glob(os.path.join(out,"seed*"))):
+      f=os.path.join(sd,"suites","libero_10","summary.json")
+      if os.path.exists(f): ps[os.path.basename(sd)]=json.load(open(f))
+  if not ps: print("NO RESULTS"); sys.exit()
+  tasks=sorted({int(t) for v in ps.values() for t in v["per_task_SR"]})
+  for t in tasks:
+      vals=[v["per_task_SR"].get(str(t),v["per_task_SR"].get(t)) for v in ps.values()]; vals=[x for x in vals if x is not None]
+      print(f"  t{t}: {statistics.mean(vals)*100:.1f} ± {(statistics.pstdev(vals) if len(vals)>1 else 0)*100:.1f}"+(" <==t6" if t==6 else ""))
+  ag=[v["aggregate_SR"] for v in ps.values()]
+  print(f"=== A1-prefix 聚合 SR: {statistics.mean(ag)*100:.2f} ± {(statistics.pstdev(ag) if len(ag)>1 else 0)*100:.2f} (n={len(ag)}) ===")
+  PYEOF
+  echo "=== done $(date) ==="
+RetryOptions:
+    EnableRetry: true
+    MaxRetryTimes: 3
+AccessType: "Public"

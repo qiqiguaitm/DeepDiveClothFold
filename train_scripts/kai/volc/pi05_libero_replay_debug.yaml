@@ -1,0 +1,65 @@
+# pi05 replay 决定性测试: 训练帧喂模型, 比对 pred vs recorded action (隔离 env).
+TaskName: "pi05-libero-replay-debug"
+Description: "replay train frame → compare pred vs recorded action"
+Tags: []
+
+ImageUrl: "dvs-cr-cn-beijing.cr.volces.com/vis_robot/kai:kai0-gf1"
+ResourceQueueName: "Robot-North-H20"
+Framework: "PyTorch"
+Preemptible: false
+
+TaskRoleSpecs:
+  - RoleName: "worker"
+    RoleReplicas: 1
+    Flavor: "ml.pni3ln.5xlarge"
+
+ActiveDeadlineSeconds: 10800
+EnableTensorBoard: false
+
+Storages:
+  - Type: "Vepfs"
+    VepfsId: "vepfs-cnbj875793a96d6b"
+    MountPath: "/vePFS-North-E/vis_robot"
+    SubPath: "/vis_robot"
+
+CacheType: "Cloudfs"
+
+Envs:
+  - Name: HF_HUB_OFFLINE
+    Value: "1"
+  - Name: TRANSFORMERS_OFFLINE
+    Value: "1"
+  - Name: XLA_PYTHON_CLIENT_MEM_FRACTION
+    Value: "0.8"
+  - Name: XLA_PYTHON_CLIENT_PREALLOCATE
+    Value: "false"
+  - Name: PYTHONUNBUFFERED
+    Value: "1"
+
+Entrypoint: |
+  set -uo pipefail
+  STAMP=$(date -u +%Y%m%d_%H%M%S)
+  REPO=/vePFS-North-E/vis_robot/workspace/deepdive_kai0
+  LOG_DIR=$REPO/lmvla/lmwm/logs; mkdir -p "$LOG_DIR"
+  MAIN="$LOG_DIR/pi05_replay_${STAMP}.log"
+  exec >> "$MAIN" 2>&1
+  echo "=== pi05 replay start $(date) ==="
+  set -x
+  nvidia-smi -L
+  cd "$REPO/kai0"
+  source .venv/bin/activate
+  export PYTHON=$REPO/kai0/.venv/bin/python
+  export PYTHONPATH="$REPO/kai0/src:$REPO/lmvla/lawam:${PYTHONPATH:-}"
+  export CKPT=$REPO/kai0/checkpoints/pi05_libero_a0_bj/pi05_libero_a0/29999
+  export DATA=/vePFS-North-E/vis_robot/huanqian/uniVP/data/libero_mujoco3.3.2/libero_10_no_noops_lerobot
+  [ -d "$DATA" ] || { echo "FATAL: 训练数据缺 $DATA"; exit 13; }
+  export TI=5
+  echo "DATA=$DATA"
+  $PYTHON $REPO/lmvla/lawam/examples/LIBERO/eval_files/replay_train_frame.py
+  echo "=== done $(date) ==="
+
+RetryOptions:
+    EnableRetry: false
+    MaxRetryTimes: 0
+
+AccessType: "Public"

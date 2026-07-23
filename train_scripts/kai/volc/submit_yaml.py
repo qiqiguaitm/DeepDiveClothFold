@@ -45,6 +45,7 @@ RESOURCE_QUEUES = {
     "multimodal-task-4090": ("cn-shanghai", "q-20260115184052-k4llg", "cn-shanghai-a"),
     # cn-beijing
     "Robot-North-H20":      ("cn-beijing",  "q-20260516104642-khch9", "cn-beijing-e"),   # H20-SXM5-96G × 56 (7 × ml.hpcpni3ln.45xlarge)
+    "Robot-North-H20-Debug": ("cn-beijing", "q-20260714180557-wgkh2", "cn-beijing-e"),   # H20 debug 队列 (ListResourceQueues 2026-07-21)
 }
 
 # legacy alias for back-compat

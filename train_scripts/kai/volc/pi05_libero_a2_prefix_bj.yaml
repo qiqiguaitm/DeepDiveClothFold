@@ -85,7 +85,7 @@ Entrypoint: |
     [ -f "$DATA/${S}_no_noops_lerobot/meta/info.json" ] || { echo "FATAL: LIBERO suite missing: $S" >&2; exit 13; }
   done
   HINT=$REPO/lmvla/lmwm/data/pi05_hint/libero_so400m/hint.npz
- || { echo "FATAL: A2 hint missing $HINT" >&2; exit 13; }
+  [ -f "$HINT" ] || { echo "FATAL: A2 hint missing $HINT" >&2; exit 13; }
   [ -f "$NORM" ]           || { echo "FATAL: norm_stats missing $NORM (先跑 compute_norm_states_fast)" >&2; exit 13; }
   [ -f "$INIT/_METADATA" ] || { echo "FATAL: pi05_base init missing $INIT" >&2; exit 13; }
   echo "[$(date)] preflight OK (4 LIBERO suites + norm + pi05_base init)"

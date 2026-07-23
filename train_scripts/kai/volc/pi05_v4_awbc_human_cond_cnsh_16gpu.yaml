@@ -1,0 +1,124 @@
+# AWBC 三范式对比 — A1 (Conditioning arm): positive⟺人控
+#   plan: docs/training/future_plans/plans/awbc_three_paradigm_comparison_plan.md (A1)
+#   Config: pi05_v4_awbc_chunk001_dagger_crave_human (JAX, fsdp=16, bs256, pi05_base init, 50k)
+#   Data:   A_v4_chunk001_dagger_crave_human (774ep: 387 base + 387 dagger; task_index=intervention;
+#           保留 dagger_frame_class{0,1,2} 供 A2/A3)
+#   ⭐ 对照 B0(_labeled, progress top-30% 条件化). A1 唯一变量=打标法(人控 vs 机器人, 保住抓取).
+#   16卡 (2 节点 × 8 A100); JAX multi-node fsdp=16.
+# Submit: source ~/.volc_creds && kai0/.venv/bin/python train_scripts/kai/volc/submit_yaml.py train_scripts/kai/volc/pi05_v4_awbc_human_cond_cnsh_16gpu.yaml
+
+TaskName: "pi05-v4-awbc-human-cond-cnsh-16gpu"
+Description: "AWBC 3范式对比 A1条件化: chunk-001 dagger, positive⟺人控(base+intv), 774ep, JAX 2x8=16 A100 50k. vs B0(_labeled progress). 判据:真机死循环率/抓取成功"
+Tags: []
+
+ImageUrl: "visincept-cn-shanghai.cr.volces.com/grasp/h2r:1.0"
+ResourceQueueName: "robot-task"
+Framework: "PyTorch"          # injects MLP_WORKER_0_HOST / MLP_WORKER_0_PORT / MLP_WORKER_NUM / MLP_ROLE_INDEX
+
+TaskRoleSpecs:
+  - RoleName: "worker"
+    RoleReplicas: 2
+    Flavor: "ml.hpcpni2.28xlarge"     # 8× A100-80G per host × 2 = 16 GPU
+
+ActiveDeadlineSeconds: 259200           # 72 h cap
+
+EnableTensorBoard: false
+
+Storages:
+  - Type: "Vepfs"
+    VepfsId: "vepfs-cnsh075262e1f815"
+    SubPath: ""
+    MountPath: "/vePFS"
+
+CacheType: "Cloudfs"
+
+Envs:
+  - Name: HF_HUB_OFFLINE
+    Value: "1"
+  - Name: TRANSFORMERS_OFFLINE
+    Value: "1"
+  - Name: WANDB_MODE
+    Value: "offline"
+  - Name: TOKENIZERS_PARALLELISM
+    Value: "false"
+  - Name: OMP_NUM_THREADS
+    Value: "8"
+  - Name: XLA_PYTHON_CLIENT_MEM_FRACTION
+    Value: "0.85"
+  - Name: XLA_PYTHON_CLIENT_PREALLOCATE
+    Value: "false"
+  - Name: JAX_COMPILATION_CACHE_MIN_ENTRY_SIZE_BYTES
+    Value: "-1"
+  - Name: JAX_COMPILATION_CACHE_MIN_COMPILE_TIME_SECS
+    Value: "1"
+  - Name: JAX_ENABLE_EMPTY_ARRAYS
+    Value: "true"
+
+Entrypoint: |
+  set -uo pipefail
+  STAMP=$(date -u +%Y%m%d_%H%M%S)
+  LOG_DIR=/vePFS/tim/workspace/deepdive_kai0/logs
+  mkdir -p "$LOG_DIR"
+
+  NNODES=${MLP_WORKER_NUM:-2}
+  NODE_RANK=${MLP_ROLE_INDEX:-0}
+  MASTER_ADDR=${MLP_WORKER_0_HOST:-127.0.0.1}
+  MASTER_PORT=${MLP_WORKER_0_PORT:-14523}
+  NPROC_PER_NODE=8
+  TOTAL_PROC=$((NNODES * NPROC_PER_NODE))
+
+  echo "=== AWBC A1 human-cond JAX multi-node start $(date) node=$NODE_RANK/$NNODES master=$MASTER_ADDR:$MASTER_PORT total_proc=$TOTAL_PROC ==="
+  set -ex
+  nvidia-smi -L
+
+  KAI0=/vePFS/tim/workspace/deepdive_kai0/kai0
+  mkdir -p /home/tim/.local/share /root/.local/share
+  ln -sfn /vePFS/tim/.local/share/uv /home/tim/.local/share/uv 2>/dev/null || true
+  ln -sfn /vePFS/tim/.local/share/uv /root/.local/share/uv 2>/dev/null || true
+  cd "$KAI0"
+  source .venv/bin/activate
+  python -c "import jax; print(f'jax {jax.__version__} devs={len(jax.devices())}')"
+
+  # PRE-FLIGHT
+  TRAIN=$KAI0/data/Task_A/self_built/A_v4_chunk001_dagger_crave_human
+  INIT=$KAI0/checkpoints/pi05_base/params
+  [ -f "$TRAIN/meta/episodes.jsonl" ] || { echo "FATAL: train data missing $TRAIN" >&2; exit 13; }
+  [ -f "$TRAIN/norm_stats.json" ]     || { echo "FATAL: norm_stats missing" >&2; exit 13; }
+  grep -q "Advantage: positive" "$TRAIN/meta/tasks.jsonl" || { echo "FATAL: tasks.jsonl 缺 advantage prompt (未 relabel?)" >&2; exit 13; }
+  python -c "import pyarrow.parquet as pq,glob,sys; f=sorted(glob.glob('$TRAIN/data/chunk-000/*.parquet'))[0]; cols=[c.name for c in pq.read_schema(f)]; sys.exit(0 if 'dagger_frame_class' in cols and 'intervention' in cols else 13)" || { echo "FATAL: dagger_frame_class/intervention missing (build 未带改动1?)" >&2; exit 13; }
+  [ -f "$INIT/_METADATA" ]            || { echo "FATAL: pi05_base init missing $INIT" >&2; exit 13; }
+  echo "[$(date)] preflight OK (data + norm_stats + relabel + markers + init)"
+
+  EXP=chunk001_dagger_crave_human
+  CKPT_DIR=$KAI0/checkpoints/pi05_v4_awbc_chunk001_dagger_crave_human/$EXP
+  RESUME_FLAG="--overwrite"
+  if ls -d "$CKPT_DIR"/[0-9]*/ >/dev/null 2>&1; then RESUME_FLAG="--resume"; echo "[resume] found ckpt → --resume"; fi
+
+  PIDS=()
+  for ((i=0; i<NPROC_PER_NODE; i++)); do
+    PROC_IDX=$((NODE_RANK * NPROC_PER_NODE + i))
+    LOG="$LOG_DIR/pi05_awbc_human_16gpu_${STAMP}_proc${PROC_IDX}.log"
+    echo "  → proc $PROC_IDX/$TOTAL_PROC (GPU $i) log=$LOG"
+
+    CUDA_VISIBLE_DEVICES=$i \
+    JAX_COORDINATOR_ADDRESS=$MASTER_ADDR:$MASTER_PORT \
+    JAX_NUM_PROCESSES=$TOTAL_PROC \
+    JAX_PROCESS_INDEX=$PROC_IDX \
+      python -u scripts/train.py pi05_v4_awbc_chunk001_dagger_crave_human \
+        --exp-name $EXP \
+        --no-wandb-enabled \
+        $RESUME_FLAG \
+        >> "$LOG" 2>&1 &
+    PIDS+=($!)
+  done
+
+  echo "[$(date)] all $NPROC_PER_NODE procs launched, waiting..."
+  FAIL=0
+  for pid in "${PIDS[@]}"; do
+    if ! wait $pid; then FAIL=$((FAIL+1)); fi
+  done
+  if [ $FAIL -gt 0 ]; then echo "FATAL: $FAIL/$NPROC_PER_NODE procs failed" >&2; exit 1; fi
+  echo "[$(date)] DONE — all procs completed successfully"
+
+RetryOptions:
+  EnableRetry: false

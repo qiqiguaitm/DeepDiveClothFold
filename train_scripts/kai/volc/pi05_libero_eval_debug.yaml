@@ -3,7 +3,7 @@
 #   4 路各: GPU i, PORT=base+i, EVAL_SEED=i, libero_10 全 10 任务 × 50 trials. t6=判据.
 #   server+client 都在 kai0/.venv(jax serve + libero rollout); 运行时 pip install libero deps.
 # Submit: gf0 VOLC_AK/SK kai0/.venv/bin/python submit_yaml.py pi05_libero_eval_a0_x4.yaml
-TaskName: "pi05-libero-eval-a0-x4"
+TaskName: "pi05-libero-eval-debug"
 Description: "pi05 A0(29999) LIBERO libero_10 eval, 4路变seed, North-H20 8卡用4卡"
 Tags: []
 
@@ -15,7 +15,7 @@ Preemptible: false
 TaskRoleSpecs:
   - RoleName: "worker"
     RoleReplicas: 1
-    Flavor: "ml.pni3ln.17xlarge"   # 4×H20 (4路各1卡)
+    Flavor: "ml.pni3ln.5xlarge"   # 1×H20 debug
 
 ActiveDeadlineSeconds: 43200
 EnableTensorBoard: false
@@ -29,6 +29,12 @@ Storages:
 CacheType: "Cloudfs"
 
 Envs:
+  - Name: EVAL_IMG_FLIP
+    Value: "both"
+  - Name: EVAL_GRIPPER
+    Value: "pm1"
+  - Name: PYTHONUNBUFFERED
+    Value: "1"
   - Name: MUJOCO_GL
     Value: "egl"
   - Name: PYOPENGL_PLATFORM
@@ -72,16 +78,16 @@ Entrypoint: |
   print("PREFLIGHT OK libero_10 n_tasks=", ts.n_tasks)
   PYEOF
 
-  OUT=$REPO/lmvla/lmwm/data/pi05_libero_eval/a0_${STAMP}
+  OUT=$REPO/lmvla/lmwm/data/pi05_libero_eval/debug_${STAMP}
   pids=""
-  for i in 0 1 2 3; do
+  for i in 0; do
     PORT=$((8100 + i))
     ( CUDA_VISIBLE_DEVICES=$i $PYTHON scripts/serve_policy.py --port $PORT policy:checkpoint --policy.config pi05_libero_a0_bj --policy.dir "$CKPT" > "$LOG_DIR/eval_a0_server${i}_${STAMP}.log" 2>&1 ) &
     sleep 5
     ( # 等 server 起 + 跑 client
       for w in $(seq 1 120); do $PYTHON -c "import socket;socket.create_connection(('127.0.0.1',$PORT),2)" 2>/dev/null && break; sleep 5; done
       CUDA_VISIBLE_DEVICES=$i MUJOCO_EGL_DEVICE_ID=$i $PYTHON $REPO/lmvla/lawam/examples/LIBERO/eval_files/eval_libero_openpi.py \
-        --host 127.0.0.1 --port $PORT --task-suite-name libero_10 --num-trials-per-task 50 --seed $i \
+        --host 127.0.0.1 --port $PORT --task-suite-name libero_10 --num-trials-per-task 5 --num-tasks 1 --seed $i \
         --replan-steps 5 --output-dir "$OUT/seed${i}" > "$LOG_DIR/eval_a0_client${i}_${STAMP}.log" 2>&1
     ) &
     pids="$pids $!"
