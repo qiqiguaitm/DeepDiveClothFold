@@ -114,7 +114,7 @@ for idx, (e, n) in enumerate(nlist):
     if np.std(v30) > 1e-6 and np.std(gt) > 1e-6: cs.append(np.corrcoef(v30, gt)[0, 1])
     dds.append((np.maximum.accumulate(v30)-v30).max()); ends.append(v30[-5:].mean())
     if idx % 500 == 0: print(f"  vit {idx}/{NC_}", flush=True)
-print(f"\n[So400m-mean 30Hz全帧 v1管线] corr(med)={np.median(cs):.3f}  drawdown(med)={np.median(dds):.4f}  end={np.mean(ends):.3f}  M={len(vals)}")
+print(f"\n[{ENC} 30Hz全帧 v1管线] corr(med)={np.median(cs):.3f}  drawdown(med)={np.median(dds):.4f}  end={np.mean(ends):.3f}  M={len(vals)}")
 print("对照: 3Hz版 So400m=0.578(特化最佳0.634) | 生产 DINOv3(3Hz拟合)=0.948")
 
 np.savez(f"{OUTD}/_spec.npz", vals=vals, Ctgt=Ctgt, pca_mean=pca.mean_, pca_components=pca.components_, SMU=SMU, SSD=SSD)
