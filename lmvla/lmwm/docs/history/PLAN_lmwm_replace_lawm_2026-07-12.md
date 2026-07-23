@@ -45,7 +45,7 @@ LaWAM 的 LaWM 通过 `train_*.yaml` 的 `framework.action_model` 加载:
 ## 3. 分阶段计划(gf3 8×H20 加速)
 
 ### P0 · 钉死 LAM↔starVLA 契约 ✅ 已完成
-产出:[`LAM_starVLA_contract_2026-07-12.md`](LAM_starVLA_contract_2026-07-12.md)。**关键洞察**:LAM 对 backend 只暴露 3 个方法,其中 **`decoder(h_t, action_emb)` 就是世界模型预测**(LaWM 预测 next-frame 特征)。→ **最干净的替换 = 只换 `decoder`**:
+产出:[`LAM_starVLA_contract_2026-07-12.md`](../LAM_starVLA_contract_2026-07-12.md)。**关键洞察**:LAM 对 backend 只暴露 3 个方法,其中 **`decoder(h_t, action_emb)` 就是世界模型预测**(LaWM 预测 next-frame 特征)。→ **最干净的替换 = 只换 `decoder`**:
 - **保持共享**:DINOv3-vitb16 编码器(`extract_vision_features`)、starVLA、注入链路(vlm_to_lam/query/flow)全不动。
 - **只换世界模型**:`decoder` 从"预测 next-frame 特征"换成 **LMWM 预测 next-milestone 特征**(DINOv3-vitb16 空间 [B,256,768])。
 - **唯一变量 = 未来预测目标:next-frame(LaWM)vs next-milestone(LMWM)**。这正是我们要证的科学问题。

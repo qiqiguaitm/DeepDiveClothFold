@@ -1,0 +1,154 @@
+{
+  "meta": {
+    "benchmark": "LIBERO libero_10",
+    "suite_tasks": 10,
+    "trials_per_task": 50,
+    "seed": 0,
+    "step": 20000,
+    "arm_M": {
+      "name": "LMWAM (LMWM decoder, milestone+1 target, swap_teacher)",
+      "ckpt": "armM_milestone_20k/steps_20000_pytorch_model.pt",
+      "run": "v5/20260715_021132"
+    },
+    "arm_B": {
+      "name": "LaWAM baseline (released LaWM decoder, t+7 target, no-swap self-trained)",
+      "ckpt": "armB_baseline_20k/steps_20000_pytorch_model.pt",
+      "run": "v4/20260715_021734"
+    },
+    "note": "single seed; all failures = 550-step horizon timeout (no divergence)"
+  },
+  "aggregate": {
+    "M": {
+      "succ": 461,
+      "n": 500,
+      "SR": 0.922
+    },
+    "B": {
+      "succ": 482,
+      "n": 500,
+      "SR": 0.964
+    }
+  },
+  "per_task": [
+    {
+      "task_id": 0,
+      "desc": "put both the alphabet soup and the tomato sauce in the basket",
+      "merged_idx": 5,
+      "M_SR": 0.98,
+      "B_SR": 0.98,
+      "delta": 0.0,
+      "M_fails": 1,
+      "B_fails": 1,
+      "n_milestones": 11,
+      "untrained_tail_frac": 0.131
+    },
+    {
+      "task_id": 1,
+      "desc": "put both the cream cheese box and the butter in the basket",
+      "merged_idx": 7,
+      "M_SR": 0.96,
+      "B_SR": 1.0,
+      "delta": -0.04,
+      "M_fails": 2,
+      "B_fails": 0,
+      "n_milestones": 9,
+      "untrained_tail_frac": 0.325
+    },
+    {
+      "task_id": 2,
+      "desc": "turn on the stove and put the moka pot on it",
+      "merged_idx": 3,
+      "M_SR": 1.0,
+      "B_SR": 1.0,
+      "delta": 0.0,
+      "M_fails": 0,
+      "B_fails": 0,
+      "n_milestones": 6,
+      "untrained_tail_frac": 0.202
+    },
+    {
+      "task_id": 3,
+      "desc": "put the black bowl in the bottom drawer of the cabinet and close it",
+      "merged_idx": 8,
+      "M_SR": 0.94,
+      "B_SR": 0.96,
+      "delta": -0.02,
+      "M_fails": 3,
+      "B_fails": 2,
+      "n_milestones": 7,
+      "untrained_tail_frac": 0.084
+    },
+    {
+      "task_id": 4,
+      "desc": "put the white mug on the left plate and put the yellow and white mug on the right plate",
+      "merged_idx": 0,
+      "M_SR": 1.0,
+      "B_SR": 0.98,
+      "delta": 0.02,
+      "M_fails": 0,
+      "B_fails": 1,
+      "n_milestones": 8,
+      "untrained_tail_frac": 0.148
+    },
+    {
+      "task_id": 5,
+      "desc": "pick up the book and place it in the back compartment of the caddy",
+      "merged_idx": 9,
+      "M_SR": 0.98,
+      "B_SR": 1.0,
+      "delta": -0.02,
+      "M_fails": 1,
+      "B_fails": 0,
+      "n_milestones": 4,
+      "untrained_tail_frac": 0.417
+    },
+    {
+      "task_id": 6,
+      "desc": "put the white mug on the plate and put the chocolate pudding to the right of the plate",
+      "merged_idx": 1,
+      "M_SR": 0.68,
+      "B_SR": 0.84,
+      "delta": -0.16,
+      "M_fails": 16,
+      "B_fails": 8,
+      "n_milestones": 4,
+      "untrained_tail_frac": 0.599
+    },
+    {
+      "task_id": 7,
+      "desc": "put both the alphabet soup and the cream cheese box in the basket",
+      "merged_idx": 4,
+      "M_SR": 1.0,
+      "B_SR": 1.0,
+      "delta": 0.0,
+      "M_fails": 0,
+      "B_fails": 0,
+      "n_milestones": 10,
+      "untrained_tail_frac": 0.592
+    },
+    {
+      "task_id": 8,
+      "desc": "put both moka pots on the stove",
+      "merged_idx": 6,
+      "M_SR": 0.86,
+      "B_SR": 1.0,
+      "delta": -0.14,
+      "M_fails": 7,
+      "B_fails": 0,
+      "n_milestones": 8,
+      "untrained_tail_frac": 0.053
+    },
+    {
+      "task_id": 9,
+      "desc": "put the yellow and white mug in the microwave and close it",
+      "merged_idx": 2,
+      "M_SR": 0.82,
+      "B_SR": 0.88,
+      "delta": -0.06,
+      "M_fails": 9,
+      "B_fails": 6,
+      "n_milestones": 8,
+      "untrained_tail_frac": 0.521
+    }
+  ]
+}

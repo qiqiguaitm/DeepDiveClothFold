@@ -81,6 +81,9 @@ def main():
     ap.add_argument("--pred_input", default="gist", choices=["gist", "grid"])  # predictor sees pooled gist vs full grid
     ap.add_argument("--anchor", default="ce", choices=["ce", "progress"])       # discrete cluster-id CE vs continuous progress-regression anchor
     ap.add_argument("--margin", type=float, default=0.05)                       # monotonic margin for progress anchor
+    ap.add_argument("--value_head", action="store_true")                        # P1: 连续逐帧时间 value 头(用途A监督, 不依赖milestone可分性)
+    ap.add_argument("--value_w", type=float, default=0.5)                        # value 头损失权重
+    ap.add_argument("--value_margin", type=float, default=0.02)                 # 相邻对 v_next>v_cur 单调 margin
     ap.add_argument("--lift_w", type=float, default=1.0)
     ap.add_argument("--code_dim", type=int, default=128)
     ap.add_argument("--K", type=int, default=4)
@@ -122,6 +125,11 @@ def main():
     tra = np.array([u2k[p[0]] for p in tr]); trb = np.array([u2k[p[1]] for p in tr]); trn = np.array([p[3] for p in tr])
     trc = np.array([p[2] for p in tr])                                          # cur milestone (for progress anchor)
     progn = ((pord - pord.min()) / (pord.max() - pord.min() + 1e-8)).astype(np.float32)  # per-task normalized progress [0,1]
+    # P1 value head: 逐帧连续归一化时间(dense, 处处单调, 不依赖 milestone 可分性; 治弥散子目标)
+    tnorm_g = np.zeros(len(E), np.float32)
+    for _e in np.unique(E):
+        _m = E == _e; _fr = FR[_m]; _lo, _hi = _fr.min(), _fr.max(); tnorm_g[_m] = (_fr - _lo) / (_hi - _lo + 1e-8)
+    tnorm_uniq = tnorm_g[np.array(uniq)]                                         # [n_uniq] cur/tgt 帧的连续时间
     vaa = np.array([u2k[p[0]] for p in va]); vab = np.array([u2k[p[1]] for p in va]); vbn = np.array([p[3] for p in va]); vcm = np.array([p[2] for p in va])
 
     inv = InverseEnc(din, cd).to(dev) if args.teacher != "none" else None
@@ -130,7 +138,11 @@ def main():
     anchor_head = None
     if args.teacher == "center":
         anchor_head = (nn.Linear(cd, 1) if args.anchor == "progress" else nn.Linear(cd, Mn)).to(dev)
-    p1 = list(fwd.parameters()) + (list(inv.parameters()) if inv else []) + (list(anchor_head.parameters()) if anchor_head else [])
+    value_head = None
+    if args.value_head:                                                         # P1: 从当前帧 gist 回归连续进度(用途A)
+        value_head = nn.Sequential(nn.Linear(din, 128), nn.GELU(), nn.Linear(128, 1)).to(dev)
+    p1 = list(fwd.parameters()) + (list(inv.parameters()) if inv else []) + (list(anchor_head.parameters()) if anchor_head else []) \
+        + (list(value_head.parameters()) if value_head else [])
     o1 = torch.optim.AdamW(p1, lr=2e-4, weight_decay=1e-5)
     o2 = torch.optim.AdamW(predm.parameters(), lr=2e-4, weight_decay=1e-5)
     for step in range(args.steps):
@@ -150,6 +162,11 @@ def main():
                     l1 = l1 + args.center_w * (F.mse_loss(ph, pn) + torch.relu(pcur - ph + args.margin).mean())
                 else:                                                      # discrete cluster-id CE
                     l1 = l1 + args.center_w * F.cross_entropy(anchor_head(z), nm)
+            if value_head is not None:                                     # P1 用途A: 连续时间回归 + 相邻对单调
+                vc = value_head(gc).squeeze(-1).sigmoid()                   # 当前帧预测进度
+                vn = value_head(gist[trb[sel]].to(dev)).squeeze(-1).sigmoid()  # 下一(milestone+1)帧
+                vt = torch.from_numpy(tnorm_uniq[tra[sel.numpy()]]).to(dev)    # 当前帧连续时间 GT
+                l1 = l1 + args.value_w * (F.mse_loss(vc, vt) + torch.relu(vc - vn + args.value_margin).mean())
             o1.zero_grad(); l1.backward(); o1.step()
             l2 = predm.nll(pc, z.detach()); o2.zero_grad(); l2.backward(); o2.step()
         else:                                                              # no teacher: predm code reconstructs
@@ -161,6 +178,8 @@ def main():
     fwd.eval(); predm.eval()
     if inv:
         inv.eval()
+    if value_head is not None:
+        value_head.eval()
 
     # SigLIP milestone prototypes (identity retrieval) from val-set gists by DINOv3 milestone id
     msid = (Fn[np.array(uniq)] @ proto.T).argmax(1); gnp = gist.numpy()
@@ -195,8 +214,16 @@ def main():
         pred_ms = (idpred @ spL.T).argmax(1); cur_ms = vcm  # Viterbi current milestone (consistent w/ target)
         value_fwd = float((pord[pred_ms] > pord[cur_ms]).mean())            # value-forward fraction
         value_true = float((pord[vbn] > pord[cur_ms]).mean())              # target's own value-forward (ref)
+    value_spear = None                                                     # P1: val 上 value 头 vs 连续时间 GT 的 Spearman
+    if value_head is not None:
+        with torch.no_grad():
+            vv = value_head(gist[vaa].to(dev)).squeeze(-1).sigmoid().cpu().numpy()
+        tt = tnorm_uniq[vaa]
+        rv = np.argsort(np.argsort(vv)); rt = np.argsort(np.argsort(tt))
+        value_spear = round(float(np.corrcoef(rv, rt)[0, 1]), 4)
+        print(f"[{args.tag}] value_head val Spearman={value_spear}", flush=True)
 
-    res = {"tag": args.tag, "target_mode": args.target_mode, "teacher": args.teacher, "fwd_arch": args.fwd_arch,
+    res = {"tag": args.tag, "value_spear": value_spear, "target_mode": args.target_mode, "teacher": args.teacher, "fwd_arch": args.fwd_arch,
            "pred_input": args.pred_input, "anchor": args.anchor, "predm_params": sum(p.numel() for p in predm.parameters()),
            "lift_w": args.lift_w, "center_w": args.center_w, "code_dim": cd, "K": args.K, "n_train": len(tr),
            "oracle_grid_cos": round(float(np.concatenate(co).mean()), 4) if co else None,
@@ -212,6 +239,8 @@ def main():
             "fwd_arch": args.fwd_arch, "pred_input": args.pred_input, "anchor": args.anchor}
     if inv:
         save["inv"] = inv.state_dict()
+    if value_head is not None:
+        save["value_head"] = value_head.state_dict()
     torch.save(save, ckp)
     print(json.dumps(res, indent=2), flush=True); print(f"saved -> {ckp}", flush=True)
 

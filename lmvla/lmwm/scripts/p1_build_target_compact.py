@@ -3,13 +3,18 @@
 unique(ep,tgt_fi) 的目标特征 → target_compact.npz (ep, tgt_fi, feat[Nu,256,768] fp16)。
 用法: srpo python p1_build_target_compact.py
 """
-import os, numpy as np
+import os, argparse, numpy as np
 
-PAIRS = "/home/tim/workspace/deepdive_kai0/lmvla/lmwm/data/libero_milestone/pairs.npz"
-FEAT  = "/home/tim/workspace/deepdive_kai0/lmvla/lmwm/data/libero_dinov3base"
-OUT   = "/home/tim/workspace/deepdive_kai0/lmvla/lmwm/data/libero_milestone/target_compact.npz"
+_D = "/home/tim/workspace/deepdive_kai0/lmvla/lmwm/data"
+PAIRS = f"{_D}/libero_milestone/pairs.npz"
+FEAT  = f"{_D}/libero_dinov3base"
+OUT   = f"{_D}/libero_milestone/target_compact.npz"
 
 def main():
+    global PAIRS, FEAT, OUT
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--pairs", default=PAIRS); ap.add_argument("--feat", default=FEAT); ap.add_argument("--out", default=OUT)
+    a = ap.parse_args(); PAIRS, FEAT, OUT = a.pairs, a.feat, a.out
     P = np.load(PAIRS)
     uniq = sorted(set(zip(P["cur_ep"].tolist(), P["tgt_fi"].tolist())))
     print(f"[uniq] {len(uniq)} 个目标 (ep,tgt_fi)", flush=True)
